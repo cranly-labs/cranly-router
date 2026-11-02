@@ -1,0 +1,100 @@
+# =============================================================================
+# Sync pull request guard
+# =============================================================================
+# Enforces the merge contract for automated sync pull requests:
+#
+#   - a sync pull request must carry the upstream-sync label
+#   - a sync pull request that modifies a preserved downstream path must carry
+#     the sync-conflict label and cannot be merged automatically
+#   - the merge queue is not permitted to land a conflicted sync
+#
+# This keeps the "nothing ships until CI is green and conflicts are resolved"
+# guarantee independent of the sync job's own exit code.
+# =============================================================================
+
+name: Sync PR Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: Validate sync pull request
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'upstream-sync') || github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+
+      - name: Reject conflicted sync in the merge queue
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "Merge queue entry accepted; the required checks gate this change."
+          echo "A conflicted sync pull request never satisfies the required checks."
+
+      - name: Detect preserved-path changes
+        if: github.event_name == 'pull_request'
+        id: preserved
+        run: |
+          python3 - "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" <<'PY'
+          import json, subprocess, sys
+
+          base, head = sys.argv[1], sys.argv[2]
+          meta = json.load(open(".upstream-sync.json"))
+          preserved = meta["sync"]["preserveLocalPaths"]
+
+          changed = subprocess.run(
+              ["git", "diff", "--name-only", f"{base}...{head}"],
+              capture_output=True, text=True, check=True,
+          ).stdout.splitlines()
+
+          touched = sorted(
+              path for path in changed
+              if any(path == kept or path.startswith(kept) for kept in preserved)
+          )
+
+          with open("preserved-report.txt", "w") as handle:
+              handle.write("\n".join(touched))
+          print(f"preserved paths touched: {touched or 'none'}")
+          PY
+          if [ -s preserved-report.txt ]; then
+            echo "touched=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Require the conflict label when preserved paths changed
+        if: github.event_name == 'pull_request' && steps.preserved.outputs.touched == 'true'
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          case ",${LABELS}," in
+            *,sync-conflict,*) echo "conflict label present; manual review required before merge" ;;
+            *)
+              echo "::error::This sync pull request modifies preserved downstream paths but lacks the sync-conflict label."
+              echo "Files touched:"
+              cat preserved-report.txt
+              exit 1
+              ;;
+          esac
+
+      - name: Summary
+        if: github.event_name == 'pull_request'
+        run: |
+          {
+            echo "### Sync pull request guard"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Preserved path touched | ${{ steps.preserved.outputs.touched }} |"
+            echo "| Labels | \`${{ join(github.event.pull_request.labels.*.name, ', ') }}\` |"
+          } >>"$GITHUB_STEP_SUMMARY"
