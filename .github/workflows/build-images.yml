@@ -105,6 +105,9 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ steps.meta.outputs.commit }}
             DATE=${{ steps.meta.outputs.date }}
+            OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            OCI_URL=${{ github.server_url }}/${{ github.repository }}
+            OCI_VENDOR=${{ github.repository_owner }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.arch }},mode=max
 

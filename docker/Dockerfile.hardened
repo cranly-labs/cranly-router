@@ -51,8 +51,11 @@ ARG BUILD_TYPE=release
 # OCI image metadata.
 ARG OCI_TITLE="TokenRouter - AI API Gateway Platform"
 ARG OCI_DESCRIPTION="Hardened TokenRouter distribution: LLM API gateway with embedded admin UI, backup tooling and non-root runtime."
-ARG OCI_SOURCE="https://github.com/tokenrouter/tokenrouter-hardened-mirror"
-ARG OCI_URL="https://github.com/tokenrouter/tokenrouter-hardened-mirror"
+# Defaults point at the upstream project so an untagged local build still
+# carries a truthful source reference. CI overrides both with the actual
+# repository URL, so published images always identify their own origin.
+ARG OCI_SOURCE="https://github.com/TokenFlux/TokenRouter"
+ARG OCI_URL="https://github.com/TokenFlux/TokenRouter"
 ARG OCI_LICENSES="LGPL-3.0-or-later"
 ARG OCI_VENDOR="tokenrouter-hardened-mirror maintainers"
 ARG OCI_REVISION=${COMMIT}
