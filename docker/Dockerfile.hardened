@@ -242,9 +242,10 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD wget -q -T 5 -O /dev/null "http://localhost:${SERVER_PORT:-8080}/health" || exit 1
 
-# The runtime user is fixed at build time; the entrypoint drops to it after the
-# ownership repair step.
-USER tokenrouter
+# Backwards-compatible alias: older Compose templates invoke /app/sub2api.
+# Created while the build still runs as root, because /app is owned by root and
+# the unprivileged runtime user cannot create entries in it.
+RUN ln -s /app/tokenrouter /app/sub2api
 
 # -----------------------------------------------------------------------------
 # Read-only root filesystem contract
@@ -267,7 +268,9 @@ USER tokenrouter
 # hooks, then execs the binary as tokenrouter so it becomes PID 1.
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
-# Backwards-compatible alias: older Compose templates invoke /app/sub2api.
-RUN ln -s /app/tokenrouter /app/sub2api
+# The runtime user is fixed at build time; the entrypoint drops to it after the
+# ownership repair step. It is declared last, after every root-owned file
+# operation, so no build step inherits an unprivileged identity by accident.
+USER tokenrouter
 
 CMD ["/app/tokenrouter"]
