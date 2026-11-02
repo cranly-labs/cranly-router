@@ -150,7 +150,7 @@ Upstream also documents standalone and scripted options. When you deploy without
 
 This distribution is kept current by an automated synchronisation workflow rather than by manual merges.
 
-**Model.** A scheduled GitHub Actions workflow fetches `TokenFlux/TokenRouter@main`, replays upstream commits on top of the current default branch state, and opens a pull request. The workflow does not push directly to `main`; every synchronisation lands as a reviewable change set.
+**Model.** A scheduled GitHub Actions workflow (`.github/workflows/upstream-sync.yml`) fetches `TokenFlux/TokenRouter@main`, advances a reusable `sync/upstream-main` branch to the upstream snapshot while preserving every path listed in `.upstream-sync.json`, and opens or refreshes a pull request. The workflow never pushes to `main`; every synchronisation lands as a reviewable change set. A separate watcher (`.github/workflows/upstream-release-watch.yml`) polls the upstream release feed so a new tag shortens the delay beyond the nightly window.
 
 **What a sync pull request looks like.** It contains only upstream commits plus, when required, minimal conflict-resolution commits confined to downstream-owned files. The PR body summarises the upstream range covered, the upstream version, and any files that required manual resolution.
 
@@ -158,10 +158,12 @@ This distribution is kept current by an automated synchronisation workflow rathe
 
 | Label | Meaning |
 | --- | --- |
-| `sync:upstream` | Opened by the automated synchronisation workflow |
-| `sync:clean` | Applied without conflicts; safe to fast-track review |
-| `sync:conflict` | Contains conflicts or manual resolutions; requires owner review |
-| `sync:blocked` | Sync stopped due to an upstream change that breaks the downstream build or contract |
+| `upstream-sync` | Opened by the automated synchronisation workflow |
+| `sync-conflict` | Upstream touched a path this distribution preserves; the guard workflow blocks merge until resolved |
+| `sync-automerge` | Opt-in marker for a fast-track merge once every required check is green |
+
+The label names are defined once in `.upstream-sync.json` and are used by the
+sync, guard and watcher workflows, so they can be renamed in a single place.
 
 **Resolving conflicts.** Keep local changes minimal and confined to files this distribution owns: `docker/`, `deploy/coolify/`, `.github/workflows/`, `docs/`, and the root documentation files. When a conflict touches upstream application code, prefer the upstream version and move the customisation into a downstream-owned file. Record any resulting behavioural deviation in `docs/DOWNSTREAM-PATCHES.md` in the same pull request.
 
