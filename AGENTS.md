@@ -57,3 +57,37 @@ Use the repository's [project-doc](.agents/skills/project-doc/SKILL.md) skill fi
 ## Plan mode
 
 - When using Codex plan mode, save the finalized plan verbatim under `.agents/plans/` before implementation. Append progress to the end of that file during execution. Keep plan files local and exclude them from commits.
+
+---
+
+# Downstream Distribution Contract
+
+This repository is `tokenrouter-hardened-mirror`, a hardened downstream distribution. The upstream guidelines above remain authoritative for every vendored upstream path (`backend/`, `frontend/`, `plugin-sdk/`, `tools/`, `assets/`, `docs/`). The rules below apply on top of them.
+
+## Ownership map
+
+| Path | Owner | Rule |
+| --- | --- | --- |
+| `backend/`, `frontend/`, `plugin-sdk/`, `tools/`, `assets/` | Upstream | Treat as read-only. Changes belong upstream, not here. |
+| `docker/`, `deploy/coolify/`, `.github/`, `docs/ai/` | Downstream | Free to modify. This is where local customisation lives. |
+| Root documentation (`README.md`, `SECURITY.md`, `CONTRIBUTING.md`) | Downstream | Modify as needed. |
+
+## Hard rules
+
+- Record every deviation from upstream in `docs/DOWNSTREAM-PATCHES.md` within the same change set.
+- Never force-push `main`. Never hand-edit `.upstream-sync.json` during a sync run.
+- Never commit secrets, tokens, or generated credentials.
+- Do not rebrand or rename upstream modules, packages, protocols, environment variables, or SDK symbols.
+- A sync pull request from `.github/workflows/upstream-sync.yml` must clear the full CI gate before it can merge.
+
+## Verification
+
+```bash
+make fmt-check
+make lint
+make test
+docker build -f docker/Dockerfile.hardened -t tokenrouter-hardened:local .
+docker compose -f deploy/coolify/docker-compose.yml config
+```
+
+Full guidance: [`docs/ai/CONTRIBUTING-AI.md`](docs/ai/CONTRIBUTING-AI.md).

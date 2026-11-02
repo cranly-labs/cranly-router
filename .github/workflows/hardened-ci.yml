@@ -1,0 +1,231 @@
+# =============================================================================
+# Downstream CI gate
+# =============================================================================
+# Runs the checks that guard every change to this distribution on top of the
+# upstream workflow set:
+#
+#   repository    validates sync metadata, helper scripts and repository layout
+#   container     builds the hardened image without pushing and smoke-tests it
+#   compose       validates the Coolify compose file for structure and hygiene
+#
+# A failure in any of these jobs blocks the merge queue. Upstream code that
+# arrives through a sync pull request is never exempt from the gate.
+# =============================================================================
+
+name: Hardened CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardened-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    name: Repository integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate sync metadata
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          meta = json.load(open(".upstream-sync.json"))
+          required = {
+              "upstream": ["repository", "gitUrl", "defaultBranch"],
+              "mirror": ["baseBranch", "syncBranchPrefix"],
+              "sync": ["preserveLocalPaths"],
+          }
+          missing = [
+              f"{section}.{key}"
+              for section, keys in required.items()
+              for key in keys
+              if key not in meta.get(section, {})
+          ]
+          if missing:
+              sys.exit("missing metadata keys: " + ", ".join(missing))
+          if not meta["sync"]["preserveLocalPaths"]:
+              sys.exit("preserveLocalPaths must not be empty")
+          print("sync metadata valid")
+          PY
+
+      - name: Lint helper scripts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends shellcheck
+          shellcheck --severity=error .github/scripts/*.sh docker/entrypoint.sh
+
+      - name: Verify script permissions
+        run: |
+          for script in .github/scripts/*.sh docker/entrypoint.sh; do
+            [ -x "$script" ] || { echo "not executable: $script"; exit 1; }
+          done
+
+      - name: Validate workflow syntax
+        run: |
+          python3 -m pip install --quiet yamllint
+          yamllint -d '{extends: default, rules: {line-length: {max: 140}, document-start: disable, truthy: disable}}' .github/workflows/
+
+      - name: Dry-run upstream sync resolver
+        run: |
+          bash -n .github/scripts/sync-upstream.sh
+          bash -n .github/scripts/sync-tags.sh
+          bash -n .github/scripts/resolve-version.sh
+          version="$(bash .github/scripts/resolve-version.sh)"
+          echo "resolved version: ${version}"
+          [ -n "${version}" ]
+
+  container:
+    name: Hardened image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image without pushing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.hardened
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: tokenrouter-hardened:ci
+          build-args: |
+            VERSION=0.0.0-ci
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,scope=ci,mode=max
+
+      - name: Inspect image metadata
+        run: |
+          docker image inspect tokenrouter-hardened:ci \
+            --format '{{json .Config.Labels}}' | python3 -m json.tool
+          test "$(docker image inspect tokenrouter-hardened:ci --format '{{.Config.User}}')" = "0" \
+            || echo "note: entrypoint manages the privilege drop for uid 1000"
+
+      - name: Verify runtime contract
+        run: |
+          set -euo pipefail
+          cid="$(docker create tokenrouter-hardened:ci)"
+          trap 'docker rm -f "${cid}" >/dev/null 2>&1 || true' EXIT
+          docker export "${cid}" >/dev/null
+          docker run --rm --entrypoint /bin/sh tokenrouter-hardened:ci -c '
+            set -eu
+            test -x /app/tokenrouter
+            test -x /app/docker-entrypoint.sh
+            test -x /usr/local/bin/psql
+            test -x /usr/local/bin/pg_dump
+            test -d /app/data
+            id tokenrouter
+            getent passwd tokenrouter | grep -q ":1000:1000"
+            echo "runtime contract satisfied"
+          '
+
+      - name: Smoke-test health endpoint
+        run: |
+          set -euo pipefail
+          docker run --detach --name tr-smoke \
+            --env AUTO_SETUP=true \
+            --env DATABASE_HOST=127.0.0.1 \
+            --env JWT_SECRET=0000000000000000000000000000000000000000000000000000000000000000 \
+            --publish 18080:8080 \
+            tokenrouter-hardened:ci || true
+          # The service is expected to fail without a database; the assertion is
+          # that the binary starts and serves the liveness route rather than
+          # crashing on configuration parsing.
+          for attempt in $(seq 1 20); do
+            if curl --silent --fail --max-time 2 http://127.0.0.1:18080/health >/dev/null; then
+              echo "health endpoint responded on attempt ${attempt}"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "health endpoint did not respond; container logs follow"
+          docker logs tr-smoke || true
+          exit 1
+        continue-on-error: false
+
+      - name: Collect container logs on failure
+        if: failure()
+        run: docker logs tr-smoke 2>&1 | tail -200 || true
+
+  compose:
+    name: Deployment manifest validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate compose syntax
+        run: |
+          cd deploy/coolify
+          cp .env.example .env
+          # Required secrets are placeholders in the example; inline them so the
+          # Compose interpolation guards do not abort the validation run.
+          POSTGRES_PASSWORD=ci-placeholder JWT_SECRET=ci-placeholder \
+            docker compose --env-file .env config >/dev/null
+          rm -f .env
+
+      - name: Check hardening invariants
+        run: |
+          python3 - <<'PY'
+          import sys, yaml
+
+          compose = yaml.safe_load(open("deploy/coolify/docker-compose.yml"))
+          services = compose.get("services", {})
+
+          required = {"tokenrouter", "postgres", "redis"}
+          missing = required - set(services)
+          if missing:
+              sys.exit(f"missing services: {sorted(missing)}")
+
+          app = services["tokenrouter"]
+          if app.get("ports"):
+              sys.exit("the application service must not publish a host port")
+          if "no-new-privileges:true" not in (app.get("security_opt") or []):
+              sys.exit("the application service must set no-new-privileges")
+          if app.get("restart") != "unless-stopped":
+              sys.exit("the application service must use restart: unless-stopped")
+          if not app.get("healthcheck"):
+              sys.exit("the application service must declare a healthcheck")
+
+          for name in ("postgres", "redis"):
+              if not services[name].get("healthcheck"):
+                  sys.exit(f"{name} must declare a healthcheck")
+
+          depends = app.get("depends_on") or {}
+          for name in ("postgres", "redis"):
+              condition = (depends.get(name) or {}).get("condition")
+              if condition != "service_healthy":
+                  sys.exit(f"the application must depend on {name} with service_healthy")
+
+          print("compose hardening invariants satisfied")
+          PY
+
+      - name: Validate compose environment template
+        run: |
+          python3 - <<'PY'
+          import re, sys
+
+          text = open("deploy/coolify/.env.example").read()
+          for key in ("POSTGRES_PASSWORD", "JWT_SECRET"):
+              if not re.search(rf"^{key}=", text, re.MULTILINE):
+                  sys.exit(f"{key} must be documented in the environment template")
+          if "openssl rand -hex 32" not in text:
+              sys.exit("secret generation instructions are missing")
+          print("environment template valid")
+          PY

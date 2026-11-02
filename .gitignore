@@ -128,7 +128,8 @@ tests
 !deploy/tests/**
 CLAUDE.md
 .claude
-scripts
+/scripts
+/backend/scripts/
 !backend/scripts/
 !backend/scripts/resolve-version.sh
 !frontend/scripts/
@@ -162,3 +163,11 @@ output/
 
 # Python 字节码缓存。
 __pycache__/
+
+# ===================
+# Downstream distribution
+# ===================
+# Local upstream mirror used for offline sync runs; the CI fetches upstream
+# over the network instead.
+/upstream.git/
+sync-report.json

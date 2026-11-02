@@ -1,9 +1,11 @@
-# Adapted from QuantumNous/new-api; see .github/NOTICE.templates.md for source and license.
 blank_issues_enabled: false
 contact_links:
-  - name: Documentation
-    url: https://github.com/TokenFlux/TokenRouter/blob/main/docs/guides/index.md
-    about: Check the documentation before opening an issue to see whether it addresses your problem.
-  - name: Usage Questions
-    url: https://github.com/TokenFlux/TokenRouter/blob/main/docs/index.md
-    about: Check the engineering documentation first for usage, configuration, and integration questions.
+  - name: Report a security vulnerability
+    url: https://github.com/tokenrouter/tokenrouter-hardened-mirror/security/advisories/new
+    about: Report vulnerabilities privately through GitHub Security Advisories.
+  - name: Upstream application issue
+    url: https://github.com/TokenFlux/TokenRouter/issues
+    about: Application defects and feature requests belong to the upstream project.
+  - name: Deployment question
+    url: https://github.com/tokenrouter/tokenrouter-hardened-mirror/blob/main/deploy/coolify/README.md
+    about: Read the Coolify deployment guide before opening an issue.

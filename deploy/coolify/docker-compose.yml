@@ -1,0 +1,252 @@
+# =============================================================================
+# TokenRouter - Coolify deployment (production)
+# =============================================================================
+# This Compose file is written for Coolify's Docker Compose resource type.
+#
+# Coolify environment variables that must be set in the UI:
+#
+#   Required (deployment fails loudly if missing):
+#     POSTGRES_PASSWORD     database password, shared by postgres and the app
+#     JWT_SECRET            session signing key, generated once and kept stable
+#
+#   Strongly recommended:
+#     TOKENROUTER_IMAGE     image tag or digest to deploy, for example
+#                           ghcr.io/tokenrouter/tokenrouter-hardened:1.0.0
+#     ADMIN_EMAIL           first-run administrator login
+#     ADMIN_PASSWORD        leave empty to auto-generate and read it from logs
+#     TOTP_ENCRYPTION_KEY   required if two-factor auth will be used
+#     REDIS_PASSWORD        Redis is internal-only, but a password is good hygiene
+#
+#   Coolify-managed:
+#     SERVICE_FQDN_TOKENROUTER_8080
+#                           Coolify injects this as the public FQDN for the
+#                           application service. Declaring it here lets the
+#                           proxy attach a domain without a fixed host port.
+#
+# See deploy/coolify/.env.example for the full annotated variable list.
+#
+# The application service publishes no host ports. The Coolify proxy reaches
+# it over the internal network using the declared `expose` port.
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # TokenRouter application
+  # ===========================================================================
+  tokenrouter:
+    image: ${TOKENROUTER_IMAGE:-ghcr.io/tokenrouter/tokenrouter-hardened:latest}
+    pull_policy: always
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # Local builds only. Uncomment this block when building on the Coolify
+    # host instead of pulling a prebuilt image. The context is the repository
+    # root, two directories above this file.
+    # build:
+    #   context: ../..
+    #   dockerfile: docker/Dockerfile.hardened
+    #   args:
+    #     VERSION: ${TOKENROUTER_VERSION:-dev}
+    #     COMMIT: ${TOKENROUTER_COMMIT:-unknown}
+    #     DATE: ${TOKENROUTER_BUILD_DATE:-}
+    # No fixed host port: the Coolify proxy terminates TLS and forwards to the
+    # container port over the internal network. The FQDN variable below is
+    # populated by Coolify when a domain is attached in the UI.
+    expose:
+      - "8080"
+    # Manual or local testing only. Uncomment to bind a host port directly
+    # (bypassing the proxy) and make sure the firewall allows it.
+    # ports:
+    #   - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Persistent application state: config.yaml, logs, generated secrets and
+      # cached pricing data.
+      - tokenrouter_data:/app/data
+    environment:
+      # Coolify injects the public FQDN for the proxy here when a domain is
+      # attached. The value is provisioned by the platform, not by the operator.
+      - SERVICE_FQDN_TOKENROUTER_8080
+      # Auto setup runs migrations and creates the first administrator on the
+      # initial start. Keep it enabled for the first deployment.
+      - AUTO_SETUP=true
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_MODE=release
+      - TZ=${TZ:-UTC}
+      # Memory soft limit for the Go runtime. Keep it below mem_limit so the
+      # runtime garbage collects before the kernel OOM killer intervenes.
+      - GOMEMLIMIT=${GOMEMLIMIT:-3GiB}
+      # The application connects to the dependencies by their service names on
+      # the internal network.
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=${POSTGRES_USER:-tokenrouter}
+      # Required: the deployment aborts if this is unset.
+      - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the Coolify UI}
+      - DATABASE_DBNAME=${POSTGRES_DB:-tokenrouter}
+      - DATABASE_SSLMODE=disable
+      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
+      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
+      - DATABASE_CONN_MAX_LIFETIME_MINUTES=${DATABASE_CONN_MAX_LIFETIME_MINUTES:-30}
+      - DATABASE_CONN_MAX_IDLE_TIME_MINUTES=${DATABASE_CONN_MAX_IDLE_TIME_MINUTES:-5}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-256}
+      - REDIS_MIN_IDLE_CONNS=${REDIS_MIN_IDLE_CONNS:-16}
+      # Required: a stable secret keeps sessions valid across restarts. If it
+      # is unset, the deployment aborts instead of silently rotating sessions.
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in the Coolify UI}
+      - JWT_EXPIRE_HOUR=${JWT_EXPIRE_HOUR:-24}
+      # Optional: set to the same value as JWT_SECRET for a dedicated key.
+      - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@tokenrouter.local}
+      # Leave empty to let the first run generate a password and print it once
+      # to the container logs.
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_ENV=${LOG_ENV:-production}
+      - OPS_ENABLED=${OPS_ENABLED:-true}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # First run applies database migrations before serving traffic.
+      start_period: 60s
+    mem_limit: ${TOKENROUTER_MEM_LIMIT:-4g}
+    memswap_limit: ${TOKENROUTER_MEM_LIMIT:-4g}
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+    networks:
+      - tokenrouter
+
+  # ===========================================================================
+  # PostgreSQL
+  # ===========================================================================
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:18-alpine}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # Dynamic shared memory for parallel queries. The Docker default of 64 MiB
+    # is too small for large aggregations.
+    shm_size: ${POSTGRES_SHM_SIZE:-1gb}
+    # Tuning values fall back to conservative defaults; override them in the
+    # Coolify UI for larger instances. max_connections must be at least the
+    # sum of DATABASE_MAX_OPEN_CONNS across all application replicas plus
+    # headroom.
+    command: >
+      postgres
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-2GB}
+      -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-128MB}
+    environment:
+      # postgres:18-alpine defaults PGDATA to a path inside an anonymous volume.
+      # Setting it explicitly keeps data on the named volume below, so data
+      # survives container recreation.
+      - PGDATA=/var/lib/postgresql/data
+      - POSTGRES_USER=${POSTGRES_USER:-tokenrouter}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the Coolify UI}
+      - POSTGRES_DB=${POSTGRES_DB:-tokenrouter}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-tokenrouter} -d ${POSTGRES_DB:-tokenrouter} && psql -U ${POSTGRES_USER:-tokenrouter} -d ${POSTGRES_DB:-tokenrouter} -Atqc 'SELECT 1' >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    mem_limit: ${POSTGRES_MEM_LIMIT:-4g}
+    memswap_limit: ${POSTGRES_MEM_LIMIT:-4g}
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+    # No host port. Add a temporary ports mapping only for manual inspection:
+    # ports:
+    #   - "127.0.0.1:5433:5432"
+    networks:
+      - tokenrouter
+
+  # ===========================================================================
+  # Redis
+  # ===========================================================================
+  redis:
+    image: ${REDIS_IMAGE:-redis:8-alpine}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # Append-only persistence plus an RDB snapshot every 60 seconds when at
+    # least one key changed. noeviction is required because TokenRouter stores
+    # locks, sessions and rate-limit state that must not be silently dropped.
+    command: >
+      sh -c '
+        redis-server \
+        --save 60 1 \
+        --appendonly yes \
+        --appendfsync everysec \
+        --maxmemory ${REDIS_MAXMEMORY:-1gb} \
+        --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-noeviction} \
+        ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
+    environment:
+      - TZ=${TZ:-UTC}
+      # redis-cli authenticates with this variable, which avoids exposing the
+      # password in the process list the way the -a flag does.
+      - REDISCLI_AUTH=${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: ${REDIS_MEM_LIMIT:-1g}
+    memswap_limit: ${REDIS_MEM_LIMIT:-1g}
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - tokenrouter
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  tokenrouter_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  tokenrouter:
+    driver: bridge

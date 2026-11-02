@@ -1,0 +1,50 @@
+name: Hardened distribution issue
+description: Report a problem with the build, image, deployment artifacts or automation in this distribution.
+title: "[distribution] "
+labels: ["distribution"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for issues in the hardened build layer: the Dockerfile,
+        the Coolify deployment artifacts, the container image, the sync
+        automation or the documentation. Application defects belong upstream.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Container image build
+        - Coolify deployment
+        - Upstream synchronisation
+        - CI and release automation
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Distribution image tag or commit
+      placeholder: "v0.6.1-hardened, sha-2290b2e, edge"
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour
+      description: What happened, including the exact commands and output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Host platform, Docker or Podman version, deployment target.
+    validations:
+      required: true

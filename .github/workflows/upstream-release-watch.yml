@@ -1,0 +1,67 @@
+# =============================================================================
+# Upstream release watcher
+# =============================================================================
+# Polls the upstream release feed and asks the sync workflow to run whenever a
+# new tag appears. This shortens the window between an upstream release and a
+# hardened image in this distribution compared with the nightly schedule alone.
+#
+# The watcher never builds anything itself: it dispatches the sync workflow so
+# there is a single code path that touches vendored sources.
+# =============================================================================
+
+name: Upstream Release Watch
+
+on:
+  schedule:
+    # Every six hours, offset from the nightly sync to avoid overlapping runs.
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: upstream-release-watch
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    name: Detect new upstream tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compare upstream tags with mirrored tags
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPOSITORY: TokenFlux/TokenRouter
+        run: |
+          upstream="$(gh api "repos/${UPSTREAM_REPOSITORY}/tags" --paginate --jq '.[].name' | sort -u)"
+          local_tags="$(git tag --list 'v*' | sort -u)"
+          new_tags="$(comm -23 <(printf '%s\n' "${upstream}") <(printf '%s\n' "${local_tags}"))"
+          count="$(printf '%s\n' "${new_tags}" | grep -c . || true)"
+          echo "count=${count}" >>"$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${new_tags}"
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Dispatch synchronisation
+        if: steps.compare.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run upstream-sync.yml -f mode=pull-request -f full_history=false
+          {
+            echo "### New upstream releases detected"
+            echo
+            printf '%s\n' "${{ steps.compare.outputs.tags }}"
+            echo
+            echo "Dispatched \`.github/workflows/upstream-sync.yml\`."
+          } >>"$GITHUB_STEP_SUMMARY"

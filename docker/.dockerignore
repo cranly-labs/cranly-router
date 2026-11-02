@@ -1,0 +1,166 @@
+# =============================================================================
+# Docker build context ignore rules for TokenRouter (hardened build)
+# =============================================================================
+# Used with a build context rooted at the repository root:
+#
+#   docker build -f docker/Dockerfile.hardened .
+#
+# The build consumes these paths, and every one of them must stay in the
+# context:
+#
+#   .node-version                              Node version gate
+#   frontend/                                  frontend sources and lockfile
+#   backend/                                   Go sources, scripts and locale JSON
+#   backend/internal/pkg/locale/*.json         locale resources
+#   docs/legal/                                legal documents imported by the UI
+#   plugin-sdk/                                linked SDK sources (Go and web)
+#   docker/entrypoint.sh                       runtime entrypoint
+#
+# Rules below are ordered from broad to specific. Docker evaluates them in
+# order and the last matching rule wins, so every re-include at the bottom must
+# name an exact path rather than a whole tree. Naming a tree such as
+# "!frontend/" would re-include frontend/node_modules and bloat the build
+# context with hundreds of megabytes of host dependencies.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# VCS metadata
+# -----------------------------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+.gitmodules
+.githooks/
+upstream.git/
+*.orig
+*.rej
+
+# -----------------------------------------------------------------------------
+# CI metadata
+# -----------------------------------------------------------------------------
+.github/
+.gitlab-ci.yml
+.circleci/
+.goreleaser.yaml
+.goreleaser.simple.yaml
+.golangci-version
+.govulncheck-version
+.agents/
+AGENTS.md
+BRANDING.md
+BRANDING_EN.md
+README.md
+README_ZH.md
+LICENSE
+Makefile
+
+# -----------------------------------------------------------------------------
+# Documentation (the legal subtree is re-included at the bottom)
+# -----------------------------------------------------------------------------
+docs/
+**/*.md
+
+# -----------------------------------------------------------------------------
+# Editor and IDE files
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# OS metadata
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
+
+# -----------------------------------------------------------------------------
+# Installed dependencies and build output (rebuilt inside the image)
+# -----------------------------------------------------------------------------
+# These are the high-value exclusions: host node_modules trees and previous
+# build output must never enter the build context.
+node_modules/
+**/node_modules/
+frontend/node_modules/
+plugin-sdk/**/node_modules/
+frontend/dist/
+plugin-sdk/**/dist/
+backend/vendor/
+dist/
+build/
+coverage/
+.nyc_output/
+
+# -----------------------------------------------------------------------------
+# Tests, fixtures and local verification binaries
+# -----------------------------------------------------------------------------
+*_test.go
+**/*.test.js
+**/*.spec.js
+**/*.test.ts
+**/*.spec.ts
+backend/bin/
+backend/server
+backend/*.test
+backend/data/
+testdata/
+output/
+
+# -----------------------------------------------------------------------------
+# Environment and local configuration
+# -----------------------------------------------------------------------------
+# Example files are documentation and stay in the context; real environment
+# files never do.
+.env
+.env.*
+config.yaml
+config.local.yaml
+
+# -----------------------------------------------------------------------------
+# Logs and temporary files
+# -----------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# -----------------------------------------------------------------------------
+# Deployment runtime data (populated at runtime on the host or in volumes)
+# -----------------------------------------------------------------------------
+deploy/data/
+deploy/postgres_data/
+deploy/redis_data/
+deploy/install.sh
+deploy/tokenrouter.service
+deploy/tokenrouter-sudoers
+
+# -----------------------------------------------------------------------------
+# Local agent and planning artifacts
+# -----------------------------------------------------------------------------
+.claude/
+CLAUDE.md
+issues/
+refactor/
+
+# -----------------------------------------------------------------------------
+# Re-includes: exact paths the build needs
+# -----------------------------------------------------------------------------
+# Each entry names a specific file or directory that an earlier broad rule
+# would otherwise drop. Do not replace these with whole-tree negations, and do
+# not add a directory that contains node_modules.
+!.node-version
+!docs/legal/
+!docs/legal/**
+!docker/entrypoint.sh
+# Keep the annotated environment templates in the context: they are small
+# documentation artifacts that operators copy out of the repository.
+!.env.example
+!.env.*.example
+!deploy/coolify/.env.example

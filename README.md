@@ -1,143 +1,238 @@
-<div align="center">
-  <p>
-    <img src="assets/readme/banner.svg" width="100%" alt="TokenRouter, an open source LLM gateway. Messages, Responses, Chat Completions, and Gemini requests enter one endpoint and are routed to upstream platforms such as Anthropic, OpenAI, and Gemini, with failover when an upstream returns an error." />
-  </p>
+<!-- Replace the single placeholder token <OWNER> in the links and badge URLs below with your GitHub organization or user name. Everything else can stay as written. -->
 
-  <p>
-    <a href="https://github.com/TokenFlux/TokenRouter/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/TokenFlux/TokenRouter/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white&labelColor=27272A" alt="CI" /></a>
-    <a href="https://github.com/TokenFlux/TokenRouter/releases"><img src="https://img.shields.io/github/v/release/TokenFlux/TokenRouter?display_name=tag&style=flat-square&label=release&labelColor=27272A&color=3F3F46" alt="Release" /></a>
-    <a href="https://github.com/TokenFlux/TokenRouter/pkgs/container/tokenrouter"><img src="https://img.shields.io/badge/container-ghcr.io-3F3F46?style=flat-square&logo=docker&logoColor=white&labelColor=27272A" alt="Container: ghcr.io/tokenflux/tokenrouter" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0--or--later-3F3F46?style=flat-square&labelColor=27272A" alt="License: LGPL-3.0-or-later" /></a>
-    <a href="https://discord.com/invite/7XZzukhX4E"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white&labelColor=27272A" alt="Discord" /></a>
-  </p>
+# tokenrouter-hardened-mirror
 
-  <p><strong>English</strong> · <a href="README_ZH.md">简体中文</a> · <a href="#plugins">Plugins</a> · <a href="#quick-start">Quick Start</a> · <a href="#documentation">Documentation</a></p>
-</div>
+**A hardened, reproducible, supply-chain-aware downstream distribution of [TokenRouter](https://github.com/TokenFlux/TokenRouter), deployed Coolify-first.**
+
+[![CI](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/ci.yml)
+[![Upstream Sync](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/upstream-sync.yml/badge.svg?branch=main)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/upstream-sync.yml)
+[![Container](https://img.shields.io/badge/ghcr.io-tokenrouter--hardened-3F3F46?logo=docker&logoColor=white)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/pkgs/container/tokenrouter-hardened)
+[![License](https://img.shields.io/badge/license-LGPL--3.0--or--later-3F3F46)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-3F3F46)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/pkgs/container/tokenrouter-hardened)
+
+---
 
 ## Overview
 
-TokenRouter is an open source unified LLM gateway. It puts model services from Anthropic, OpenAI, Gemini, and other vendors behind one endpoint, so a client can call models from different vendors with a single API key.
+`tokenrouter-hardened-mirror` is an independently maintained downstream build of **TokenRouter**, the open-source LLM API gateway. It tracks the upstream project closely, keeps the application code unmodified wherever possible, and adds a thin, auditable layer of production-hardening and supply-chain controls around the build and deployment path.
 
-> [!WARNING]
-> Commercial API gateway services are permitted under the applicable open-source licenses. You must not impersonate the official TokenFlux service or use names, logos, domains, interfaces, or promotional materials that misleadingly suggest official operation, authorization, partnership, or endorsement by TokenFlux. Commercial operators are encouraged to customize the frontend and clearly identify the actual operator. The relevant rights holders reserve the right to seek corrective action under applicable law for infringement or such confusion. See the [Commercial Use and Branding Notice](BRANDING_EN.md).
+This distribution exists for platform-engineering teams that need to:
 
-## Screenshots
+- **Run TokenRouter from an image they can reason about.** The runtime image is rebuilt from a hardened Dockerfile with pinned and overridable base images, non-root execution, and explicit OCI metadata.
+- **Verify what they deploy.** Every release image ships with a Software Bill of Materials (SBOM) and build provenance attestation, so artifacts can be traced back to a commit, a workflow run, and a signed build.
+- **Deploy the same way every time.** A Coolify-first deployment artifact set provides a single, reviewable Compose file and documented environment contract for repeatable rollouts.
+- **Stay current without manual merging.** A scheduled workflow pulls upstream changes into reviewable pull requests, so the distribution does not silently drift behind upstream security fixes.
+- **Give AI agents a safe contract.** Explicit contribution rules define where local customisation is allowed and where upstream sources remain authoritative.
 
-### Dashboard
+This project is a *distribution*, not a fork with application-level feature work. The gateway, its protocols, its frontend, and its plugin SDK are upstream code. The value added here is the hardened delivery surface around it.
 
-<img src="assets/screenshots/dashboard-dark.jpg" alt="TokenRouter Dashboard · Dark mode" width="1600" />
+> This distribution is an independent downstream build. It is not affiliated with, sponsored by, or endorsed by TokenFlux. See [License and attribution](#license-and-attribution).
 
-### Model Marketplace
+---
 
-<img src="assets/screenshots/models-dark.jpg" alt="TokenRouter Model Marketplace · Dark mode" width="1600" />
+## What this distribution changes
+
+| Concern | Upstream TokenFlux/TokenRouter | tokenrouter-hardened-mirror |
+| --- | --- | --- |
+| Runtime image | Multi-stage image built from the upstream Dockerfile | Hardened runtime image: non-root user, minimal runtime package set, explicit entrypoint and signal handling, read-only-friendly filesystem assumptions |
+| Base images | Build args with upstream defaults | Pinned defaults, fully overridable via build args so operators can substitute verified bases under their own patch policy |
+| OCI metadata | Baseline labels | Extended `org.opencontainers.image.*` labels (source, revision, version, created, licenses) for provenance and registry tooling |
+| SBOM and provenance | Not part of the default image contract | SBOM generated per build and signed provenance attestation attached to pushed images |
+| Image tag policy | `latest` and release tags | Documented tag policy: `latest`, `vX.Y.Z`, `sha-<short7>`, `edge`, with a clear meaning and stability guarantee for each |
+| Deployment | Compose, install script, standalone container | Coolify-first Compose artifact under `deploy/coolify/` plus documented standalone options |
+| Upstream tracking | n/a (is upstream) | Scheduled automated sync workflow opening reviewable pull requests with a label contract |
+| Contributor contract | Upstream `AGENTS.md` and docs | Additional AI-agent contract in `docs/ai/CONTRIBUTING-AI.md` and root `AGENTS.md`, plus `docs/DOWNSTREAM-PATCHES.md` to record every deviation |
+
+---
+
+## Architecture
+
+```text
++------------------------------+
+|  Upstream repository         |
+|  TokenFlux/TokenRouter@main  |
++--------------+---------------+
+               |
+               | scheduled sync workflow (fetch, rebase, open PR)
+               v
++------------------------------+
+|  main of this repository     |
+|  tokenrouter-hardened-mirror |
++--------------+---------------+
+               |
+               | CI build and test (lint, unit, integration, image build)
+               v
++------------------------------+
+|  Container image             |
+|  ghcr.io/<OWNER>/            |
+|    tokenrouter-hardened      |
++--------------+---------------+
+               |
+               | pull by tag
+               v
++------------------------------+
+|  Coolify deployment          |
+|  deploy/coolify/             |
++------------------------------+
+```
+
+Each stage is independently observable: sync produces a pull request, CI produces a status check and an attested image, and deployment consumes a specific image tag rather than a floating reference.
+
+---
+
+## Container images
+
+Images are published to the GitHub Container Registry:
+
+```text
+ghcr.io/<OWNER>/tokenrouter-hardened
+```
+
+| Tag | Meaning | Mutability | Recommended use |
+| --- | --- | --- | --- |
+| `latest` | Most recent successful build from `main` | Moves on every successful `main` build | Evaluation, staging |
+| `vX.Y.Z` | Release aligned to an upstream version | Immutable once published | Production |
+| `sha-<short7>` | Build for a specific commit (first 7 characters) | Immutable | Bisecting, rollback, forensics |
+| `edge` | Bleeding-edge build from the sync branch or pre-release state | Moves frequently | Early testing only |
+
+**Supported platforms:** `linux/amd64` and `linux/arm64`.
+
+For production, pin an immutable tag:
+
+```bash
+docker pull ghcr.io/<OWNER>/tokenrouter-hardened:v0.6.1
+```
+
+> Tag availability depends on whether the corresponding build and attestation steps have completed. Prefer immutable tags in any environment you depend on.
+
+---
+
+## Deployment on Coolify
+
+The recommended production path for this distribution is [Coolify](https://coolify.io).
+
+1. In Coolify, create a new resource of type **Docker Compose**.
+2. Point it at this repository (or at the raw Compose file) using `deploy/coolify/docker-compose.yml`.
+3. Set the environment variables described in `deploy/coolify/.env.example`. Generate independent secrets for the database and application; never reuse example values.
+4. Set the image tag explicitly to a `vX.Y.Z` release tag instead of `latest`.
+5. Deploy, then verify the health endpoint and confirm the database and cache services are reachable from the application container.
+6. Configure persistent volumes for the database and any plugin or upload data, and back them up on your own schedule.
+
+Full operator guidance, including required variables, volume layout, and upgrade steps, lives in [`deploy/coolify/README.md`](deploy/coolify/README.md).
 
 <details>
-<summary>Light mode screenshots</summary>
+<summary>Coolify checklist before going live</summary>
 
-### Dashboard
-
-<img src="assets/screenshots/dashboard-light.jpg" alt="TokenRouter Dashboard · Light mode" width="1600" />
-
-### Model Marketplace
-
-<img src="assets/screenshots/models-light.jpg" alt="TokenRouter Model Marketplace · Light mode" width="1600" />
+- Immutable image tag pinned, not `latest`.
+- Database password and application secrets generated independently and stored in Coolify secrets.
+- Persistent volumes mapped and included in backups.
+- HTTPS terminated at Coolify with a valid certificate.
+- Health checks enabled and alerting wired to your on-call channel.
+- Rollback target image tag recorded.
 
 </details>
 
-Visit the service officially operated by TokenFlux at [tokenflux.com](https://tokenflux.com).
+---
 
-## Capabilities
+## Deployment with Docker Compose
 
-| Area | What you can do |
+The Coolify Compose artifact is a normal Compose file and can be used directly:
+
+```bash
+docker compose -f deploy/coolify/docker-compose.yml up -d
+```
+
+Upstream also documents standalone and scripted options. When you deploy without Coolify, you are responsible for TLS termination, secret management, and host-level hardening. Treat the Coolify artifact as the reference configuration and adapt it deliberately rather than inventing a parallel stack.
+
+---
+
+## Staying in sync with upstream
+
+This distribution is kept current by an automated synchronisation workflow rather than by manual merges.
+
+**Model.** A scheduled GitHub Actions workflow fetches `TokenFlux/TokenRouter@main`, replays upstream commits on top of the current default branch state, and opens a pull request. The workflow does not push directly to `main`; every synchronisation lands as a reviewable change set.
+
+**What a sync pull request looks like.** It contains only upstream commits plus, when required, minimal conflict-resolution commits confined to downstream-owned files. The PR body summarises the upstream range covered, the upstream version, and any files that required manual resolution.
+
+**Label contract.** Sync pull requests carry labels used to drive dashboards and review routing:
+
+| Label | Meaning |
 | --- | --- |
-| Model access | Accept Anthropic Messages, OpenAI Responses, Chat Completions, and Gemini requests, and convert between the protocols a group allows |
-| Upstream platforms | Connect Anthropic, OpenAI, Gemini, Antigravity, Grok, Qoder, Kimi, Zhipu, and DeepSeek through OAuth accounts, API keys, AWS Bedrock, or Vertex AI |
-| Routing and retries | Pick an upstream by model, protocol support, rate limit state, and sticky sessions, and move to the next one when an upstream fails |
-| Access control | Manage users, teams, groups, and API key quotas, concurrency, and RPM limits. Sign in with email and password, passkeys, two-factor authentication, GitHub, Google, LinuxDo, OIDC, WeChat, or DingTalk |
-| Billing and payments | Charge by usage, with balance, subscription plans, quota packs, redeem codes, and referral rebates. Built-in payments support EasyPay, Alipay, WeChat Pay, Stripe, and Airwallex |
-| Content moderation | Block requests with keyword and hash rules, and ban offending users automatically |
-| Admin dashboard | Browse usage logs and statistics, set up alerts and email reports, and upgrade or roll back online. The creative studio generates and edits images in the browser. The UI is available in Simplified Chinese and English |
-| Plugins | Add user and admin pages, HTTP APIs, and scheduled tasks. Install, configure, update, and roll back plugins from the admin dashboard |
+| `sync:upstream` | Opened by the automated synchronisation workflow |
+| `sync:clean` | Applied without conflicts; safe to fast-track review |
+| `sync:conflict` | Contains conflicts or manual resolutions; requires owner review |
+| `sync:blocked` | Sync stopped due to an upstream change that breaks the downstream build or contract |
 
-### Protocols and Endpoints
+**Resolving conflicts.** Keep local changes minimal and confined to files this distribution owns: `docker/`, `deploy/coolify/`, `.github/workflows/`, `docs/`, and the root documentation files. When a conflict touches upstream application code, prefer the upstream version and move the customisation into a downstream-owned file. Record any resulting behavioural deviation in `docs/DOWNSTREAM-PATCHES.md` in the same pull request.
 
-| Type | Common endpoints |
+Never force-push `main`, and never hand-edit generated sync metadata.
+
+---
+
+## Repository layout
+
+| Path | Purpose |
 | --- | --- |
-| Anthropic Messages | `POST /v1/messages` |
-| OpenAI Responses / Chat | `POST /v1/responses`, `POST /v1/chat/completions` |
-| Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent` |
-| WebSocket | `GET /v1/responses`, `GET /v1/realtime` |
-| Embeddings | `POST /v1/embeddings` |
-| Images | `/v1/images/generations`, `/v1/images/edits`, `/v1/images/batches` |
-| Video | `/v1/videos/generations`, `/v1/videos/edits`, `/v1/videos/extensions` |
-| Voice | `/v1/tts`, `/v1/stt`, `/v1/custom-voices` |
-| Search | `/v1/web_search`, `/v1/x_search`, `/v1/alpha/search` |
-| Models and usage | `GET /v1/models`, `GET /v1/usage` |
+| `backend/` | Upstream Go 1.27 gateway application |
+| `frontend/` | Upstream Vue 3 + pnpm web application |
+| `plugin-sdk/` | Upstream plugin SDKs (MIT), with `go/` and `web/` packages |
+| `deploy/` | Deployment artifacts; `deploy/coolify/` holds the hardened Compose stack |
+| `docker/` | Hardened Dockerfile and build support files owned by this distribution |
+| `.github/workflows/` | CI, upstream synchronisation, and supply-chain workflows |
+| `docs/` | Downstream documentation, including `docs/ai/` and `docs/DOWNSTREAM-PATCHES.md` |
+| `tools/` | Upstream development and maintenance tooling |
+| `assets/` | Upstream brand and documentation assets |
 
-The [upstream provider capability matrix (Chinese)](docs/interfaces/upstream_provider_matrix.md) lists which upstream platforms serve each endpoint.
+The application source trees mirror upstream. Downstream-owned paths are intentionally narrow so upstream merges stay mechanical.
 
-## Plugins
+---
 
-Plugins extend TokenRouter with custom features without modifying the core application. The [daily check-in plugin](https://github.com/TokenFlux/tr-plugin-checkin), for example, adds a user check-in page, balance rewards, and an admin history page.
+## Contributing
 
-- Install from the built-in catalog or a custom source, or upload a `.tar.gz` package in **Plugin Management** (`/admin/plugins`). Review requested permissions before installation.
-- Configure settings and operation limits, inspect logs and resource usage, and enable, disable, or restart plugins. Updates support rollback to the previous version; failed startup during an update triggers an attempt to restore the old version.
-- Build user and admin pages, HTTP APIs, and scheduled tasks. Granted host permissions allow plugins to query usage, adjust balances, issue redeem codes, grant subscriptions, or send email. Each plugin has its own KV storage namespace.
+Human contributors should start with [`CONTRIBUTING.md`](CONTRIBUTING.md) for environment setup, branch naming, commit conventions, and review expectations. CI must pass before a pull request is reviewable.
 
-The MIT-licensed Go and Web SDKs support backend processes and Vue pages. Start with the [official template](https://github.com/TokenFlux/tokenrouter-plugin-template) and [plugin development guide (Chinese)](docs/guides/plugins/index.md).
+AI coding agents must read [`docs/ai/CONTRIBUTING-AI.md`](docs/ai/CONTRIBUTING-AI.md) and the root [`AGENTS.md`](AGENTS.md) before making changes. The short version: upstream sources are authoritative, local patches must stay minimal and documented, and every deviation from upstream is recorded in `docs/DOWNSTREAM-PATCHES.md`.
 
-Plugins run as administrator-trusted code, without an OS or browser sandbox. Custom model providers are not currently supported. See [plugin operations (Chinese)](docs/operations/plugin_operations.md) for installation, recovery, and backup details.
+<details>
+<summary>Where local customisation belongs</summary>
 
-## Quick Start
+- `docker/` — hardened image build
+- `deploy/coolify/` — Coolify-first deployment stack
+- `.github/workflows/` — CI, sync, and attestation automation
+- `docs/` and root documentation — contributor and operator guides
 
-Deploy with Docker Compose:
+Anything outside these paths should match upstream.
 
-```bash
-mkdir -p tokenrouter-deploy && cd tokenrouter-deploy
+</details>
 
-# Download the Compose file and .env, and generate the database password and secrets
-curl -sSL https://raw.githubusercontent.com/TokenFlux/TokenRouter/main/deploy/docker-deploy.sh | bash
+---
 
-docker compose up -d
-```
+## Security
 
-Then open `http://localhost:8080`. You can set the admin password with `ADMIN_PASSWORD` in `.env`. If it is not set, TokenRouter generates a random password and prints it to the log:
+Report vulnerabilities privately through **GitHub Security Advisories** on this repository. Do not open a public issue for a suspected vulnerability. Response expectations and scope are described in [`SECURITY.md`](SECURITY.md).
 
-```bash
-docker compose logs tokenrouter | grep "admin password"
-```
+Hardening measures applied by this distribution:
 
-The [deployment guide (Chinese)](docs/guides/deployment/index.md) covers other options such as the install script and standalone containers.
+- Hardened runtime image with a non-root process user and a minimal runtime package set.
+- Pinned base images with a single, documented override point for each.
+- SBOM generated for every published image and retained with the release.
+- Build provenance attestation attached to pushed images.
+- Explicit image tag policy so production can pin immutable references.
+- Coolify-first deployment artifact with a documented environment contract.
+- Automated upstream synchronisation so security fixes upstream are surfaced as reviewable pull requests.
 
-## Development
+---
 
-The backend is written in Go and the frontend in Vue 3. To run the full stack from source:
+## License and attribution
 
-```bash
-docker compose -f deploy/docker-compose.dev.yml up --build
-```
+Upstream **TokenRouter** is licensed under the **GNU Lesser General Public License v3.0 or later** (LGPL-3.0-or-later). The upstream `plugin-sdk/` is licensed under the **MIT License**. Upstream copyright is:
 
-[Development workflow (Chinese)](docs/operations/development_workflow.md) lists the required toolchain versions, how to run the backend and frontend separately, and the test commands.
-
-## Documentation
-
-- [Usage and operations guides (Chinese)](docs/guides/index.md): deployment, payment setup, and external integrations.
-- [Engineering documentation (Chinese)](docs/index.md): architecture, business rules, interfaces, and operational constraints. Start here before changing code.
-- [Upgrade notes (Chinese)](docs/operations/upgrade_notes.md): changes to watch for in each release.
-
-## License
-
-This project is distributed under the [GNU Lesser General Public License v3.0 or later](LICENSE).
-
-The `plugin-sdk/` directory uses the [MIT License](plugin-sdk/LICENSE).
-
+```text
 Copyright (c) 2026 Wesley Liddick & TokenFlux
+```
 
-## Star History
+This repository is an **independent downstream distribution**. It is **not affiliated with, sponsored by, or endorsed by TokenFlux**. It must not be operated, presented, or marketed in a way that impersonates the official TokenFlux service, and it must not reuse TokenFlux branding, logos, domain names, or promotional material in ways that falsely suggest official operation, authorisation, partnership, or endorsement.
 
-<a href="https://star-history.com/#TokenFlux/TokenRouter&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=TokenFlux/TokenRouter&type=Date&theme=dark" />
-    <img src="https://api.star-history.com/svg?repos=TokenFlux/TokenRouter&type=Date" alt="Star History Chart" />
-  </picture>
-</a>
+This section extends the intent of the upstream `BRANDING_EN.md` commercial-use and branding notice. Operators deploying this distribution are responsible for choosing a distinct site name, visual identity, and service description, and for clearly identifying the actual operator and contact details. All copyright, license, and attribution notices required by the applicable licenses must be retained.
+
+Truthful attribution such as "Built with TokenRouter" is permitted where it does not misleadingly suggest an official relationship. Nothing in this notice reduces the rights granted by the applicable open-source licenses.

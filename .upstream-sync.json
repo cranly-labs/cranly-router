@@ -1,0 +1,53 @@
+{
+  "$comment": "Metadata contract for the automated upstream synchronisation pipeline. Read by .github/workflows/upstream-sync.yml and by .github/scripts/sync-*.sh. Do not edit by hand during a sync run.",
+  "upstream": {
+    "repository": "TokenFlux/TokenRouter",
+    "gitUrl": "https://github.com/TokenFlux/TokenRouter.git",
+    "defaultBranch": "main",
+    "license": "LGPL-3.0-or-later",
+    "vendorDirectories": [
+      "backend",
+      "frontend",
+      "plugin-sdk",
+      "tools",
+      "assets",
+      "docs/legal"
+    ]
+  },
+  "mirror": {
+    "baseBranch": "main",
+    "syncBranchPrefix": "sync/upstream",
+    "edgeBranch": "edge",
+    "syncLabel": "upstream-sync",
+    "conflictLabel": "sync-conflict",
+    "autoMergeLabel": "sync-automerge"
+  },
+  "sync": {
+    "mode": "pull-request",
+    "allowAutomaticMerge": false,
+    "preserveLocalPaths": [
+      ".github/workflows/upstream-sync.yml",
+      ".github/workflows/build-images.yml",
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml",
+      ".github/workflows/security-scan.yml",
+      ".github/ISSUE_TEMPLATE/",
+      "docker/",
+      "deploy/coolify/",
+      "docs/ai/",
+      "docs/DOWNSTREAM-PATCHES.md",
+      ".github/scripts/",
+      "AGENTS.md",
+      "SECURITY.md",
+      "CONTRIBUTING.md"
+    ]
+  },
+  "release": {
+    "mirrorTags": true,
+    "imagePrefix": "tokenrouter-hardened",
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  }
+}

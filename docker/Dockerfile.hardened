@@ -1,0 +1,273 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# TokenRouter Hardened Dockerfile
+# =============================================================================
+# Production-hardened multi-stage build derived from the upstream Dockerfile.
+# Build semantics are intentional copies of upstream so this file remains a
+# drop-in replacement:
+#   Stage 1: frontend builder (runs on the build platform, architecture neutral)
+#   Stage 2: Go backend builder (cross-compiles with CGO_ENABLED=0, -tags embed)
+#   Stage 3: PostgreSQL client extraction (version matched with the server)
+#   Stage 4: final minimal runtime image
+#
+# Differences from upstream are hardening only: explicit BUILDPLATFORM on the
+# toolchain stages, BuildKit cache mounts for pnpm/Go caches, OCI labels, a
+# healthcheck with a start period, and a documented read-only-rootfs contract.
+#
+# License: LGPL-3.0-or-later. See LICENSE in the repository root.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Overridable base images and toolchain knobs
+# -----------------------------------------------------------------------------
+# Every pinned image can be replaced at build time, e.g. for air-gapped mirrors:
+#   docker build -f docker/Dockerfile.hardened \
+#     --build-arg NODE_IMAGE=registry.internal/node:26.12.1-alpine .
+ARG NODE_IMAGE=node:26.12.1-alpine
+ARG GOLANG_IMAGE=golang:1.27.3-alpine
+ARG ALPINE_IMAGE=alpine:3.21
+ARG POSTGRES_IMAGE=postgres:18-alpine
+
+# Module proxy and checksum database used by the Go toolchain.
+ARG GOPROXY=https://goproxy.cn,direct
+ARG GOSUMDB=sum.golang.google.cn
+# Optional npm registry override; empty means the image default registry.
+ARG NPM_CONFIG_REGISTRY=
+
+# Architecture tuning. Defaults are safe on every CPU: GOAMD64=v1 is the
+# baseline AMD64 microarchitecture level and GOARM64=v8.0 is the baseline
+# ARM64 level. Raise them only when every host that runs the image supports
+# the newer instruction set.
+ARG GOAMD64=v1
+ARG GOARM64=v8.0
+
+# Build metadata. These feed both the linker flags and the OCI labels. CI is
+# expected to pass VERSION/COMMIT/DATE; local builds fall back to defaults.
+ARG VERSION=
+ARG COMMIT=docker
+ARG DATE=
+ARG BUILD_TYPE=release
+
+# OCI image metadata.
+ARG OCI_TITLE="TokenRouter - AI API Gateway Platform"
+ARG OCI_DESCRIPTION="Hardened TokenRouter distribution: LLM API gateway with embedded admin UI, backup tooling and non-root runtime."
+ARG OCI_SOURCE="https://github.com/tokenrouter/tokenrouter-hardened-mirror"
+ARG OCI_URL="https://github.com/tokenrouter/tokenrouter-hardened-mirror"
+ARG OCI_LICENSES="LGPL-3.0-or-later"
+ARG OCI_VENDOR="tokenrouter-hardened-mirror maintainers"
+ARG OCI_REVISION=${COMMIT}
+ARG OCI_CREATED=
+
+# -----------------------------------------------------------------------------
+# Stage 1: Frontend builder
+# -----------------------------------------------------------------------------
+# The frontend emits architecture-independent JavaScript, so it is pinned to the
+# build platform. This avoids running the toolchain under target architecture
+# emulation and keeps the dependency install cache reusable across targets.
+FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS frontend-builder
+ARG NPM_CONFIG_REGISTRY
+
+WORKDIR /app/frontend
+
+# The Node version in the image must match the repository .node-version file.
+# The pnpm version is taken from the packageManager field in frontend/package.json.
+COPY .node-version /app/
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+# The linked SDK provides shared source contracts and runtime values to the host build.
+COPY plugin-sdk/web/package.json /app/plugin-sdk/web/
+COPY plugin-sdk/web/src/ /app/plugin-sdk/web/src/
+RUN test "$(node -p 'process.versions.node')" = "$(cat /app/.node-version)" && \
+    npm install --global "$(node -p 'require("./package.json").packageManager')"
+
+# Cache mount keeps the pnpm content-addressable store across builds; source
+# changes still reuse the installed dependency layer.
+RUN --mount=type=cache,id=tokenrouter-pnpm-store,target=/root/.local/share/pnpm/store \
+    if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
+    pnpm install --frozen-lockfile --prefer-offline
+
+# Copy frontend sources, legal documents and shared locale resources, then build.
+COPY frontend/ ./
+COPY docs/legal/ /app/docs/legal/
+COPY backend/internal/pkg/locale/*.json /app/backend/internal/pkg/locale/
+RUN pnpm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: Backend builder
+# -----------------------------------------------------------------------------
+# The Go toolchain runs on the build platform and cross-compiles to the target.
+# CGO is disabled, so no target-architecture execution is required while
+# downloading modules or compiling.
+FROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} AS backend-builder
+
+ARG VERSION=
+ARG COMMIT=docker
+ARG DATE=
+ARG BUILD_TYPE=release
+ARG GOPROXY
+ARG GOSUMDB
+ARG GOAMD64
+ARG GOARM64
+# Injected by buildx from --platform, for example linux/amd64.
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=${GOSUMDB}
+
+# Build dependencies: git for module VCS fetch, ca-certificates for TLS,
+# tzdata so the binary can resolve IANA time zones at runtime.
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /app/backend
+
+# Copy module manifests first so dependency resolution stays cached.
+COPY backend/go.mod backend/go.sum ./
+# The backend resolves the MIT SDK through a local module replacement.
+COPY plugin-sdk/go /app/plugin-sdk/go
+# Cache the module download cache; transient proxy failures can be retried
+# without refetching every dependency.
+RUN --mount=type=cache,id=tokenrouter-gomod,target=/go/pkg/mod \
+    go mod download
+
+# Copy backend sources.
+COPY backend/ ./
+
+# Copy the frontend build output last so it cannot be shadowed by sources.
+COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
+
+# Build the release binary with the embedded frontend.
+# Version precedence: build arg VERSION > exact git tag > cmd/server/VERSION.
+RUN --mount=type=cache,id=tokenrouter-gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=tokenrouter-gobuild,target=/root/.cache/go-build \
+    VERSION_VALUE="${VERSION}" && \
+    if [ -z "${VERSION_VALUE}" ]; then VERSION_VALUE="$(./scripts/resolve-version.sh)"; fi && \
+    DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
+    CGO_ENABLED=0 \
+    GOOS=${TARGETOS:-linux} \
+    GOARCH=${TARGETARCH} \
+    GOAMD64=${GOAMD64} \
+    GOARM64=${GOARM64} \
+    go build \
+    -tags embed \
+    -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=${BUILD_TYPE}" \
+    -trimpath \
+    -o /app/tokenrouter \
+    ./cmd/server
+
+# -----------------------------------------------------------------------------
+# Stage 3: PostgreSQL client (must match the database server version)
+# -----------------------------------------------------------------------------
+# pg_dump and psql are extracted from the same PostgreSQL release used by the
+# Compose deployment so logical backups and restores are version compatible
+# without mounting the Docker socket into the application container.
+FROM ${POSTGRES_IMAGE} AS pg-client
+
+# -----------------------------------------------------------------------------
+# Stage 4: Final runtime image
+# -----------------------------------------------------------------------------
+FROM ${ALPINE_IMAGE}
+
+ARG VERSION=
+ARG COMMIT=docker
+ARG OCI_TITLE
+ARG OCI_DESCRIPTION
+ARG OCI_SOURCE
+ARG OCI_URL
+ARG OCI_LICENSES
+ARG OCI_VENDOR
+ARG OCI_REVISION
+ARG OCI_CREATED
+
+# Full OCI label set. Values come from the ARGs above, so a CI build can stamp
+# provenance without editing this file.
+LABEL org.opencontainers.image.title="${OCI_TITLE}" \
+    org.opencontainers.image.description="${OCI_DESCRIPTION}" \
+    org.opencontainers.image.source="${OCI_SOURCE}" \
+    org.opencontainers.image.url="${OCI_URL}" \
+    org.opencontainers.image.licenses="${OCI_LICENSES}" \
+    org.opencontainers.image.revision="${OCI_REVISION}" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.created="${OCI_CREATED}" \
+    org.opencontainers.image.vendor="${OCI_VENDOR}"
+LABEL maintainer="tokenrouter-hardened-mirror maintainers"
+
+# Runtime dependencies only. Note that `apk upgrade` is deliberately absent:
+# upgrading every package in the base image resolves a fresh set of versions at
+# build time, which breaks layer reproducibility and cache stability, and makes
+# two builds of the same commit produce different image contents. Base image
+# security updates are picked up by bumping ALPINE_IMAGE instead.
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    su-exec \
+    libpq \
+    zstd-libs \
+    lz4-libs \
+    krb5-libs \
+    libldap \
+    libedit \
+    && rm -rf /var/cache/apk/*
+
+# Copy pg_dump and psql from the same PostgreSQL image used by the deployment
+# stack, keeping backup tools and database server versions aligned.
+COPY --from=pg-client /usr/local/bin/pg_dump /usr/local/bin/pg_dump
+COPY --from=pg-client /usr/local/bin/psql /usr/local/bin/psql
+COPY --from=pg-client /usr/local/lib/libpq.so.5* /usr/local/lib/
+
+# Non-root runtime identity. The entrypoint repairs volume ownership as root and
+# then drops to this user through su-exec.
+RUN addgroup -g 1000 tokenrouter && \
+    adduser -u 1000 -G tokenrouter -s /bin/sh -D tokenrouter
+
+WORKDIR /app
+
+# Copy the release binary (with embedded frontend) and set its owner.
+COPY --from=backend-builder --chown=tokenrouter:tokenrouter /app/tokenrouter /app/tokenrouter
+
+# Create the persistent data directory.
+RUN mkdir -p /app/data && chown tokenrouter:tokenrouter /app/data
+
+# Copy the hardened entrypoint script: it repairs /app/data ownership as root,
+# runs optional init hooks, validates the binary and then drops privileges.
+COPY docker/entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+# The application listens on 8080; SERVER_PORT can override the bind port but
+# this declared port is what clients and proxies expect by default.
+EXPOSE 8080
+
+# Health endpoint. The start period is generous because first-run auto setup
+# applies database migrations before the server begins serving traffic.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD wget -q -T 5 -O /dev/null "http://localhost:${SERVER_PORT:-8080}/health" || exit 1
+
+# The runtime user is fixed at build time; the entrypoint drops to it after the
+# ownership repair step.
+USER tokenrouter
+
+# -----------------------------------------------------------------------------
+# Read-only root filesystem contract
+# -----------------------------------------------------------------------------
+# This image is compatible with `--read-only` plus `--tmpfs /tmp`. The
+# following paths are written at runtime and must remain writable:
+#
+#   /app/data   Persistent state: config.yaml, logs/, generated secrets,
+#               pricing data and any operator-supplied assets. Mount a named
+#               volume or bind mount here.
+#   /tmp        Scratch space used by the Go runtime and temporary files
+#               created during backup and restore operations. Mount a tmpfs.
+#
+# Everything else in the image is immutable, so it can safely be mounted
+# read-only. When running with a read-only root filesystem, provide /tmp
+# explicitly, otherwise Go's temporary file handling and pg_dump helpers fail.
+# -----------------------------------------------------------------------------
+
+# Run the application: the entrypoint repairs /app/data ownership, runs init
+# hooks, then execs the binary as tokenrouter so it becomes PID 1.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+
+# Backwards-compatible alias: older Compose templates invoke /app/sub2api.
+RUN ln -s /app/tokenrouter /app/sub2api
+
+CMD ["/app/tokenrouter"]
