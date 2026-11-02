@@ -31,6 +31,7 @@ UPSTREAM_REMOTE="${UPSTREAM_REMOTE:-upstream}"
 UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-main}"
 MIRROR_BRANCH="${MIRROR_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SYNC_REPORT="${SYNC_REPORT:-${MIRROR_ROOT}/sync-report.json}"
+STATE_FILE="${STATE_FILE:-${MIRROR_ROOT}/.sync-state}"
 METADATA_FILE="${MIRROR_ROOT}/.upstream-sync.json"
 
 if [ ! -f "$METADATA_FILE" ]; then
@@ -38,7 +39,12 @@ if [ ! -f "$METADATA_FILE" ]; then
   exit 1
 fi
 
-mapfile -t PRESERVED_PATHS < <(python3 - "$METADATA_FILE" <<'PY'
+# Read the preserved-path list into an array. mapfile requires bash 4, so the
+# loop form keeps this script working on the bash 3.2 that ships with macOS.
+PRESERVED_PATHS=()
+while IFS= read -r preserved; do
+  [ -n "$preserved" ] && PRESERVED_PATHS+=("$preserved")
+done < <(python3 - "$METADATA_FILE" <<'PY'
 import json, sys
 meta = json.load(open(sys.argv[1]))
 for path in meta["sync"]["preserveLocalPaths"]:
@@ -60,7 +66,29 @@ fi
 git fetch --no-tags --prune "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
 UPSTREAM_REF="${UPSTREAM_REMOTE}/${UPSTREAM_BRANCH}"
 UPSTREAM_SHA="$(git rev-parse "$UPSTREAM_REF")"
-BASE_SHA="$(git merge-base HEAD "$UPSTREAM_REF" || true)"
+
+# The comparison base is the upstream revision this branch last consumed. The
+# sync workflow stores it in a state file so conflict detection stays correct
+# even though mirror commits rewrite history relative to upstream. When the file
+# is absent the merge base is used, and as a last resort the empty tree is used
+# so the very first run still reports preserved-path edits.
+BASE_SHA=""
+if [ -f "$STATE_FILE" ]; then
+  BASE_SHA="$(tr -d '\r\n' <"$STATE_FILE")"
+fi
+if [ -z "$BASE_SHA" ]; then
+  BASE_SHA="$(git merge-base HEAD "$UPSTREAM_REF" 2>/dev/null || true)"
+fi
+if [ -z "$BASE_SHA" ]; then
+  # No shared history yet: compare against the empty tree so every upstream
+  # change is considered and preserved-path edits are still reported.
+  BASE_SHA="$(git hash-object -t tree --stdin </dev/null)"
+  echo "sync-upstream: no common history with ${UPSTREAM_REF}; using empty tree as base" >&2
+fi
+if ! git cat-file -e "${BASE_SHA}^{tree}" 2>/dev/null && ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+  echo "sync-upstream: recorded base ${BASE_SHA} is not present; falling back" >&2
+  BASE_SHA="$(git merge-base HEAD "$UPSTREAM_REF" 2>/dev/null || git hash-object -t tree --stdin </dev/null)"
+fi
 
 if [ "$UPSTREAM_SHA" = "$(git rev-parse HEAD)" ]; then
   echo "sync-upstream: already at upstream ${UPSTREAM_SHA:0:12}"
@@ -71,8 +99,7 @@ fi
 # Any preserved path that upstream touched since the merge base forces the
 # conflict path, because the downstream copy would otherwise be overwritten.
 CONFLICTS=()
-if [ -n "$BASE_SHA" ]; then
-  while IFS= read -r changed; do
+while IFS= read -r changed; do
     [ -z "$changed" ] && continue
     for kept in "${PRESERVED_PATHS[@]}"; do
       case "$changed" in
@@ -82,20 +109,19 @@ if [ -n "$BASE_SHA" ]; then
           ;;
       esac
     done
-  done < <(git diff --name-only "$BASE_SHA" "$UPSTREAM_REF")
-fi
+done < <(git diff --name-only "$BASE_SHA" "$UPSTREAM_REF")
 
-# Overwrite vendored upstream files with the upstream revisions. Paths outside
-# the preserved set are removed when upstream deleted them, so the tree converges
-# on upstream plus the downstream layer.
-SAFE_DIRECTORY="$(git rev-parse --git-dir)/info"
-mkdir -p "$SAFE_DIRECTORY"
-
+# Restore upstream-tracked files that exist on the upstream side, plus delete
+# local copies of files upstream removed. Paths missing from upstream are skipped
+# rather than treated as errors: the local branch carries the upstream tree plus
+# the downstream layer, so a path that is absent upstream simply has no
+# counterpart to copy.
 while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  # Never touch workflow files or sync metadata from the upstream side; those
+  # are downstream-owned even though the paths overlap.
   case "$path" in
-    *.github/*) continue ;;
-  esac
-  case "$path" in
+    .github/*) continue ;;
     *upstream-sync.json*) continue ;;
   esac
   skip=0
@@ -105,24 +131,12 @@ while IFS= read -r path; do
     esac
   done
   [ "$skip" = 1 ] && continue
+  # Skip anything upstream does not actually carry; nothing to copy or delete.
+  if ! git cat-file -e "${UPSTREAM_REF}:${path}" 2>/dev/null; then
+    continue
+  fi
   git checkout "$UPSTREAM_REF" -- "$path"
 done < <(git diff --name-only --no-renames HEAD "$UPSTREAM_REF")
-
-# Apply deletions that upstream performed on paths that are not preserved.
-while IFS= read -r path; do
-  [ -z "$path" ] && continue
-  case "$path" in
-    *.github/*) continue ;;
-  esac
-  skip=0
-  for kept in "${PRESERVED_PATHS[@]}"; do
-    case "$path" in
-      "$kept"*) skip=1; break ;;
-    esac
-  done
-  [ "$skip" = 1 ] && continue
-  if [ ! -e "$path" ] && [ -e "$path" ]; then rm -f "$path"; fi
-done < <(git diff --name-only --diff-filter=D --no-renames HEAD "$UPSTREAM_REF")
 
 if git diff --quiet && git diff --cached --quiet; then
   echo "sync-upstream: no textual change after applying upstream; recording revision"
@@ -133,6 +147,8 @@ SUCCESS=1
 if [ "${#CONFLICTS[@]}" -gt 0 ]; then
   SUCCESS=0
 fi
+
+printf '%s\n' "$UPSTREAM_SHA" >"$STATE_FILE"
 
 python3 - "$SYNC_REPORT" "$UPSTREAM_SHA" "$SUCCESS" "${CONFLICTS[@]+"${CONFLICTS[@]}"}" <<'PY'
 import json, sys

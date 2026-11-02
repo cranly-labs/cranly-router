@@ -54,7 +54,11 @@ while IFS= read -r ref; do
   if git rev-parse -q --verify "refs/tags/${target_tag}" >/dev/null; then
     continue
   fi
-  git tag -a "$target_tag" "$ref" -m "Mirror of upstream tag ${source_tag}"
+  # Peel annotated tags to the commit they point at. Tagging the tag object
+  # itself would create a nested tag that git describe and release tooling
+  # cannot resolve correctly.
+  peeled="$(git rev-parse "${ref}^{commit}")"
+  git tag -a "$target_tag" "$peeled" -m "Mirror of upstream tag ${source_tag}"
   CREATED+=("$target_tag")
 done < <(git for-each-ref --format='%(refname)' refs/upstream-tags)
 

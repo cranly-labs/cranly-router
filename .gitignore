@@ -170,4 +170,7 @@ __pycache__/
 # Local upstream mirror used for offline sync runs; the CI fetches upstream
 # over the network instead.
 /upstream.git/
+# The sync report is a per-run artifact; the state file records the last
+# consumed upstream revision and must be committed so conflict detection has an
+# accurate base on the next run.
 sync-report.json
