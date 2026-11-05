@@ -239,8 +239,19 @@ jobs:
         env:
           # The manifest job publishes the lowercase image reference it tagged.
           IMAGE: ${{ needs.manifest.outputs.image }}
+          UPSTREAM_REPOSITORY: TokenFlux/TokenRouter
+          # Reading the upstream tag needs an authenticated request.
+          GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
+          # A mirrored upstream tag names the release it came from. A tag pushed
+          # by hand has no upstream counterpart, so the note states only that the
+          # image tracks upstream at the tagged commit.
+          if gh api "repos/${UPSTREAM_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            origin_note="This release mirrors upstream ${UPSTREAM_REPOSITORY} tag \`${tag}\`."
+          else
+            origin_note="This release tracks ${UPSTREAM_REPOSITORY} at the tagged commit."
+          fi
           # The terminator is unindented and the body is written with printf, so
           # the published notes carry no leading whitespace from this file.
           {
@@ -249,8 +260,7 @@ jobs:
             printf 'docker pull %s:%s\n' "${IMAGE}" "${tag}"
             printf '```\n\n'
             printf 'Multi-architecture manifest: linux/amd64, linux/arm64.\n\n'
-            printf 'A build provenance attestation is attached to the registry digest.\n\n'
-            printf 'This release mirrors upstream TokenFlux/TokenRouter tag `%s`.\n' "${tag}"
+            printf '%s\n' "${origin_note}"
           } >notes.md
           echo "path=notes.md" >>"$GITHUB_OUTPUT"
 
