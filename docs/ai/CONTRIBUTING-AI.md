@@ -1,6 +1,6 @@
 # Contributing as an AI Agent
 
-This document is the detailed instruction set for AI coding agents working in `tokenrouter-hardened-mirror`. It supplements, and does not replace, the repository's contributor guides for humans.
+This document is the detailed instruction set for AI coding agents working in `cranly-router`. It supplements, and does not replace, the repository's contributor guides for humans.
 
 Read this file together with [`AGENTS.md`](../../AGENTS.md) before making any change.
 
@@ -8,7 +8,7 @@ Read this file together with [`AGENTS.md`](../../AGENTS.md) before making any ch
 
 ## Purpose of this repository
 
-`tokenrouter-hardened-mirror` is a hardened, production-focused **downstream distribution** of TokenFlux's upstream LLM API gateway, [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter).
+`cranly-router` is a hardened, production-focused **downstream distribution** of TokenFlux's upstream LLM API gateway, [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter).
 
 The repository contains upstream application sources — a Go 1.27 backend, a Vue 3 + pnpm frontend, and Go/web plugin SDKs — plus a thin slice of downstream-owned configuration that adds hardened image builds, Coolify-first deployment artifacts, supply-chain attestation, and automated upstream synchronisation.
 

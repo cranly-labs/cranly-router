@@ -57,7 +57,7 @@ ARG OCI_DESCRIPTION="Hardened TokenRouter distribution: LLM API gateway with emb
 ARG OCI_SOURCE="https://github.com/TokenFlux/TokenRouter"
 ARG OCI_URL="https://github.com/TokenFlux/TokenRouter"
 ARG OCI_LICENSES="LGPL-3.0-or-later"
-ARG OCI_VENDOR="tokenrouter-hardened-mirror maintainers"
+ARG OCI_VENDOR="cranly-router maintainers"
 ARG OCI_REVISION=${COMMIT}
 ARG OCI_CREATED=
 
@@ -193,7 +193,7 @@ LABEL org.opencontainers.image.title="${OCI_TITLE}" \
     org.opencontainers.image.version="${VERSION}" \
     org.opencontainers.image.created="${OCI_CREATED}" \
     org.opencontainers.image.vendor="${OCI_VENDOR}"
-LABEL maintainer="tokenrouter-hardened-mirror maintainers"
+LABEL maintainer="cranly-router maintainers"
 
 # Runtime dependencies only. Note that `apk upgrade` is deliberately absent:
 # upgrading every package in the base image resolves a fresh set of versions at

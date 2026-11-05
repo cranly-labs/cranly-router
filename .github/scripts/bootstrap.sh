@@ -52,7 +52,7 @@ The following settings are applied in GitHub, not in the repository:
         - require at least one approval for the sync pull requests
         - disallow force pushes
   [ ] Labels created: upstream-sync, sync-conflict, sync-automerge
-  [ ] Package visibility for ghcr.io/<owner>/tokenrouter-hardened set to the
+  [ ] Package visibility for ghcr.io/cranly-labs/tokenrouter-hardened set to the
       intended scope (Settings -> Packages)
 
 Secrets are optional. The workflows use the built-in GITHUB_TOKEN; add any

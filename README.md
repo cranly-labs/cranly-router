@@ -1,20 +1,20 @@
-<!-- Replace the single placeholder token <OWNER> in the links and badge URLs below with your GitHub organization or user name. Everything else can stay as written. -->
+<!-- Replace the single placeholder token cranly-labs in the links and badge URLs below with your GitHub organization or user name. Everything else can stay as written. -->
 
-# tokenrouter-hardened-mirror
+# cranly-router
 
 **A hardened, reproducible, supply-chain-aware downstream distribution of [TokenRouter](https://github.com/TokenFlux/TokenRouter), deployed Coolify-first.**
 
-[![CI](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/ci.yml)
-[![Upstream Sync](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/upstream-sync.yml/badge.svg?branch=main)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/actions/workflows/upstream-sync.yml)
-[![Container](https://img.shields.io/badge/ghcr.io-tokenrouter--hardened-3F3F46?logo=docker&logoColor=white)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/pkgs/container/tokenrouter-hardened)
+[![CI](https://github.com/cranly-labs/cranly-router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cranly-labs/cranly-router/actions/workflows/ci.yml)
+[![Upstream Sync](https://github.com/cranly-labs/cranly-router/actions/workflows/upstream-sync.yml/badge.svg?branch=main)](https://github.com/cranly-labs/cranly-router/actions/workflows/upstream-sync.yml)
+[![Container](https://img.shields.io/badge/ghcr.io-tokenrouter--hardened-3F3F46?logo=docker&logoColor=white)](https://github.com/cranly-labs/cranly-router/pkgs/container/tokenrouter-hardened)
 [![License](https://img.shields.io/badge/license-LGPL--3.0--or--later-3F3F46)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-3F3F46)](https://github.com/<OWNER>/tokenrouter-hardened-mirror/pkgs/container/tokenrouter-hardened)
+[![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-3F3F46)](https://github.com/cranly-labs/cranly-router/pkgs/container/tokenrouter-hardened)
 
 ---
 
 ## Overview
 
-`tokenrouter-hardened-mirror` is an independently maintained downstream build of **TokenRouter**, the open-source LLM API gateway. It tracks the upstream project closely, keeps the application code unmodified wherever possible, and adds a thin, auditable layer of production-hardening and supply-chain controls around the build and deployment path.
+`cranly-router` is an independently maintained downstream build of **TokenRouter**, the open-source LLM API gateway. It tracks the upstream project closely, keeps the application code unmodified wherever possible, and adds a thin, auditable layer of production-hardening and supply-chain controls around the build and deployment path.
 
 This distribution exists for platform-engineering teams that need to:
 
@@ -32,7 +32,7 @@ This project is a *distribution*, not a fork with application-level feature work
 
 ## What this distribution changes
 
-| Concern | Upstream TokenFlux/TokenRouter | tokenrouter-hardened-mirror |
+| Concern | Upstream TokenFlux/TokenRouter | cranly-router |
 | --- | --- | --- |
 | Runtime image | Multi-stage image built from the upstream Dockerfile | Hardened runtime image: non-root user, minimal runtime package set, explicit entrypoint and signal handling, read-only-friendly filesystem assumptions |
 | Base images | Build args with upstream defaults | Pinned defaults, fully overridable via build args so operators can substitute verified bases under their own patch policy |
@@ -57,14 +57,14 @@ This project is a *distribution*, not a fork with application-level feature work
                v
 +------------------------------+
 |  main of this repository     |
-|  tokenrouter-hardened-mirror |
+|  cranly-router |
 +--------------+---------------+
                |
                | CI build and test (lint, unit, integration, image build)
                v
 +------------------------------+
 |  Container image             |
-|  ghcr.io/<OWNER>/            |
+|  ghcr.io/cranly-labs/            |
 |    tokenrouter-hardened      |
 +--------------+---------------+
                |
@@ -85,7 +85,7 @@ Each stage is independently observable: sync produces a pull request, CI produce
 Images are published to the GitHub Container Registry:
 
 ```text
-ghcr.io/<OWNER>/tokenrouter-hardened
+ghcr.io/cranly-labs/tokenrouter-hardened
 ```
 
 | Tag | Meaning | Mutability | Recommended use |
@@ -100,7 +100,7 @@ ghcr.io/<OWNER>/tokenrouter-hardened
 For production, pin an immutable tag:
 
 ```bash
-docker pull ghcr.io/<OWNER>/tokenrouter-hardened:v0.6.1
+docker pull ghcr.io/cranly-labs/tokenrouter-hardened:v0.6.1
 ```
 
 > Tag availability depends on whether the corresponding build and attestation steps have completed. Prefer immutable tags in any environment you depend on.

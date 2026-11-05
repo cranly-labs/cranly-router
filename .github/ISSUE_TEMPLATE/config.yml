@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/tokenrouter/tokenrouter-hardened-mirror/security/advisories/new
+    url: https://github.com/tokenrouter/cranly-router/security/advisories/new
     about: Report vulnerabilities privately through GitHub Security Advisories.
   - name: Upstream application issue
     url: https://github.com/TokenFlux/TokenRouter/issues
     about: Application defects and feature requests belong to the upstream project.
   - name: Deployment question
-    url: https://github.com/tokenrouter/tokenrouter-hardened-mirror/blob/main/deploy/coolify/README.md
+    url: https://github.com/tokenrouter/cranly-router/blob/main/deploy/coolify/README.md
     about: Read the Coolify deployment guide before opening an issue.

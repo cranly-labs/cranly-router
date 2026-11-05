@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to `tokenrouter-hardened-mirror`, a hardened downstream distribution of upstream [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter).
+Thanks for contributing to `cranly-router`, a hardened downstream distribution of upstream [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter).
 
 This guide is for human contributors. Agent-authored work must also follow [`docs/ai/CONTRIBUTING-AI.md`](docs/ai/CONTRIBUTING-AI.md) and the root [`AGENTS.md`](AGENTS.md).
 

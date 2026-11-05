@@ -1,6 +1,6 @@
 # Security Policy
 
-This policy covers `tokenrouter-hardened-mirror`, the hardened downstream distribution of upstream `TokenFlux/TokenRouter`. It describes supported versions, how to report a vulnerability privately, what reporters can expect, and the scope of this policy.
+This policy covers `cranly-router`, the hardened downstream distribution of upstream `TokenFlux/TokenRouter`. It describes supported versions, how to report a vulnerability privately, what reporters can expect, and the scope of this policy.
 
 ---
 

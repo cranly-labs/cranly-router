@@ -62,7 +62,7 @@ Use the repository's [project-doc](.agents/skills/project-doc/SKILL.md) skill fi
 
 # Downstream Distribution Contract
 
-This repository is `tokenrouter-hardened-mirror`, a hardened downstream distribution. The upstream guidelines above remain authoritative for every vendored upstream path (`backend/`, `frontend/`, `plugin-sdk/`, `tools/`, `assets/`, `docs/`). The rules below apply on top of them.
+This repository is `cranly-router`, a hardened downstream distribution. The upstream guidelines above remain authoritative for every vendored upstream path (`backend/`, `frontend/`, `plugin-sdk/`, `tools/`, `assets/`, `docs/`). The rules below apply on top of them.
 
 ## Ownership map
 
