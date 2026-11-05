@@ -43,6 +43,14 @@ fi
 
 git fetch --no-tags --prune "$UPSTREAM_REMOTE" '+refs/tags/*:refs/upstream-tags/*'
 
+# Mirror tags are annotated, and git refuses to create one without a committer
+# identity. Check before the loop so a misconfigured runner reports the cause
+# instead of failing with a bare exit code partway through mirroring.
+if ! git config user.email >/dev/null 2>&1 || [ -z "$(git config user.email)" ]; then
+  echo "sync-tags: git user.email is not configured; annotated tags cannot be created" >&2
+  exit 1
+fi
+
 CREATED=()
 while IFS= read -r ref; do
   source_tag="${ref#refs/upstream-tags/}"
