@@ -44,7 +44,7 @@
   },
   "release": {
     "mirrorTags": true,
-    "imagePrefix": "tokenrouter-hardened",
+    "imagePrefix": "cranly-router",
     "platforms": [
       "linux/amd64",
       "linux/arm64"

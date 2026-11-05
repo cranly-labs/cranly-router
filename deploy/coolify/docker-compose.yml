@@ -11,7 +11,7 @@
 #
 #   Strongly recommended:
 #     TOKENROUTER_IMAGE     image tag or digest to deploy, for example
-#                           ghcr.io/tokenrouter/tokenrouter-hardened:1.0.0
+#                           ghcr.io/cranly-labs/cranly-router:1.0.0
 #     ADMIN_EMAIL           first-run administrator login
 #     ADMIN_PASSWORD        leave empty to auto-generate and read it from logs
 #     TOTP_ENCRYPTION_KEY   required if two-factor auth will be used
@@ -34,7 +34,7 @@ services:
   # TokenRouter application
   # ===========================================================================
   tokenrouter:
-    image: ${TOKENROUTER_IMAGE:-ghcr.io/tokenrouter/tokenrouter-hardened:latest}
+    image: ${TOKENROUTER_IMAGE:-ghcr.io/cranly-labs/cranly-router:latest}
     pull_policy: always
     restart: unless-stopped
     security_opt:

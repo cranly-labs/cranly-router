@@ -98,7 +98,7 @@ make security
 **Container image build, using the hardened Dockerfile:**
 
 ```bash
-docker build -f docker/Dockerfile -t tokenrouter-hardened:local .
+docker build -f docker/Dockerfile.hardened -t cranly-router:local .
 ```
 
 **Compose validation for the Coolify stack:**

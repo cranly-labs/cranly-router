@@ -88,6 +88,31 @@ jobs:
     name: Hardened image build
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # A real database and cache make the smoke test meaningful: the application
+    # applies migrations and serves traffic instead of aborting in auto setup.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: tokenrouter
+          POSTGRES_PASSWORD: ci-placeholder
+          POSTGRES_DB: tokenrouter
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tokenrouter -d tokenrouter"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v6
 
@@ -102,7 +127,7 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: tokenrouter-hardened:ci
+          tags: cranly-router:ci
           build-args: |
             VERSION=0.0.0-ci
             COMMIT=${{ github.sha }}
@@ -112,18 +137,21 @@ jobs:
 
       - name: Inspect image metadata
         run: |
-          docker image inspect tokenrouter-hardened:ci \
+          docker image inspect cranly-router:ci \
             --format '{{json .Config.Labels}}' | python3 -m json.tool
-          test "$(docker image inspect tokenrouter-hardened:ci --format '{{.Config.User}}')" = "0" \
-            || echo "note: entrypoint manages the privilege drop for uid 1000"
+          # The Dockerfile declares the unprivileged runtime user, so the image
+          # must not carry uid 0 as its configured user.
+          user="$(docker image inspect cranly-router:ci --format '{{.Config.User}}')"
+          test "${user}" = "tokenrouter" \
+            || { echo "unexpected runtime user: ${user:-<empty>}"; exit 1; }
 
       - name: Verify runtime contract
         run: |
           set -euo pipefail
-          cid="$(docker create tokenrouter-hardened:ci)"
+          cid="$(docker create cranly-router:ci)"
           trap 'docker rm -f "${cid}" >/dev/null 2>&1 || true' EXIT
           docker export "${cid}" >/dev/null
-          docker run --rm --entrypoint /bin/sh tokenrouter-hardened:ci -c '
+          docker run --rm --entrypoint /bin/sh cranly-router:ci -c '
             set -eu
             test -x /app/tokenrouter
             test -x /app/docker-entrypoint.sh
@@ -138,17 +166,27 @@ jobs:
       - name: Smoke-test health endpoint
         run: |
           set -euo pipefail
+          # auto_setup applies migrations and creates the administrator against the
+          # service container, so the image reaches the serving state under test.
           docker run --detach --name tr-smoke \
+            --network host \
             --env AUTO_SETUP=true \
+            --env SERVER_HOST=127.0.0.1 \
+            --env SERVER_PORT=8080 \
             --env DATABASE_HOST=127.0.0.1 \
+            --env DATABASE_PORT=5432 \
+            --env DATABASE_USER=tokenrouter \
+            --env DATABASE_PASSWORD=ci-placeholder \
+            --env DATABASE_DBNAME=tokenrouter \
+            --env DATABASE_SSLMODE=disable \
+            --env REDIS_HOST=127.0.0.1 \
+            --env REDIS_PORT=6379 \
+            --env ADMIN_EMAIL=ci@example.invalid \
+            --env ADMIN_PASSWORD=ci-placeholder-0123456789 \
             --env JWT_SECRET=0000000000000000000000000000000000000000000000000000000000000000 \
-            --publish 18080:8080 \
-            tokenrouter-hardened:ci || true
-          # The service is expected to fail without a database; the assertion is
-          # that the binary starts and serves the liveness route rather than
-          # crashing on configuration parsing.
-          for attempt in $(seq 1 20); do
-            if curl --silent --fail --max-time 2 http://127.0.0.1:18080/health >/dev/null; then
+            cranly-router:ci
+          for attempt in $(seq 1 40); do
+            if curl --silent --fail --max-time 2 http://127.0.0.1:8080/health >/dev/null; then
               echo "health endpoint responded on attempt ${attempt}"
               exit 0
             fi

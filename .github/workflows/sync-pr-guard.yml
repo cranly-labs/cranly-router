@@ -80,7 +80,10 @@ jobs:
           PY
 
       - name: Require the conflict label when preserved paths changed
-        if: github.event_name == 'pull_request' && steps.preserved.outputs.touched == 'true' && steps.preserved.outputs.conflict_label != 'true'
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.preserved.outputs.touched == 'true' &&
+          steps.preserved.outputs.conflict_label != 'true'
         run: |
           echo "::error::This sync pull request modifies preserved downstream paths but lacks the configured conflict label."
           echo "Files touched:"

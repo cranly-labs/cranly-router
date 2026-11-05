@@ -28,9 +28,15 @@ ARG GOLANG_IMAGE=golang:1.27.3-alpine
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
 
-# Module proxy and checksum database used by the Go toolchain.
-ARG GOPROXY=https://goproxy.cn,direct
-ARG GOSUMDB=sum.golang.google.cn
+# Module proxy and checksum database used by the Go toolchain. The defaults are
+# the global Google endpoints, which sit in the same network as the
+# GitHub-hosted runners and serve large module archives without truncation. The
+# goproxy.cn mirror used before is reachable but resets HTTP/2 streams and cuts
+# transfers for multi-megabyte zips, which aborted `go mod download` during the
+# linux/arm64 image build. Point GOPROXY at a regional mirror only when the
+# build network cannot reach the global proxy.
+ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOSUMDB=sum.golang.org
 # Optional npm registry override; empty means the image default registry.
 ARG NPM_CONFIG_REGISTRY=
 
@@ -128,10 +134,21 @@ WORKDIR /app/backend
 COPY backend/go.mod backend/go.sum ./
 # The backend resolves the MIT SDK through a local module replacement.
 COPY plugin-sdk/go /app/plugin-sdk/go
-# Cache the module download cache; transient proxy failures can be retried
-# without refetching every dependency.
+# Cache the module download cache so a transient proxy failure can be retried
+# without refetching every dependency. A flaky proxy is the most common cause of
+# a failed image build, so the download gets three attempts with a short pause
+# between them, and the cache mount makes each retry resume rather than start
+# over. Exhausting all three attempts is a real failure and stops the build.
 RUN --mount=type=cache,id=tokenrouter-gomod,target=/go/pkg/mod \
-    go mod download
+    for attempt in 1 2 3; do \
+      if go mod download; then \
+        exit 0; \
+      fi; \
+      echo "go mod download failed on attempt ${attempt}; retrying" >&2; \
+      sleep $((attempt * 5)); \
+    done; \
+    echo "go mod download failed after 3 attempts" >&2; \
+    exit 1
 
 # Copy backend sources.
 COPY backend/ ./

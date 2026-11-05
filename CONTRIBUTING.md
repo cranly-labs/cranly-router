@@ -47,7 +47,7 @@ make security     # security scans
 Building the hardened image locally:
 
 ```bash
-docker build -f docker/Dockerfile -t tokenrouter-hardened:local .
+docker build -f docker/Dockerfile.hardened -t cranly-router:local .
 ```
 
 Validating the Coolify stack:

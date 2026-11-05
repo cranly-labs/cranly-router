@@ -17,6 +17,7 @@ unless they constrain upstream code.
 | ID | Path | Kind | Reason | Upstream interaction | Owner |
 | --- | --- | --- | --- | --- | --- |
 | D-000 | _(baseline)_ | none | The initial import tracks upstream `main` without local modification to vendored sources. | None | maintainers |
+| D-001 | `docker/Dockerfile.hardened` | build override | Upstream's Dockerfile defaults `GOPROXY` to `goproxy.cn`, which resets HTTP/2 streams and truncates multi-megabyte module archives, aborting `go mod download` on GitHub-hosted runners. The hardened build defaults to the global Google endpoints and retries the download three times against a persistent cache mount. | Upstream default revisited whenever the upstream Dockerfile changes its proxy arguments; the override is confined to `GOPROXY`/`GOSUMDB` and the download step. | maintainers |
 
 ## Conflict handling
 

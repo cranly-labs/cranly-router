@@ -101,11 +101,18 @@ jobs:
           bash .github/scripts/sync-upstream.sh
           status=$?
           set -e
+          # A non-zero exit reports a preserved-path conflict; the check step
+          # already stopped, so the branch is still committed and reviewed.
           echo "conflicted=$([ $status -ne 0 ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
           if [ -f sync-report.json ]; then
             echo "upstream_sha=$(python3 -c 'import json;print(json.load(open("sync-report.json"))["upstreamSha"])')" >>"$GITHUB_OUTPUT"
           fi
-          if git diff --quiet && git diff --cached --quiet; then
+          # Stage everything the sync produced, then compare against HEAD. The
+          # state file is untracked on a fresh branch, so a plain `git diff` would
+          # report no change and the commit step would be skipped. The report is
+          # gitignored and never becomes part of the commit.
+          git add -A
+          if git diff --cached --quiet; then
             echo "changed=false" >>"$GITHUB_OUTPUT"
           else
             echo "changed=true" >>"$GITHUB_OUTPUT"
@@ -116,7 +123,8 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         run: |
           short="${GITHUB_SHA::7}"
-          git add -A
+          # The state file is tracked on the sync branch so the next run reads the
+          # upstream revision this branch last consumed instead of guessing.
           git commit -m "chore(sync): advance vendored upstream to ${short}" \
                      -m "Automated mirror update produced by .github/workflows/upstream-sync.yml." \
                      -m "Upstream-Revision: ${{ steps.upstream.outputs.sha }}"

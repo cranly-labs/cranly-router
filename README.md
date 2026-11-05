@@ -6,9 +6,9 @@
 
 [![CI](https://github.com/cranly-labs/cranly-router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cranly-labs/cranly-router/actions/workflows/ci.yml)
 [![Upstream Sync](https://github.com/cranly-labs/cranly-router/actions/workflows/upstream-sync.yml/badge.svg?branch=main)](https://github.com/cranly-labs/cranly-router/actions/workflows/upstream-sync.yml)
-[![Container](https://img.shields.io/badge/ghcr.io-tokenrouter--hardened-3F3F46?logo=docker&logoColor=white)](https://github.com/cranly-labs/cranly-router/pkgs/container/tokenrouter-hardened)
+[![Container](https://img.shields.io/badge/ghcr.io-cranly--router-3F3F46?logo=docker&logoColor=white)](https://github.com/cranly-labs/cranly-router/pkgs/container/cranly-router)
 [![License](https://img.shields.io/badge/license-LGPL--3.0--or--later-3F3F46)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-3F3F46)](https://github.com/cranly-labs/cranly-router/pkgs/container/tokenrouter-hardened)
+[![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-3F3F46)](https://github.com/cranly-labs/cranly-router/pkgs/container/cranly-router)
 
 ---
 
@@ -64,8 +64,8 @@ This project is a *distribution*, not a fork with application-level feature work
                v
 +------------------------------+
 |  Container image             |
-|  ghcr.io/cranly-labs/            |
-|    tokenrouter-hardened      |
+|  ghcr.io/cranly-labs/        |
+|    cranly-router             |
 +--------------+---------------+
                |
                | pull by tag
@@ -85,7 +85,7 @@ Each stage is independently observable: sync produces a pull request, CI produce
 Images are published to the GitHub Container Registry:
 
 ```text
-ghcr.io/cranly-labs/tokenrouter-hardened
+ghcr.io/cranly-labs/cranly-router
 ```
 
 | Tag | Meaning | Mutability | Recommended use |
@@ -100,7 +100,7 @@ ghcr.io/cranly-labs/tokenrouter-hardened
 For production, pin an immutable tag:
 
 ```bash
-docker pull ghcr.io/cranly-labs/tokenrouter-hardened:v0.6.1
+docker pull ghcr.io/cranly-labs/cranly-router:v0.6.1
 ```
 
 > Tag availability depends on whether the corresponding build and attestation steps have completed. Prefer immutable tags in any environment you depend on.

@@ -1,7 +1,9 @@
 # =============================================================================
 # Hardened container image build
 # =============================================================================
-# Builds and publishes the downstream TokenRouter image.
+# Builds and publishes the downstream container image to the GitHub Container
+# Registry. The image name is derived from the repository, so it tracks a
+# rename without editing this file.
 #
 # Triggers
 #   push on main           publishes :edge and :sha-<short>
@@ -9,9 +11,9 @@
 #   workflow_dispatch      manual build against an arbitrary ref
 #
 # Supply chain
-#   Every published image receives an SBOM and a provenance attestation. The
-#   build is reproducible: base images are pinned through build arguments and
-#   no package index is refreshed during the build.
+#   The manifest job attaches a build provenance attestation to the published
+#   digest. Base images are pinned through build arguments and no package index
+#   is refreshed during the build.
 # =============================================================================
 
 name: Build Images
@@ -44,7 +46,10 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/tokenrouter-hardened
+  # GHCR rejects uppercase characters in a repository name, and the owner
+  # portion of github.repository is not guaranteed to be lowercase, so the
+  # image reference is built from the lowercased repository full name.
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
@@ -73,9 +78,14 @@ jobs:
         run: |
           ref="${{ github.event.inputs.release_tag || github.ref_name }}"
           version="$(VERSION="${ref}" bash .github/scripts/resolve-version.sh)"
-          echo "version=${version}" >>"$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$GITHUB_OUTPUT"
+          # Lowercase once here because GHCR rejects uppercase path segments.
+          image="$(printf '%s/%s' "${REGISTRY}" "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "version=${version}"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "image=${image}"
+          } >>"$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -98,9 +108,13 @@ jobs:
           file: docker/Dockerfile.hardened
           platforms: ${{ matrix.platform }}
           push: true
+          # Per-architecture tags are intermediate inputs to the manifest job,
+          # which publishes the attested multi-architecture digest. Attestation
+          # and SBOM generation therefore happen once, on the final manifest,
+          # instead of being duplicated for each architecture.
           provenance: false
           sbom: false
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}-${{ matrix.arch }}
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}-${{ matrix.arch }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ steps.meta.outputs.commit }}
@@ -122,6 +136,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       digest: ${{ steps.manifest.outputs.digest }}
+      image: ${{ steps.tags.outputs.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -133,9 +148,12 @@ jobs:
         run: |
           version="$(VERSION="${{ github.event.inputs.release_tag || github.ref_name }}" bash .github/scripts/resolve-version.sh)"
           short="$(git rev-parse --short=7 HEAD)"
+          # Lowercase once here because GHCR rejects uppercase path segments.
+          image="$(printf '%s/%s' "${REGISTRY}" "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
           {
             echo "version=${version}"
             echo "short=${short}"
+            echo "image=${image}"
           } >>"$GITHUB_OUTPUT"
 
       - name: Authenticate to GHCR
@@ -147,8 +165,15 @@ jobs:
 
       - name: Assemble manifest
         id: manifest
+        env:
+          # A tag build or an explicit request moves latest; a main build moves
+          # edge. Resolving both flags here keeps the tag decisions in one place
+          # instead of interleaving shell tests with template expressions.
+          REF_TYPE: ${{ github.ref_type }}
+          REF: ${{ github.ref }}
+          PUSH_LATEST: ${{ github.event.inputs.push_latest }}
         run: |
-          image="${REGISTRY}/${IMAGE_NAME}"
+          image="${{ steps.tags.outputs.image }}"
           version="${{ steps.tags.outputs.version }}"
           short="${{ steps.tags.outputs.short }}"
 
@@ -158,21 +183,25 @@ jobs:
             "${image}:${version}-amd64" \
             "${image}:${version}-arm64"
 
-          if [ "${{ github.ref_type }}" = "tag" ] || [ "${{ github.event.inputs.push_latest }}" = "true" ]; then
+          if [ "${REF_TYPE}" = "tag" ] || [ "${PUSH_LATEST}" = "true" ]; then
             docker buildx imagetools create --tag "${image}:latest" "${image}:${version}"
           fi
 
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          if [ "${REF}" = "refs/heads/main" ]; then
             docker buildx imagetools create --tag "${image}:edge" "${image}:${version}"
           fi
 
-          digest="$(docker buildx imagetools inspect "${image}:${version}" --format '{{json .Manifest}}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          # Read the manifest digest through the JSON form so the value is the
+          # registry's own digest rather than a locally computed one.
+          digest="$(docker buildx imagetools inspect "${image}:${version}" \
+            --format '{{json .Manifest}}' \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
           echo "digest=${digest}" >>"$GITHUB_OUTPUT"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-name: ${{ steps.tags.outputs.image }}
           subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
 
@@ -191,20 +220,22 @@ jobs:
 
       - name: Compose release notes
         id: notes
+        env:
+          # The manifest job publishes the lowercase image reference it tagged.
+          IMAGE: ${{ needs.manifest.outputs.image }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          cat >notes.md <<EOF
-          ## Container image
-
-          \`\`\`
-          docker pull ${REGISTRY}/${IMAGE_NAME}:${tag}
-          \`\`\`
-
-          Multi-architecture manifest: linux/amd64, linux/arm64.
-          SBOM and provenance attestations are attached to the registry digest.
-
-          This release mirrors upstream TokenFlux/TokenRouter tag \`${tag}\`.
-          EOF
+          # The terminator is unindented and the body is written with printf, so
+          # the published notes carry no leading whitespace from this file.
+          {
+            printf '## Container image\n\n'
+            printf '```\n'
+            printf 'docker pull %s:%s\n' "${IMAGE}" "${tag}"
+            printf '```\n\n'
+            printf 'Multi-architecture manifest: linux/amd64, linux/arm64.\n\n'
+            printf 'A build provenance attestation is attached to the registry digest.\n\n'
+            printf 'This release mirrors upstream TokenFlux/TokenRouter tag `%s`.\n' "${tag}"
+          } >notes.md
           echo "path=notes.md" >>"$GITHUB_OUTPUT"
 
       - name: Create release

@@ -86,7 +86,7 @@ This repository is `cranly-router`, a hardened downstream distribution. The upst
 make fmt-check
 make lint
 make test
-docker build -f docker/Dockerfile.hardened -t tokenrouter-hardened:local .
+docker build -f docker/Dockerfile.hardened -t cranly-router:local .
 docker compose -f deploy/coolify/docker-compose.yml config
 ```
 
