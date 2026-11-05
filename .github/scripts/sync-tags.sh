@@ -17,6 +17,8 @@
 #   UPSTREAM_REMOTE    git remote name to fetch (default: upstream)
 #   TAG_PATTERN        glob of tags to mirror (default: v*)
 #   TAG_SUFFIX         suffix appended to mirrored tags (default: empty)
+#   TAG_LIMIT          mirror at most this many tags per run, newest first;
+#                      "0" mirrors every tag (default: 0)
 #   PUSH_TAGS          "true" pushes created tags to origin (default: false)
 # =============================================================================
 
@@ -28,6 +30,9 @@ cd "$MIRROR_ROOT"
 UPSTREAM_REMOTE="${UPSTREAM_REMOTE:-upstream}"
 TAG_PATTERN="${TAG_PATTERN:-v*}"
 TAG_SUFFIX="${TAG_SUFFIX:-}"
+# A first run against a repository with years of history would otherwise mirror
+# every upstream tag at once and fan out one image build per tag.
+TAG_LIMIT="${TAG_LIMIT:-0}"
 PUSH_TAGS="${PUSH_TAGS:-false}"
 METADATA_FILE="${MIRROR_ROOT}/.upstream-sync.json"
 
@@ -52,6 +57,11 @@ if ! git config user.email >/dev/null 2>&1 || [ -z "$(git config user.email)" ];
 fi
 
 CREATED=()
+# Collect the missing tags first so TAG_LIMIT can select the newest by version
+# order. `git for-each-ref` yields refname order, which sorts v0.10.0 before
+# v0.9.0, so version ordering is applied here rather than relying on the ref
+# listing order.
+MISSING=()
 while IFS= read -r ref; do
   source_tag="${ref#refs/upstream-tags/}"
   target_tag="${source_tag}${TAG_SUFFIX}"
@@ -62,13 +72,32 @@ while IFS= read -r ref; do
   if git rev-parse -q --verify "refs/tags/${target_tag}" >/dev/null; then
     continue
   fi
-  # Peel annotated tags to the commit they point at. Tagging the tag object
-  # itself would create a nested tag that git describe and release tooling
-  # cannot resolve correctly.
-  peeled="$(git rev-parse "${ref}^{commit}")"
-  git tag -a "$target_tag" "$peeled" -m "Mirror of upstream tag ${source_tag}"
-  CREATED+=("$target_tag")
+  MISSING+=("${source_tag}${TAG_SUFFIX}")
 done < <(git for-each-ref --format='%(refname)' refs/upstream-tags)
+
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  # `sort -V` gives semantic version order. Read the result back with a loop
+  # because mapfile requires bash 4, while macOS ships bash 3.2.
+  SORTED=()
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] && SORTED+=("$candidate")
+  done < <(printf '%s\n' "${MISSING[@]}" | sort -V)
+  if [ "$TAG_LIMIT" != "0" ] && [ "${#SORTED[@]}" -gt "$TAG_LIMIT" ]; then
+    echo "sync-tags: ${#SORTED[@]} tags outstanding; mirroring the newest ${TAG_LIMIT}" >&2
+    SORTED=("${SORTED[@]: -$TAG_LIMIT}")
+  fi
+
+  for target_tag in "${SORTED[@]}"; do
+    source_tag="${target_tag%${TAG_SUFFIX}}"
+    ref="refs/upstream-tags/${source_tag}"
+    # Peel annotated tags to the commit they point at. Tagging the tag object
+    # itself would create a nested tag that git describe and release tooling
+    # cannot resolve correctly.
+    peeled="$(git rev-parse "${ref}^{commit}")"
+    git tag -a "$target_tag" "$peeled" -m "Mirror of upstream tag ${source_tag}"
+    CREATED+=("$target_tag")
+  done
+fi
 
 if [ "${#CREATED[@]}" -eq 0 ]; then
   echo "sync-tags: no new upstream tags" >&2

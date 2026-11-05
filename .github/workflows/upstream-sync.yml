@@ -83,11 +83,27 @@ jobs:
           echo "sha=$(git rev-parse upstream/${UPSTREAM_BRANCH})" >>"$GITHUB_OUTPUT"
 
       - name: Prepare sync branch
+        id: prepare
         run: |
           git checkout -B "${SYNC_BRANCH}" "origin/${SYNC_BRANCH}" 2>/dev/null || git checkout -B "${SYNC_BRANCH}" main
           # Rebase the reusable sync branch onto the local base branch so that a
-          # stale pull request never carries an obsolete base.
-          git rebase main || git rebase --abort
+          # stale pull request never carries an obsolete base. A conflict here
+          # means the branch and main disagree on a file both changed; aborting
+          # silently would report "nothing to sync" and skip the whole pipeline,
+          # so the conflict is aborted to leave a clean tree but reported as a
+          # result the caller must act on.
+          if git rebase main; then
+            echo "rebase=clean" >>"$GITHUB_OUTPUT"
+          else
+            conflicting="$(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+            git rebase --abort
+            echo "rebase=conflict" >>"$GITHUB_OUTPUT"
+            echo "conflicting=${conflicting}" >>"$GITHUB_OUTPUT"
+            echo "::warning::Rebase onto main conflicted on:${conflicting} The sync branch was reset to main so mirroring can still run."
+            # A conflicted sync branch cannot carry this run's changes, so restart
+            # it from main to keep the branch usable for the tag mirror below.
+            git checkout -B "${SYNC_BRANCH}" main
+          fi
 
       - name: Apply upstream snapshot
         id: sync
@@ -188,7 +204,16 @@ jobs:
     name: Mirror upstream release tags
     runs-on: ubuntu-latest
     needs: sync
-    if: ${{ needs.sync.outputs.changed == 'true' || github.event_name == 'repository_dispatch' }}
+    # Tag mirroring is independent of whether the source snapshot changed: a
+    # manual run or a scheduled sweep must still pick up upstream releases that
+    # were tagged since the last pass. Only a hard failure of the sync job, or a
+    # run that produced no usable revision, skips this.
+    if: >-
+      ${{
+        always() &&
+        needs.sync.result == 'success' &&
+        github.event_name != 'pull_request'
+      }}
     outputs:
       tags: ${{ steps.tags.outputs.created }}
     steps:
@@ -201,10 +226,16 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      - run: git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+      # The script adds the remote itself when it is absent, so an unconditional
+      # `git remote add` would fail on a runner that already has it configured.
       - id: tags
         env:
           PUSH_TAGS: 'true'
+          # Upstream carries years of release tags. Mirroring the newest few per
+          # run keeps a first sync from queueing an image build for every tag at
+          # once, and later runs continue from the backlog. Set to 0 to mirror
+          # every outstanding tag in one pass.
+          TAG_LIMIT: '5'
         run: |
           created="$(bash .github/scripts/sync-tags.sh)"
           echo "created<<EOF" >>"$GITHUB_OUTPUT"
