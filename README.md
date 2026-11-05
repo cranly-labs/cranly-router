@@ -19,7 +19,7 @@
 This distribution exists for platform-engineering teams that need to:
 
 - **Run TokenRouter from an image they can reason about.** The runtime image is rebuilt from a hardened Dockerfile with pinned and overridable base images, non-root execution, and explicit OCI metadata.
-- **Verify what they deploy.** Every release image ships with a Software Bill of Materials (SBOM) and build provenance attestation, so artifacts can be traced back to a commit, a workflow run, and a signed build.
+- **Verify what they deploy.** Every image carries extended OCI labels that identify its source repository, revision, version, and build time, so a running container can be traced back to the commit and workflow run that produced it.
 - **Deploy the same way every time.** A Coolify-first deployment artifact set provides a single, reviewable Compose file and documented environment contract for repeatable rollouts.
 - **Stay current without manual merging.** A scheduled workflow pulls upstream changes into reviewable pull requests, so the distribution does not silently drift behind upstream security fixes.
 - **Give AI agents a safe contract.** Explicit contribution rules define where local customisation is allowed and where upstream sources remain authoritative.
@@ -37,7 +37,7 @@ This project is a *distribution*, not a fork with application-level feature work
 | Runtime image | Multi-stage image built from the upstream Dockerfile | Hardened runtime image: non-root user, minimal runtime package set, explicit entrypoint and signal handling, read-only-friendly filesystem assumptions |
 | Base images | Build args with upstream defaults | Pinned defaults, fully overridable via build args so operators can substitute verified bases under their own patch policy |
 | OCI metadata | Baseline labels | Extended `org.opencontainers.image.*` labels (source, revision, version, created, licenses) for provenance and registry tooling |
-| SBOM and provenance | Not part of the default image contract | SBOM generated per build and signed provenance attestation attached to pushed images |
+| Build provenance | Not part of the default image contract | A provenance attestation is attached to the published digest when the repository visibility allows it; GitHub persists attestations only for public or organization-owned repositories, and the workflow reports a warning instead of failing when it cannot |
 | Image tag policy | `latest` and release tags | Documented tag policy: `latest`, `vX.Y.Z`, `sha-<short7>`, `edge`, with a clear meaning and stability guarantee for each |
 | Deployment | Compose, install script, standalone container | Coolify-first Compose artifact under `deploy/coolify/` plus documented standalone options |
 | Upstream tracking | n/a (is upstream) | Scheduled automated sync workflow opening reviewable pull requests with a label contract |
@@ -76,7 +76,7 @@ This project is a *distribution*, not a fork with application-level feature work
 +------------------------------+
 ```
 
-Each stage is independently observable: sync produces a pull request, CI produces a status check and an attested image, and deployment consumes a specific image tag rather than a floating reference.
+Each stage is independently observable: sync produces a pull request, CI produces a status check and a tagged image, and deployment consumes a specific image tag rather than a floating reference.
 
 ---
 
@@ -103,7 +103,7 @@ For production, pin an immutable tag:
 docker pull ghcr.io/cranly-labs/cranly-router:v0.6.1
 ```
 
-> Tag availability depends on whether the corresponding build and attestation steps have completed. Prefer immutable tags in any environment you depend on.
+> Tag availability depends on whether the corresponding image build has completed. Prefer immutable tags in any environment you depend on.
 
 ---
 
@@ -217,8 +217,8 @@ Hardening measures applied by this distribution:
 
 - Hardened runtime image with a non-root process user and a minimal runtime package set.
 - Pinned base images with a single, documented override point for each.
-- SBOM generated for every published image and retained with the release.
-- Build provenance attestation attached to pushed images.
+- Extended OCI labels on every published image, identifying its source repository, revision, version, and build time.
+- Build provenance attestation attached to the published digest wherever the repository visibility allows it.
 - Explicit image tag policy so production can pin immutable references.
 - Coolify-first deployment artifact with a documented environment contract.
 - Automated upstream synchronisation so security fixes upstream are surfaced as reviewable pull requests.

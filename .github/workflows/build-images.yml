@@ -198,12 +198,28 @@ jobs:
             | python3 -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
           echo "digest=${digest}" >>"$GITHUB_OUTPUT"
 
+      # GitHub persists attestations only for public repositories and for
+      # organization-owned private ones. A private repository under a user
+      # account is rejected, and that rejection must not fail a run whose image
+      # has already been pushed. The step is optional: it records a warning and
+      # the published digest keeps its tags.
       - name: Attest build provenance
+        id: attest
+        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ steps.tags.outputs.image }}
           subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
+
+      - name: Report attestation outcome
+        if: steps.attest.outcome == 'failure'
+        env:
+          IMAGE: ${{ steps.tags.outputs.image }}
+        run: |
+          echo "::warning::Build provenance attestation was not persisted."
+          echo "GitHub supports attestations only for public or organization-owned repositories."
+          echo "The image at ${IMAGE} is published and tagged regardless."
 
   release:
     name: Publish GitHub release
