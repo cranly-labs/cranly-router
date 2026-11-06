@@ -442,6 +442,10 @@ DOMPurify 用于 Markdown 页面、公告、支付说明和 SVG 图标的内容�
 
 tag 必须打在 main 的合并提交上。镜像构建按 ref 检出源码，tag 若留在已删除的同步分支上，构建会取不到对应的提交。
 
+`mirror-tags` 需要仓库级的 **Actions 权限**：GitHub 不允许 workflow 令牌创建树上含 `.github/workflows/` 的 tag，除非为 GitHub Actions 应用授予 `Workflows` 权限。缺少该权限时，push 会被拒绝并提示 `refusing to allow a GitHub App to create or update workflow ...`，镜像里一个 tag 都留不下，后续的镜像构建和 release 全部跳过。这一项无法在 workflow 文件里声明，只能由仓库管理员在组织或仓库的 Actions 设置中开启。
+
+只读令牌能读上游，但推送镜像 tag、提交版本计数器、创建 release tag 都需要写权限。仓库的默认 workflow 令牌权限设为只读时，上述 push 同样会被拒绝。
+
 ## 发布
 
 ### 下游版本号
