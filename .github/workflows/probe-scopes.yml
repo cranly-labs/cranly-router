@@ -1,0 +1,18 @@
+name: Probe Token Scopes
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "--- label create ---"
+          gh label create probe-label --description "probe" --color "0E8A16" --force && echo "LABEL_OK" || echo "LABEL_FAIL"
+          echo "--- direct api ---"
+          gh api repos/${{ github.repository }}/labels --jq '.[].name' | head -3 || echo "API_FAIL"
