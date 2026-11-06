@@ -149,6 +149,79 @@ def extract(path):
     return pairs
 
 
+def render_template(source_path, out_path, translations):
+    """Write a translated catalog mirroring the source layout.
+
+    The source file is walked character by character and every string literal
+    that corresponds to a translatable key path is replaced by its translation.
+    Keys, comments, ordering, blank lines, and indentation are carried over
+    unchanged, so a regenerated module differs from the original only in the
+    values, which keeps review of a translated file tractable.
+    """
+    src = open(source_path, encoding="utf-8").read()
+    out = []
+    i = 0
+    n = len(src)
+    stack = []
+    pending_key = None
+    while i < n:
+        c = src[i]
+        if c in "\"'`":
+            value, j = read_value(src, i)
+            literal = src[i:j]
+            if pending_key is not None:
+                path = ".".join(stack + [pending_key])
+                if path in translations:
+                    quote = literal[0]
+                    # Translations arrive decoded, so the escapes a JavaScript
+                    # literal needs are re-encoded here. Without this a stored
+                    # newline or quote would be written raw and break the
+                    # literal it came from.
+                    text = (
+                        translations[path]
+                        .replace("\\", "\\\\")
+                        .replace("\n", "\\n")
+                        .replace("\r", "\\r")
+                        .replace("\t", "\\t")
+                        .replace(quote, "\\" + quote)
+                    )
+                    out.append(quote + text + quote)
+                    pending_key = None
+                    i = j
+                    continue
+                pending_key = None
+            out.append(literal)
+            i = j
+            continue
+        if c == "{":
+            if pending_key is not None:
+                stack.append(pending_key)
+                pending_key = None
+            out.append(c)
+            i += 1
+            continue
+        if c == "}":
+            if stack:
+                stack.pop()
+            out.append(c)
+            i += 1
+            continue
+        m = KEY_RE.match(src, i)
+        if m:
+            k = m.end()
+            probe = k
+            while probe < n and src[probe] in " \t":
+                probe += 1
+            if probe < n and src[probe] == ":":
+                pending_key = m.group(0)
+            out.append(src[i:k])
+            i = k
+            continue
+        out.append(c)
+        i += 1
+    open(out_path, "w", encoding="utf-8").write("".join(out))
+
+
 def main(argv):
     """Print the requested catalog as JSON keyed by module path."""
     if len(argv) < 2:
