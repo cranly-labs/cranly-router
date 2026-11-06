@@ -107,6 +107,19 @@ jobs:
             git checkout -B "${SYNC_BRANCH}" main
           fi
 
+      - name: Read the last consumed upstream revision
+        id: previous
+        run: |
+          # .sync-state records the upstream revision the sync branch already
+          # carries. Comparing it with the revision this run resolved decides
+          # whether anything needs landing, which a staged-file diff cannot:
+          # re-applying an already-mirrored snapshot produces no diff.
+          sha=""
+          if [ -f .sync-state ]; then
+            sha="$(tr -d '\r\n' < .sync-state)"
+          fi
+          echo "sha=${sha}" >>"$GITHUB_OUTPUT"
+
       - name: Apply upstream snapshot
         id: sync
         continue-on-error: true
@@ -114,6 +127,8 @@ jobs:
           MIRROR_BRANCH: ${{ env.SYNC_BRANCH }}
           UPSTREAM_REMOTE: upstream
           UPSTREAM_BRANCH: ${{ env.UPSTREAM_BRANCH }}
+          PREVIOUS_UPSTREAM_SHA: ${{ steps.previous.outputs.sha }}
+          CURRENT_UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
         run: |
           set +e
           bash .github/scripts/sync-upstream.sh
@@ -125,21 +140,22 @@ jobs:
           if [ -f sync-report.json ]; then
             echo "upstream_sha=$(python3 -c 'import json;print(json.load(open("sync-report.json"))["upstreamSha"])')" >>"$GITHUB_OUTPUT"
             # The report status distinguishes an upstream advance from a
-            # preserved-path conflict. Downstream jobs gate on it rather than on
-            # the staged-file comparison below, because that comparison cannot
-            # tell an upstream source change apart from a rewrite of this job's
-            # own tracked bookkeeping.
+            # preserved-path conflict. The merge and tag jobs gate on it.
             echo "status=$(python3 -c 'import json;print(json.load(open("sync-report.json"))["status"])')" >>"$GITHUB_OUTPUT"
           fi
-          # Stage everything the sync produced, then compare against HEAD. The
-          # state file is untracked on a fresh branch, so a plain `git diff` would
-          # report no change and the commit step would be skipped. The report is
-          # gitignored and never becomes part of the commit.
+          # Stage the mirrored sources, excluding this job's own bookkeeping.
+          # `sync-report.json` is regenerated every run and must never reach the
+          # sync branch; committing it once also defeats its gitignore entry for
+          # every later run, because a tracked path ignores its ignore rule.
           git add -A
-          # The state file is tracked on the branch and rewritten every run, so it
-          # would otherwise make this flag true even when upstream changed nothing.
-          git reset -q -- .sync-state 2>/dev/null || true
-          if git diff --cached --quiet; then
+          git reset -q -- .sync-state sync-report.json 2>/dev/null || true
+          # The report status is the authority on whether upstream moved. A
+          # staged-file comparison cannot serve as that signal: when the branch
+          # already carries the upstream tree, applying the same snapshot again
+          # produces no diff at all, so the run would report "nothing to do"
+          # while the recorded upstream revision still lagged behind and the
+          # pipeline would stall with the advance already staged but unlanded.
+          if [ "${PREVIOUS_UPSTREAM_SHA}" = "${CURRENT_UPSTREAM_SHA}" ]; then
             echo "changed=false" >>"$GITHUB_OUTPUT"
           else
             echo "changed=true" >>"$GITHUB_OUTPUT"
@@ -150,8 +166,14 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         run: |
           short="${GITHUB_SHA::7}"
-          # The state file is tracked on the sync branch so the next run reads the
-          # upstream revision this branch last consumed instead of guessing.
+          # Only the mirrored sources and the state file belong on this branch.
+          # The state file is tracked so the next run reads the upstream revision
+          # this branch last consumed instead of guessing.
+          git add -A
+          # An earlier run committed the per-run report before it was excluded, so
+          # it is tracked on the branch and unstaging it is not enough; it has to
+          # be removed, which also lets its gitignore entry apply again.
+          git rm -q --cached --ignore-unmatch sync-report.json
           git commit -m "chore(sync): advance vendored upstream to ${short}" \
                      -m "Automated mirror update produced by .github/workflows/upstream-sync.yml." \
                      -m "Upstream-Revision: ${{ steps.upstream.outputs.sha }}"
