@@ -41,6 +41,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Labels are managed through the issues API rather than the pull-request one,
+  # so creating a label needs this scope even though the pull request it is
+  # attached to never touches an issue.
+  issues: write
 
 concurrency:
   group: upstream-sync
@@ -50,6 +54,9 @@ env:
   UPSTREAM_REPOSITORY: TokenFlux/TokenRouter
   UPSTREAM_BRANCH: main
   SYNC_BRANCH: sync/upstream-main
+  # BASE_BRANCH is the branch the sync branch is compared against and merged
+  # into. It matches mirror.baseBranch in .upstream-sync.json.
+  BASE_BRANCH: main
 
 jobs:
   sync:
@@ -107,19 +114,6 @@ jobs:
             git checkout -B "${SYNC_BRANCH}" main
           fi
 
-      - name: Read the last consumed upstream revision
-        id: previous
-        run: |
-          # .sync-state records the upstream revision the sync branch already
-          # carries. Comparing it with the revision this run resolved decides
-          # whether anything needs landing, which a staged-file diff cannot:
-          # re-applying an already-mirrored snapshot produces no diff.
-          sha=""
-          if [ -f .sync-state ]; then
-            sha="$(tr -d '\r\n' < .sync-state)"
-          fi
-          echo "sha=${sha}" >>"$GITHUB_OUTPUT"
-
       - name: Apply upstream snapshot
         id: sync
         continue-on-error: true
@@ -127,8 +121,7 @@ jobs:
           MIRROR_BRANCH: ${{ env.SYNC_BRANCH }}
           UPSTREAM_REMOTE: upstream
           UPSTREAM_BRANCH: ${{ env.UPSTREAM_BRANCH }}
-          PREVIOUS_UPSTREAM_SHA: ${{ steps.previous.outputs.sha }}
-          CURRENT_UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
+          BASE_BRANCH: ${{ env.BASE_BRANCH }}
         run: |
           set +e
           bash .github/scripts/sync-upstream.sh
@@ -149,13 +142,14 @@ jobs:
           # every later run, because a tracked path ignores its ignore rule.
           git add -A
           git reset -q -- .sync-state sync-report.json 2>/dev/null || true
-          # The report status is the authority on whether upstream moved. A
-          # staged-file comparison cannot serve as that signal: when the branch
-          # already carries the upstream tree, applying the same snapshot again
-          # produces no diff at all, so the run would report "nothing to do"
-          # while the recorded upstream revision still lagged behind and the
-          # pipeline would stall with the advance already staged but unlanded.
-          if [ "${PREVIOUS_UPSTREAM_SHA}" = "${CURRENT_UPSTREAM_SHA}" ]; then
+          # "Changed" means the branch holds something the base branch does not,
+          # which is the only condition under which opening or refreshing the
+          # pull request makes progress. Comparing against this branch's own
+          # bookkeeping instead would miss an advance that a previous run already
+          # committed but never merged: the snapshot would be present, the
+          # recorded revision would already match, and every later run would
+          # report "nothing to do" while the base branch stayed behind.
+          if git diff --quiet "origin/${BASE_BRANCH}...HEAD" -- . ':(exclude).sync-state'; then
             echo "changed=false" >>"$GITHUB_OUTPUT"
           else
             echo "changed=true" >>"$GITHUB_OUTPUT"
@@ -219,11 +213,14 @@ jobs:
           print(meta["mirror"]["syncLabel"], meta["mirror"]["conflictLabel"])
           PY
           )
+          # Failures stay visible: a label this step cannot create is the same
+          # failure that made `gh pr create --label` abort without opening a
+          # pull request, and silencing it here would hide the cause.
           ensure_label() {
-            gh label create "$1" --description "$2" --color "$3" --force >/dev/null 2>&1 || true
+            gh label create "$1" --description "$2" --color "$3" --force
           }
-          ensure_label "${SYNC_LABEL}" "Opened by the automated upstream synchronisation workflow" "0E8A16"
-          ensure_label "${CONFLICT_LABEL}" "Upstream touched a path this distribution preserves; resolve before merging" "B60205"
+          ensure_label "${SYNC_LABEL}" "Opened by the automated upstream synchronisation workflow" "0E8A16" || true
+          ensure_label "${CONFLICT_LABEL}" "Upstream touched a path this distribution preserves; resolve before merging" "B60205" || true
 
           existing="$(gh pr list --head "${SYNC_BRANCH}" --state open --json number --jq '.[0].number' || true)"
           if [ -n "${existing}" ]; then
