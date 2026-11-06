@@ -142,38 +142,48 @@ jobs:
           # every later run, because a tracked path ignores its ignore rule.
           git add -A
           git reset -q -- .sync-state sync-report.json 2>/dev/null || true
-          # "Changed" means the branch holds something the base branch does not,
-          # which is the only condition under which opening or refreshing the
-          # pull request makes progress. Comparing against this branch's own
-          # bookkeeping instead would miss an advance that a previous run already
-          # committed but never merged: the snapshot would be present, the
-          # recorded revision would already match, and every later run would
-          # report "nothing to do" while the base branch stayed behind.
+          # The two flags answer different questions and are not
+          # interchangeable. "changed" asks whether the branch holds something
+          # the base branch does not, which is what decides if opening or
+          # refreshing the pull request can make progress; comparing against this
+          # branch's own bookkeeping instead would miss an advance a previous run
+          # already committed but never merged. "staged" asks whether this run
+          # produced anything to commit, which is false when the branch already
+          # carries the snapshot and committing would fail on an empty index.
           if git diff --quiet "origin/${BASE_BRANCH}...HEAD" -- . ':(exclude).sync-state'; then
             echo "changed=false" >>"$GITHUB_OUTPUT"
           else
             echo "changed=true" >>"$GITHUB_OUTPUT"
           fi
+          if git diff --cached --quiet; then
+            echo "staged=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "staged=true" >>"$GITHUB_OUTPUT"
+          fi
           exit 0
 
       - name: Commit synchronised sources
-        if: steps.sync.outputs.changed == 'true'
+        if: >-
+          steps.sync.outputs.changed == 'true' &&
+          steps.sync.outputs.staged == 'true'
         run: |
           short="${GITHUB_SHA::7}"
-          # Only the mirrored sources and the state file belong on this branch.
-          # The state file is tracked so the next run reads the upstream revision
-          # this branch last consumed instead of guessing.
+          # The state file records the upstream revision this branch last
+          # consumed, so it is committed with the snapshot it describes.
           git add -A
-          # An earlier run committed the per-run report before it was excluded, so
-          # it is tracked on the branch and unstaging it is not enough; it has to
-          # be removed, which also lets its gitignore entry apply again.
+          # An earlier run committed the per-run report before it was excluded
+          # from the branch, and a tracked path ignores its gitignore entry, so
+          # unstaging it is not enough; it has to leave the index for the ignore
+          # rule to apply again.
           git rm -q --cached --ignore-unmatch sync-report.json
           git commit -m "chore(sync): advance vendored upstream to ${short}" \
                      -m "Automated mirror update produced by .github/workflows/upstream-sync.yml." \
                      -m "Upstream-Revision: ${{ steps.upstream.outputs.sha }}"
 
       - name: Push sync branch
-        if: steps.sync.outputs.changed == 'true'
+        if: >-
+          steps.sync.outputs.changed == 'true' &&
+          steps.sync.outputs.staged == 'true'
         run: |
           git push --force-with-lease origin "${SYNC_BRANCH}"
 
