@@ -57,6 +57,12 @@ env:
   # BASE_BRANCH is the branch the sync branch is compared against and merged
   # into. It matches mirror.baseBranch in .upstream-sync.json.
   BASE_BRANCH: main
+  # This job adds the upstream repository as a git remote, and gh resolves the
+  # repository from remotes rather than from the checkout it runs in. Without
+  # this pin every gh call addresses the upstream repository instead of this
+  # distribution's, and label, pull-request, and merge operations fail against
+  # a repository the workflow token cannot write to.
+  GH_REPO: ${{ github.repository }}
 
 jobs:
   sync:
@@ -227,7 +233,7 @@ jobs:
           # failure that made `gh pr create --label` abort without opening a
           # pull request, and silencing it here would hide the cause.
           ensure_label() {
-            gh label create "$1" --description "$2" --color "$3" --force
+            gh label create "$1" --repo "${GH_REPO}" --description "$2" --color "$3" --force
           }
           ensure_label "${SYNC_LABEL}" "Opened by the automated upstream synchronisation workflow" "0E8A16" || true
           ensure_label "${CONFLICT_LABEL}" "Upstream touched a path this distribution preserves; resolve before merging" "B60205" || true
