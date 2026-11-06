@@ -2,6 +2,7 @@
   "default": "en",
   "locales": [
     { "code": "en", "name": "English", "direction": "ltr", "aliases": ["en-US", "en-GB"], "fallbacks": [], "catalog": "en" },
-    { "code": "zh-Hans", "name": "简体中文", "direction": "ltr", "aliases": ["zh", "zh-CN", "zh-SG", "cn"], "fallbacks": [], "catalog": "zh" }
+    { "code": "zh-Hans", "name": "简体中文", "direction": "ltr", "aliases": ["zh", "zh-CN", "zh-SG", "cn"], "fallbacks": [], "catalog": "zh" },
+    { "code": "ru", "name": "Русский", "direction": "ltr", "aliases": ["ru-RU", "ru-BY", "ru-KZ"], "fallbacks": [], "catalog": "ru" }
   ]
 }

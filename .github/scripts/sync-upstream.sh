@@ -6,18 +6,25 @@
 #   Fetches the configured upstream repository and rewrites the local checkout of
 #   the mirror branch so that vendored upstream sources match upstream exactly,
 #   while every path listed under sync.preserveLocalPaths in .upstream-sync.json
-#   keeps the downstream version.
+#   keeps the downstream version. Downstream locales are then re-applied to the
+#   shared manifest, which upstream owns but this distribution extends.
 #
 # Contract
 #   - Exits 0 when the branch already matched upstream (no commit created).
 #   - Exits 0 and writes a report when the branch was advanced.
 #   - Exits 1 when a preserved path was also modified upstream; the caller is
 #     expected to open a conflict pull request instead of merging automatically.
+#   - Merging downstream locales is idempotent and never reports a conflict, so
+#     an upstream manifest edit does not require manual reconciliation.
 #
 # Environment
 #   MIRROR_ROOT        repository root (default: git toplevel)
 #   UPSTREAM_REMOTE    git remote name to fetch (default: upstream)
 #   UPSTREAM_BRANCH    upstream branch to track (default: main)
+#   DOWNSTREAM_LOCALES path of the downstream locale list
+#                      (default: .github/downstream-locales.json)
+#   LOCALE_MANIFEST    path of the shared manifest to merge into
+#   LOCALE_MERGE       path of the merge helper
 #   MIRROR_BRANCH      local branch to advance (default: current branch)
 #   SYNC_REPORT        path of the generated JSON report
 # =============================================================================
@@ -33,6 +40,12 @@ MIRROR_BRANCH="${MIRROR_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SYNC_REPORT="${SYNC_REPORT:-${MIRROR_ROOT}/sync-report.json}"
 STATE_FILE="${STATE_FILE:-${MIRROR_ROOT}/.sync-state}"
 METADATA_FILE="${MIRROR_ROOT}/.upstream-sync.json"
+# The downstream locale list and the manifest it is merged into. The merge runs
+# after every copy because the manifest is upstream-owned and would otherwise
+# lose the downstream locale entries on the next sync.
+DOWNSTREAM_LOCALES="${DOWNSTREAM_LOCALES:-${MIRROR_ROOT}/.github/downstream-locales.json}"
+LOCALE_MANIFEST="${LOCALE_MANIFEST:-${MIRROR_ROOT}/backend/internal/pkg/locale/manifest.json}"
+LOCALE_MERGE="${LOCALE_MERGE:-${MIRROR_ROOT}/.github/scripts/locale-merge.py}"
 
 if [ ! -f "$METADATA_FILE" ]; then
   echo "sync-upstream: missing ${METADATA_FILE}" >&2
@@ -137,6 +150,17 @@ while IFS= read -r path; do
   fi
   git checkout "$UPSTREAM_REF" -- "$path"
 done < <(git diff --name-only --no-renames HEAD "$UPSTREAM_REF")
+
+# Downstream locale entries live in an upstream-owned manifest that the copy
+# above rewrites. Re-apply them here so the file carries upstream's current
+# content plus this distribution's locales, without preserving the whole file
+# and turning every upstream manifest edit into a manual merge.
+if [ -f "$DOWNSTREAM_LOCALES" ]; then
+  merged="$(python3 "$LOCALE_MERGE" "$LOCALE_MANIFEST" "$DOWNSTREAM_LOCALES")"
+  if [ -n "$merged" ]; then
+    echo "sync-upstream: added downstream locale(s): $(printf '%s ' $merged)"
+  fi
+fi
 
 if git diff --quiet && git diff --cached --quiet; then
   echo "sync-upstream: no textual change after applying upstream; recording revision"

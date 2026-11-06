@@ -1,0 +1,10 @@
+[
+  {
+    "code": "ru",
+    "name": "Русский",
+    "direction": "ltr",
+    "aliases": ["ru-RU", "ru-BY", "ru-KZ"],
+    "fallbacks": [],
+    "catalog": "ru"
+  }
+]
