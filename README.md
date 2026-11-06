@@ -91,16 +91,19 @@ ghcr.io/cranly-labs/cranly-router
 | Tag | Meaning | Mutability | Recommended use |
 | --- | --- | --- | --- |
 | `latest` | Most recent successful build from `main` | Moves on every successful `main` build | Evaluation, staging |
-| `vX.Y.Z` | Release aligned to an upstream version | Immutable once published | Production |
+| `vX.Y.Z-custom.N` | Release naming the upstream version and this distribution's revision | Immutable once published | Production |
+| `vX.Y.Z` | Release aligned to an upstream version with no downstream revision | Immutable once published | Production |
 | `sha-<short7>` | Build for a specific commit (first 7 characters) | Immutable | Bisecting, rollback, forensics |
 | `edge` | Bleeding-edge build from the sync branch or pre-release state | Moves frequently | Early testing only |
+
+**Reading a version.** Every release version is `<upstream>-custom.<revision>`, as in `0.6.3-custom.1`. The part before `-custom.` is the upstream TokenRouter version the sources were synchronised from, and the number after it counts this distribution's own releases on top of that upstream version. The counter resets to `1` when a new upstream version arrives, so `0.6.3-custom.2` means the second downstream release built on upstream 0.6.3. The running version is shown in the admin interface and follows the same string.
 
 **Supported platforms:** `linux/amd64` and `linux/arm64`.
 
 For production, pin an immutable tag:
 
 ```bash
-docker pull ghcr.io/cranly-labs/cranly-router:v0.6.1
+docker pull ghcr.io/cranly-labs/cranly-router:v0.6.3-custom.1
 ```
 
 > Tag availability depends on whether the corresponding image build has completed. Prefer immutable tags in any environment you depend on.
