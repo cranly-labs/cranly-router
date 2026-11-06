@@ -58,8 +58,10 @@ jobs:
     timeout-minutes: 30
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
-      upstream_sha: ${{ steps.sync.outputs.upstream_sha }}
+      upstream_sha: ${{ steps.upstream.outputs.sha }}
       conflicted: ${{ steps.sync.outputs.conflicted }}
+      status: ${{ steps.sync.outputs.status }}
+      merged: ${{ steps.automerge.outputs.merged }}
     steps:
       - name: Checkout mirror
         uses: actions/checkout@v6
@@ -122,12 +124,21 @@ jobs:
           echo "conflicted=$([ $status -ne 0 ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
           if [ -f sync-report.json ]; then
             echo "upstream_sha=$(python3 -c 'import json;print(json.load(open("sync-report.json"))["upstreamSha"])')" >>"$GITHUB_OUTPUT"
+            # The report status distinguishes an upstream advance from a
+            # preserved-path conflict. Downstream jobs gate on it rather than on
+            # the staged-file comparison below, because that comparison cannot
+            # tell an upstream source change apart from a rewrite of this job's
+            # own tracked bookkeeping.
+            echo "status=$(python3 -c 'import json;print(json.load(open("sync-report.json"))["status"])')" >>"$GITHUB_OUTPUT"
           fi
           # Stage everything the sync produced, then compare against HEAD. The
           # state file is untracked on a fresh branch, so a plain `git diff` would
           # report no change and the commit step would be skipped. The report is
           # gitignored and never becomes part of the commit.
           git add -A
+          # The state file is tracked on the branch and rewritten every run, so it
+          # would otherwise make this flag true even when upstream changed nothing.
+          git reset -q -- .sync-state 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "changed=false" >>"$GITHUB_OUTPUT"
           else
@@ -188,6 +199,30 @@ jobs:
             gh pr edit "${SYNC_BRANCH}" --add-label sync-conflict || true
           fi
 
+      - name: Merge clean sync automatically
+        id: automerge
+        if: >-
+          steps.sync.outputs.changed == 'true' &&
+          steps.sync.outputs.status == 'advanced'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A clean advance carries no preserved-path conflict, so it can land
+          # without a human. The squash keeps main linear and the branch is
+          # deleted so the next run recreates it from the new base; leaving it
+          # behind would make every later rebase replay this commit.
+          if gh pr merge "${SYNC_BRANCH}" --squash --delete-branch; then
+            echo "merged=true" >>"$GITHUB_OUTPUT"
+            echo "::notice::Upstream advance merged into main automatically."
+          else
+            # A protected branch that requires review, or a missing pull request,
+            # leaves the change waiting for a human. That is a reviewable state
+            # rather than a failed sync, so the run keeps its success and the
+            # reason is recorded where the next reader looks.
+            echo "merged=false" >>"$GITHUB_OUTPUT"
+            echo "::warning::Automatic merge of ${SYNC_BRANCH} did not apply; the pull request stays open for manual review."
+          fi
+
       - name: Summary
         run: |
           {
@@ -196,8 +231,10 @@ jobs:
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Upstream revision | \`${{ steps.upstream.outputs.sha }}\` |"
+            echo "| Status | ${{ steps.sync.outputs.status }} |"
             echo "| Changed | ${{ steps.sync.outputs.changed }} |"
             echo "| Conflict | ${{ steps.sync.outputs.conflicted }} |"
+            echo "| Auto-merged | ${{ steps.automerge.outputs.merged || 'no' }} |"
           } >>"$GITHUB_STEP_SUMMARY"
 
   mirror-tags:
@@ -257,3 +294,105 @@ jobs:
             [ -z "${tag}" ] && continue
             gh workflow run build-images.yml --ref "${tag}" -f release_tag="${tag}"
           done <<<"${TAGS}"
+
+  release-tag:
+    name: Tag the released version
+    runs-on: ubuntu-latest
+    needs: sync
+    timeout-minutes: 15
+    # Tagging depends on the synchronised sources having reached main. When the
+    # merge waited for review there is nothing on main to release yet, and when
+    # upstream was already current the version on main is unchanged, so both
+    # cases skip rather than tag a revision nobody advanced.
+    if: >-
+      ${{
+        always() &&
+        needs.sync.result == 'success' &&
+        needs.sync.outputs.status == 'advanced' &&
+        needs.sync.outputs.merged == 'true' &&
+        github.event_name != 'pull_request'
+      }}
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          # The tag must point at the merge commit on main rather than at the
+          # sync branch: the image build resolves the version from the ref it
+          # checks out, and a tag left on a deleted branch has no image behind it.
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Resolve and record the release version
+        id: version
+        run: |
+          version="$(bash .github/scripts/version-bump.sh --write)"
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+          echo "tag=v${version}" >>"$GITHUB_OUTPUT"
+
+      - name: Commit the revision counter
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The counter has to reach main before the tag is pushed. The tag is
+          # created from the ref that main points at here, so a push racing the
+          # tag would leave the two describing different commits.
+          git add .github/custom-revision
+          if git diff --cached --quiet; then
+            echo "revision counter already current"
+            exit 0
+          fi
+          git commit -m "chore(release): ${VERSION}" \
+                     -m "Records the downstream revision consumed by this release." \
+                     -m "[skip ci]"
+          git push origin HEAD:main
+
+      - name: Create the release tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            # A retried run must not move a published tag: the image for the
+            # existing tag is already built, and repointing it would leave the
+            # tag and its image describing different commits.
+            echo "tag ${TAG} already exists; leaving it in place"
+            exit 0
+          fi
+          # The annotation body carries the upstream revision so a reader can
+          # trace any image back to the upstream commit it was built from.
+          git tag -a "${TAG}" -m "Downstream release ${VERSION}" \
+            -m "Built from upstream revision ${UPSTREAM_SHA}."
+          git push origin "${TAG}"
+
+      - name: Dispatch the image build
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # The tag push also triggers build-images.yml; this dispatch makes the
+          # build run even when the push event is suppressed, and the workflow's
+          # concurrency group collapses the two into one run.
+          gh workflow run build-images.yml --ref "${TAG}" -f release_tag="${TAG}"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Downstream release"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Version | \`${{ steps.version.outputs.version }}\` |"
+            echo "| Tag | \`${{ steps.version.outputs.tag }}\` |"
+            echo "| Upstream revision | \`${{ needs.sync.outputs.upstream_sha }}\` |"
+          } >>"$GITHUB_STEP_SUMMARY"

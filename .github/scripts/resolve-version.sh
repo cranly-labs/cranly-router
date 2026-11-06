@@ -26,7 +26,11 @@ if tag="$(git describe --tags --exact-match 2>/dev/null)"; then
 fi
 
 if [ -f backend/cmd/server/VERSION ]; then
-  printf '%s\n' "$(tr -d '\r\n' < backend/cmd/server/VERSION)"
+  # The file holds the upstream version without a prefix, but a downstream
+  # release writes it back through tooling that may keep the tag spelling, so a
+  # leading `v` is stripped here too rather than leaking into the image tag.
+  file_version="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
+  printf '%s\n' "${file_version#v}"
   exit 0
 fi
 

@@ -24,7 +24,7 @@
   },
   "sync": {
     "mode": "pull-request",
-    "allowAutomaticMerge": false,
+    "allowAutomaticMerge": true,
     "preserveLocalPaths": [
       ".github/workflows/upstream-sync.yml",
       ".github/workflows/build-images.yml",
@@ -39,7 +39,8 @@
       ".github/scripts/",
       "AGENTS.md",
       "SECURITY.md",
-      "CONTRIBUTING.md"
+      "CONTRIBUTING.md",
+      ".github/custom-revision"
     ]
   },
   "release": {

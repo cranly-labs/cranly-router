@@ -390,7 +390,18 @@ jobs:
 
   sync-version-file:
     needs: [release]
-    if: ${{ needs.release.result == 'success' }}
+    # The write-back targets backend/cmd/server/VERSION, a file the upstream
+    # synchronisation pipeline also rewrites. A downstream release tag carries a
+    # revision suffix that upstream never uses, so writing it back would put a
+    # value there that the next sync overwrites and that no upstream tooling
+    # expects. Downstream release versions are recorded in .github/custom-revision
+    # instead, so this job is limited to plain upstream-shaped tags.
+    if: >-
+      ${{
+        needs.release.result == 'success' &&
+        !contains(github.ref_name, '-custom.') &&
+        (github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v'))
+      }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout default branch

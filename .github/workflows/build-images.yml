@@ -244,11 +244,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
+          # Release tags carry a downstream revision suffix, as in
+          # v0.6.3-custom.1, while upstream tags the version alone. Stripping the
+          # suffix before the lookup keeps the note naming the upstream release
+          # instead of silently falling back to the generic wording, which is what
+          # an unmatched lookup produces.
+          upstream_tag="${tag%-custom.*}"
+          if [ "${upstream_tag}" != "${tag}" ]; then
+            revision="${tag##*-custom.}"
+          else
+            revision=""
+          fi
           # A mirrored upstream tag names the release it came from. A tag pushed
           # by hand has no upstream counterpart, so the note states only that the
           # image tracks upstream at the tagged commit.
-          if gh api "repos/${UPSTREAM_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
-            origin_note="This release mirrors upstream ${UPSTREAM_REPOSITORY} tag \`${tag}\`."
+          if gh api "repos/${UPSTREAM_REPOSITORY}/git/ref/tags/${upstream_tag}" >/dev/null 2>&1; then
+            origin_note="This release mirrors upstream ${UPSTREAM_REPOSITORY} tag \`${upstream_tag}\`."
+            if [ -n "${revision}" ]; then
+              origin_note="${origin_note} Downstream revision ${revision} adds this distribution's own changes on top of that tag."
+            fi
           else
             origin_note="This release tracks ${UPSTREAM_REPOSITORY} at the tagged commit."
           fi

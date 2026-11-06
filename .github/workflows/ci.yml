@@ -197,7 +197,15 @@ jobs:
           key: ${{ steps.go.outputs.cache-key }}
 
   scripts:
+    # This job runs on macOS because the fixtures exercise the Bash 3.2 and BSD
+    # `stat` behaviour that macOS ships; the same assertions fail under GNU tools.
+    # Hosted macOS runners are the scarcest pool GitHub offers, and the work itself
+    # takes under a minute, so nearly all of this allowance covers the queue rather
+    # than the tests. Without an explicit allowance the run-level default cancels
+    # the job while it is still waiting for a runner, which reads as a code failure
+    # even though nothing ran.
     runs-on: macos-15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - run: make test-scripts
