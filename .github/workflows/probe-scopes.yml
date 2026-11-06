@@ -12,7 +12,9 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "--- label create ---"
-          gh label create probe-label --description "probe" --color "0E8A16" --force && echo "LABEL_OK" || echo "LABEL_FAIL"
-          echo "--- direct api ---"
-          gh api repos/${{ github.repository }}/labels --jq '.[].name' | head -3 || echo "API_FAIL"
+          echo "=== label create (verbose) ==="
+          gh label create probe-label --description "probe" --color "0E8A16" --force 2>&1 || true
+          echo "=== label list ==="
+          gh label list --limit 3 2>&1 || true
+          echo "=== api labels ==="
+          gh api repos/${{ github.repository }}/labels --jq '.[].name' 2>&1 | head -3 || true
