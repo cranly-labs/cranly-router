@@ -9,12 +9,11 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "=== label create (verbose) ==="
+          echo "=== label create in a checkout ==="
           gh label create probe-label --description "probe" --color "0E8A16" --force 2>&1 || true
           echo "=== label list ==="
-          gh label list --limit 3 2>&1 || true
-          echo "=== api labels ==="
-          gh api repos/${{ github.repository }}/labels --jq '.[].name' 2>&1 | head -3 || true
+          gh label list --limit 3 2>&1 | head -5 || true
