@@ -52,8 +52,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
-// Public panel responses expose selected user fields while administrator
-// responses carry management details and configured-state flags. These cases
+// api_scenario_test.go verifies public panel and administrator response contracts.
+// Public responses expose selected user fields while administrator responses
+// carry management details and configured-state flags. These cases
 // cross identity/httpapi/session_handler.go, apikey/httpapi/key_handler.go,
 // usage/httpapi/usage_handler.go, billing/httpapi/subscription_handler.go,
 // billing/httpapi/admin_subscription_handler.go,
@@ -1090,7 +1091,14 @@ func TestAPIContracts(t *testing.T) {
 			name: "GET /api/v1/admin/settings",
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
+				// Seed an explicit reporting opt-out and enabled diagnostics alongside
+				// a private identity. Exact response comparison must expose only the four controls.
 				deps.settingRepo.SetAll(map[string]string{
+					"bstats_enabled":                                    "false",
+					"bstats_log_errors":                                 "true",
+					"bstats_log_sent_data":                              "true",
+					"bstats_log_response_status_text":                   "true",
+					"bstats_server_uuid":                                "fe5233bb-2ed6-4a60-99da-45b42c6c29ec",
 					identity.SettingKeyRegistrationEnabled:              "true",
 					identity.SettingKeyEmailVerifyEnabled:               "false",
 					identity.SettingKeyRegistrationEmailNormalization:   "false",
@@ -1483,6 +1491,10 @@ func TestAPIContracts(t *testing.T) {
 					"provider_quota_notify_enabled": false,
 					"provider_scheduling_thresholds": {"anthropic":100,"grok":100,"openai":100},
 					"subscription_expiry_notify_enabled": true,
+					"bstats_enabled": false,
+					"bstats_log_errors": true,
+					"bstats_log_sent_data": true,
+					"bstats_log_response_status_text": true,
 					"team_enabled": true,
 					"risk_control_enabled": false,
 					"balance_unit_name": "USD",
@@ -1515,7 +1527,7 @@ func TestAPIContracts(t *testing.T) {
 			name: "GET /api/v1/admin/settings falls back to config oauth defaults",
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
-				deps.cfg.OIDC = config.OIDCConnectConfig{
+				deps.cfg.Auth.OAuth.OIDC = config.OIDCConnectConfig{
 					Enabled:             true,
 					ProviderName:        "ConfigOIDC",
 					ClientID:            "oidc-config-client",
@@ -1530,7 +1542,7 @@ func TestAPIContracts(t *testing.T) {
 					AllowedSigningAlgs:  "RS256,ES256,PS256",
 					ClockSkewSeconds:    120,
 				}
-				deps.cfg.WeChat = config.WeChatConnectConfig{
+				deps.cfg.Auth.OAuth.WeChat = config.WeChatOAuthConfig{
 					Enabled:             true,
 					OpenEnabled:         true,
 					OpenAppID:           "wx-open-config",
@@ -1848,6 +1860,10 @@ func TestAPIContracts(t *testing.T) {
 					"provider_quota_notify_enabled": false,
 					"provider_scheduling_thresholds": {"anthropic":100,"grok":100,"openai":100},
 					"subscription_expiry_notify_enabled": true,
+					"bstats_enabled": true,
+					"bstats_log_errors": false,
+					"bstats_log_sent_data": false,
+					"bstats_log_response_status_text": false,
 					"team_enabled": true,
 					"risk_control_enabled": false,
 					"balance_unit_name": "USD",
@@ -1991,11 +2007,7 @@ func newContractDeps(t *testing.T, setup func(*testing.T, *contractDeps)) *contr
 	providerRepo := stubProviderRepo{}
 	redeemRepo := &stubRedeemCodeRepo{}
 
-	cfg := &config.Config{
-		Default: config.DefaultConfig{
-			APIKeyPrefix: "sk-",
-		},
-	}
+	cfg := &config.Config{APIKey: config.APIKeyConfig{Prefix: "sk-"}}
 
 	usageRepo := newStubUsageLogRepo()
 	settingRepo := newStubSettingRepo()

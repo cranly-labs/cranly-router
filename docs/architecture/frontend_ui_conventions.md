@@ -41,7 +41,8 @@
 - 列表的搜索、筛选、刷新和批量操作工具栏都用 `gap-2`（8px），包括工具栏外层、左侧筛选组和右侧操作组；共用组件和加载骨架也用这个间距。窄屏换行时行间距同样是 8px。筛选弹层里带标签的字段按表单间距排列；分页摘要、正文信息组和卡片区块各用自己的间距。
 - 页面或卡片的标题带说明文字时，同一行的操作区和整块标题说明的底部对齐。`AppLayout` 页头用 `items-end`，自绘页头和带说明的卡片标题行也这样对齐。页头的补充信息放在可选的 `page-heading-meta` 插槽，位于说明下方 8px，参与同一个底部对齐，例如用户仪表盘的实时状态条。先纵向堆叠、宽屏再横排的布局，只在横排断点开启底部对齐，窄屏的控件正常换行。
 - 卡片 padding 有两档：独立卡片 `p-6`，嵌套面板、网格卡和统计卡 `p-4`。
-- 用户仪表盘的页头由标题、实时状态和筛选工具组成。手机指标卡收紧内部间距，环比保留“较上期”说明；请求数、Token 和消费的涨跌使用中性色，缓存命中率的升降使用状态色。快捷操作在窄屏和文档顺序中位于公告之前，桌面上仍排在公告右侧。公告标题最多两行，摘要跳过表格和代码块，优先取首段正文，详情展示完整内容。
+- 使用记录和支付概览的统计卡横排时，图标与文字区顶部对齐，图标底块固定为 `h-9 w-9`、不收缩，内部图标为 `h-5 w-5`。说明、多币种金额或单位名称换行时，同一排卡片的图标保持同一高度。
+- 用户仪表盘的页头由标题、实时状态和筛选工具组成。手机指标卡收紧内部间距，环比保留“较上期”说明；请求数、Token 和消费的涨跌使用中性色，缓存命中率的升降使用状态色。快捷操作在窄屏和文档顺序中位于公告之前，桌面上仍排在公告右侧。管理员配置了联系方式时，快捷操作下方显示“联系我们”卡片，条目和顶栏菜单共用 `utils/contactInfo.ts` 的解析规则：链接在新标签页打开，其他值点击复制；桌面上这张卡片撑满右列剩余高度，和公告卡片底边对齐。公告标题最多两行，摘要跳过表格和代码块，优先取首段正文，详情展示完整内容。
 - header 和 main 的水平 padding 完全一致，都是 `px-4 md:px-6 lg:px-8`，两侧边缘在所有断点上对齐。
 - 默认首页和控制台共用 `AppHeader`，品牌、工具按钮、余额和用户菜单都在这里。首页通过 `public-page` 隐藏侧栏开关，保留模型广场和访客登录入口，并为固定顶栏预留高度；自定义 HTML 或 iframe 首页使用全页模式。操作台的返回仪表盘图标在品牌右侧。
 - 布局尺寸 token 在 `style.css` 的 `:root` 里定义，各有一份：`--header-h`（3.5rem，顶栏高度）、`--sidebar-w`（14rem，侧栏展开宽度）、`--sidebar-w-collapsed`（4.5rem，侧栏折叠宽度）。顶栏高度、主区 `padding-top`、侧栏遮罩 `top`、侧栏宽度和主区 `lg:ml-*` 偏移都引用这些变量（例如 `h-[var(--header-h)]`），`h-14`、`top-14`、`w-56` 这类字面量会和变量脱节。吸顶偏移和锚点 `scroll-margin-top` 写成 `calc(var(--header-h) + 余量)`（参考 SettingsView 的 tabs 吸顶），并在注释里写明余量由什么组成。
@@ -53,7 +54,7 @@
 
 ## 控件尺寸
 
-- 按钮、输入框和下拉触发器共用 36px 基线（`.btn` 和 `.input` 都是 `min-h-9`），分页器控件也是 36px，表格页脚的分页尺寸和其他地方一样。在基线之上再写 `h-9` 是冗余写法，门禁会拦截；紧凑档需要 36px 时，用 `btn-sm/md/lg + h-9` 提到这一档。
+- 按钮、输入框和下拉触发器共用 36px 基线（`.btn` 和 `.input` 都是 `min-h-9`）。分页器是例外，控件用 28px，见[表格密度](#表格密度)。在基线之上再写 `h-9` 是冗余写法，门禁会拦截；紧凑档需要 36px 时，用 `btn-sm/md/lg + h-9` 提到这一档。
 - 主操作用 `.btn-primary`；普通的编辑、查询、筛选和链接操作用 `primary-*` 品牌色。状态提示、业务分类和第三方品牌使用各自的配色。radio 和 range 通过全局 `accent-color` 使用 `primary-600`。checkbox 是原生 input，勾选、半选、禁用和键盘行为都由浏览器提供，外观由 `style.css` 统一设置：浅色填充 `primary-700`，深色填充 `primary-600`，白色勾选标记复用通用的 check 路径，描边 1.75。选中和取消时用 `--motion-fast` 做缩放和透明度过渡，半选显示一条横线；系统强制配色时显示浏览器的原生外观。
 - 原生按钮、`role="button"` 和 `.btn` 的文字不可选中，按钮内的图片不可拖拽；正文、表格数据和输入内容可以选中复制。
 - 图标按钮有两档：`.btn-icon`（h-9 w-9）和 `.btn-icon-sm`（h-8 w-8），自带 `rounded-control` 和居中布局，调用处只需补 hover 和颜色类。`.btn-sm` 用在表格行内等紧凑场景。
@@ -76,7 +77,7 @@
 
 - 菜单和搜索建议列表用 `.dropdown` 容器样式，圆角、边框、阴影和深色背景都包含在内。默认绝对定位，上下留白 `py-1`；需要固定定位时补 `fixed`，内容自带留白时补 `py-0`。定位偏移、尺寸和箭头由调用处维护，展开和收起使用公共动效。
 - 深底的信息提示（`HelpTooltip`、表格悬停明细、状态说明等）用 `.tooltip-panel`：浅色模式是 `gray-900` 深底白字；深色模式是 `dark-900` 底色、`dark-100` 文字和 `dark-600` 描边。箭头用 `.tooltip-caret` 旋转方块，一半嵌进面板边缘；调用处补定位和朝外的两条边（向下 `border-b border-r`，向上 `border-l border-t`，向左 `border-b border-l`，向右 `border-r border-t`）。手写的 `dark:bg-gray-*` 面板和边框三角箭头，在深色配色调整时容易漏改，统一用这两个类。浮层内的分隔线在深色模式下用 `dark-600`。
-- 菜单项有两档：`.dropdown-item`（px-4）和紧凑档 `.dropdown-item-sm`（px-3）。配色、hover 和过渡都已包含，调用处只补 `gap-*`、`rounded-control` 这类布局类。基础配色是中性色。顶栏用户菜单、联系客服、语言切换这类导航型浮层，用内缩菜单样式：面板 `.dropdown py-0`，内容按 `.menu-section` 分区（`p-1.5` 留白，相邻分区之间自动加分隔线），分区标题 `.menu-heading`，菜单项 `.menu-item` 内缩并带 `rounded-control` 的悬停底色，悬停配色和 `.sidebar-link` 一致，图标继承文字颜色；危险操作再加 `.menu-item-danger`。顶栏工具区的图标按钮用全局的 `.header-status-icon-button`。
+- 菜单项有两档：`.dropdown-item`（px-4）和紧凑档 `.dropdown-item-sm`（px-3）。配色、hover 和过渡都已包含，调用处只补 `gap-*`、`rounded-control` 这类布局类。基础配色是中性色。顶栏用户菜单、联系我们、语言切换这类导航型浮层，用内缩菜单样式：面板 `.dropdown py-0`，内容按 `.menu-section` 分区（`p-1.5` 留白，相邻分区之间自动加分隔线），分区标题 `.menu-heading`，菜单项 `.menu-item` 内缩并带 `rounded-control` 的悬停底色，悬停配色和 `.sidebar-link` 一致，图标继承文字颜色；危险操作再加 `.menu-item-danger`。顶栏工具区的图标按钮用全局的 `.header-status-icon-button`。
 - 列表工具栏的漏斗筛选用 `FilterDropdown`，每个字段用 `FilterField` 包裹；按钮、面板和点击外部关闭的逻辑都由组件提供。
   - 面板外观和 `DateRangePicker` 一致：`rounded-surface`、淡描边和柔和阴影。头部、已选条件和字段区之间靠留白分层，中间没有分割线。
   - 头部是标题、条件数和「重置」，没有生效的条件时「重置」置灰。有生效条件时，头部下方列出已选条件标签（字段名、当前取值和 ×），顺序和字段一致，点 × 只移除这一项。再往下是可滚动的字段栅格。
@@ -86,6 +87,7 @@
   - 面板默认左边缘对齐触发按钮，右侧放不下时向左平移，水平方向的夹取复用 `getFloatingPanelPosition`。有生效条件时，按钮换成品牌色描边并显示数量角标。
   - 面板里有输入框状态，或者测试需要直接访问字段时，传 `keep-mounted`；运维看板这类自定义按钮样式用 `trigger-class` 覆盖。
 - 日期范围用 `DateRangePicker`：左侧是分组的快捷范围，右侧是自绘的单月日历，原生 `type="date"` 输入不再使用。在日历上点两次确定起止日期，反向点选时自动对调。起止日期和主按钮同色，中间的日期用淡品牌青色带连起来，今天用小圆点标出。最晚可以选到明天，用来兼容时区差异。没点应用就取消、点外部或按 Esc 关闭时，改动全部丢弃，触发器只显示已经生效的范围。弹层由 `getFloatingPanelPosition` 定位：触发器在视口右半边时右对齐，在左半边时左对齐。
+- 用户使用记录页默认查询浏览器本地日期的“今天”，趋势按小时展示。用户仪表盘没有有效的已存范围时也默认“今天”；它会恢复手动保存的快捷范围，选择“今天”后每次刷新重新计算当天边界。
 - 单个日期时间（例如公告的开始和结束时间）用 `DateTimePicker`。值的格式和 `datetime-local` 相同（`YYYY-MM-DDTHH:mm`），空字符串表示未设置。原生 `type="datetime-local"` 的面板跟随浏览器和系统主题，深色模式下和项目控件的配色对不上。弹层左侧是和 `DateRangePicker` 同款的单月日历，可以选未来的日期。右侧是时、分两列滚动列表，列高等于日历网格。`placeholder` 写空值的含义，例如“立即生效”。有值时，触发器右侧显示 ×，点一下清空。传入 `min` 后，早于这个日期的日子置灰。点确定才写回，点取消、点外部或按 Esc 会丢弃草稿。弹层打开时按 Esc 只关闭弹层，外层弹窗保持打开。点“此刻”直接写入当前时间。传入 `presets` 后，弹层左侧多出一列快捷选项，点击后直接写回。公告结束时间的快捷选项是 1、3、7、30 天，从开始时间起算，没填开始时间时从现在起算。定位规则和 `DateRangePicker` 相同。
 - 表格行内的操作菜单（4 个 `*ActionMenu`）的浮层容器用 `.action-menu` 类（fixed 定位、层级和面板样式），宽度类（w-48/w-52）和 `action-menu-content` 钩子类写在调用处。
 - 创作台画布上的浮层（顶部工具条、设置、历史、输入框、空画布引导的胶囊）用 `.canvas-island`：85% 不透明的白底或 `dark-900` 底、淡描边、背景模糊和一档柔和阴影，深色模式减弱阴影。浮层里的 32px 图标按钮用 `.canvas-tool-btn`，选中态加 `.canvas-tool-btn-active`，按钮组之间用 `.canvas-tool-divider`。展开的菜单和弹层用实底的 `.dropdown` 或同等样式。
@@ -105,8 +107,9 @@
 
 | 值 | token | 用途 |
 |---|---|---|
-| 30 | `chart-tooltip` / `sidebar-overlay` | 图表 tooltip（有意低于导航）/ 侧栏遮罩 |
+| 30 | `sidebar-overlay` | 侧栏遮罩 |
 | 40 | `sidebar` | 侧栏 |
+| 45 | `chart-tooltip` | 图表 tooltip，高于侧栏、低于顶栏和弹窗；弹窗内图表挂载到当前弹窗层 |
 | 50 | `header` / `modal` | 顶栏 / 弹窗遮罩（同一层由 DOM 顺序和 teleport 决定先后） |
 | 60 | `modal-nested` | 嵌套弹窗、筛选面板 |
 | 100 | `tooltip` / `announcement` | 弹窗内的 tooltip、下拉面板、灯箱 / 公告底层 |
@@ -124,6 +127,7 @@
 - 默认使用 `BaseDialog`：宽度档位有 narrow、normal、wide、extra-wide、full；Escape 关闭、点击外部关闭、焦点管理和背景滚动锁定都已内置。新弹窗直接用它，手写 `fixed inset-0` 外壳会缺少这些行为。
 - 从一个弹窗里再打开弹窗时，后打开的弹窗传 `z-index` = `modal-nested`（`Z_INDEX.MODAL_NESTED`）。同一层级按组件的挂载顺序叠放，先挂载的弹窗会被后挂载的盖住，与打开顺序无关；用户管理页从余额变动记录里打开充值框属于这种情况。
 - 输入法组词期间按 Escape 取消当前输入时，`BaseDialog` 保持打开，普通 Escape 按 `closeOnEscape` 设置关闭最上层弹窗。
+- 所有键盘控件都位于面板内的弹窗可开启 `trapFocus`，让 Tab 和 Shift+Tab 在最上层弹窗内循环；隐藏、禁用、inert 和负 tabindex 的控件不参与，退出期间不拦截导航。该选项默认关闭，单独 teleport 控件的弹窗需保持其自身的焦点约定。版本更新日志启用此选项，打开时关闭维护菜单，退出后将焦点恢复到版本徽标。
 - 标题需要说明或图标时，用 `subtitle` 在标题下加一行 `text-xs` 说明，用 `header-icon` 插槽在标题左侧放图标块。标题右侧的模式切换等控件放进 `header-actions` 插槽，排在关闭按钮之前。头部结构由这些插槽组成。
 - 贴边分栏的工作区弹窗：传 `flush` 去掉内容区内边距，再配合 `bodyScroll=false`，由各栏自己滚动。侧栏用浅底（浅色 `gray-50/70`，深色 `dark-950`）和单侧分隔线贴住弹窗边缘，外面不再包卡片。底部操作区放在内容里，用同样的浅底和 `rounded-b-surface sm:rounded-b-dialog`，这样不会盖住弹窗的圆角。窄屏下分栏改成上下堆叠、由外层整体滚动时，各栏按内容撑高，`min-h-0 flex-1` 只在分栏断点（`md:`）生效；否则栏会被压缩，内容溢出后底部留白消失，内容贴住底栏。提供商连接测试弹窗是这种布局的参考实现。
 - 提供商测试共用标题、侧栏宽度、三列指标和结果面板。`ProviderTestResultView` 管理复制、日志和外层滚动，决策测试的空态与答案由 `SystemOneTestAnswers` 按问题类型展示。测试类型决定输入字段和指标内容；决策输入的格式选择放在字段标签旁，问题标识及补充条件折叠显示。批量测试详情使用同一个结果组件。
@@ -172,7 +176,7 @@
 
 Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`，由编译器给组件选择器添加作用域属性。`:global(.dark) .component-class` 会被编译成单独的 `.dark`，使组件背景、边框或阴影作用到页面根元素；滚动条伪元素也要保留组件选择器。
 
-深色模式下，侧栏和顶栏同样使用不透明的 `--page-bg`，和页面同色。控制台、首页和公开模型广场的顶栏共用 `.site-header`；深色模式关闭顶栏的背景模糊，滚动内容和移动端侧栏遮罩都不会改变它的底色。浅色模式下，顶栏是 80% 透明度的白色并带背景模糊，侧栏是白色。
+控制台、首页和公开模型广场的顶栏共用 `.site-header`。浅色顶栏使用不透明度为 65% 的白色，深色顶栏使用不透明度为 80% 的 `--page-bg`；两种模式都保留背景模糊，透出滚动内容，文字和图标保持原有不透明度。侧栏使用不透明背景：浅色为白色，深色为与页面同色的 `--page-bg`。
 
 深色模式的层次靠接近底色的表面和低透明度的边线区分。`borderColor.dark`、`divideColor.dark`、`ringColor.dark` 共用 `darkEdges`，和 `colors.dark` 的实色分开，调整边框时文字和背景不受影响。
 
@@ -201,9 +205,9 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 
 - 模型、分组和端点分布表的名称与展开箭头默认使用普通文字色（浅色 `gray-900`、深色 `white`）。可展开的行在整行悬停时将名称和箭头显示为品牌色（浅色 `primary-600`、深色 `primary-500`）。关闭明细或分组 ID 小于等于 0 时使用普通文字色。
 - 饼图和圆环图按原始指标值画扇区，每项的占比是该项数值除以所有项之和，tooltip 用同一组数值计算百分比。扇区数据保持原值：不做对数压缩，也不设最小占比，零值不占扇区。消费排行的"其他"汇总项也按实际费用计算。
-- 分组和端点分布的条形图、柱状图使用从零开始的线性数值轴，柱长和原始指标值成正比，不使用对数轴或数据压缩。
+- 分组、端点、成员消费和运维请求时长分布统一使用环形饼图。分组和端点保留旁边的明细表；成员和时长区间通过图例标识，tooltip 显示原始数值及占比。
 - 图表主题从 `composables/useChartTheme.ts` 取：它提供响应式的 `colors`（text、muted、grid 三档，zinc 色系）和 `onThemeChange` 重绘钩子。`document.documentElement.classList.contains('dark')` 这种快照判断没有响应式依赖，切换主题后不会重新计算，门禁会拦截。vue-chartjs 场景下，colors 是响应式的，切换主题时自动重绘；Stripe Elements 等命令式场景，用 watch 加 `elements.update({ appearance })` 重新应用。
-- 分布图的调色板只有一份 `CHART_PALETTE`（12 色，按切片排名取色），"Others" 汇总切片用 `CHART_OTHER_COLOR`；token 趋势的序列色用 `CHART_SERIES_COLORS`。刻度字号 `CHART_TICK_FONT_SIZE`（10），图例字号 `CHART_LEGEND_FONT_SIZE`（11）。
+- 分布图的调色板只有一份 `CHART_PALETTE`（12 色，按显示顺序取色），"Others" 汇总切片用 `CHART_OTHER_COLOR`；token 趋势的序列色用 `CHART_SERIES_COLORS`。刻度字号 `CHART_TICK_FONT_SIZE`（10），图例字号 `CHART_LEGEND_FONT_SIZE`（11）。
 - 以下业务配色留在组件内部：TeamMemberUsageCharts 的成员固定配色（同一成员在不同图表里颜色一致）；OpsSwitchRateTrendChart 和 DashboardView 的本地图表主题（深色刻度 `#D4D4D8`、网格 `#27272A`，浅色使用品牌色调的字面值）；DailyRevenueChart 的线条和填充色。
 - 用户仪表盘趋势图（`UserDashboardUsageChart`）只画线，线下区域和辉光阴影都不画，保持扁平。单指标时叠加上一周期的对比线，用 `colors.muted` 虚线，按下标和本期对齐。峰值环、均值虚线、标签胶囊和末端的呼吸点画在同一个本地插件里，颜色取自 `useChartTheme` 和卡片底色。尚未结束的时段画成虚线。
 - token 数量用 `utils/format.ts` 格式化：`formatTokens`（两位小数加千分位）和 `formatTokensK`（一位小数）用途不同，按场景选择。ProviderTodayStatsCell 的 K1/M2 混合精度是有意保留的本地写法。
@@ -300,7 +304,7 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 
 全站只有一套密度：表头 `px-4 py-2 text-xs font-medium tracking-wider`，数据单元格 `px-4 py-3 text-sm`。`.table` 组件类、`TablePageLayout` 的深度样式和 `DataTable` 三处要保持一致。
 
-分页表格的表体和 `Pagination` 共用一个 `rounded-surface` 外框，外框用 `overflow-hidden` 裁出底部圆角。分页放在表体的滚动区域之外，两者之间直接相接，没有 `space-y-*` 或外边距；固定高度的表格用 flex 分配表体高度，分页不收缩。`TablePageLayout` 已经包含这个结构；独立卡片和弹窗也按这个约定，嵌入 `UsageTable` 时传 `flat`，表格只保留外框这一层边框。桌面分页上下留白 8px，浅色底 `gray-50/80`，深色底 `dark-900`，控件高 36px；窄屏显示上一页、下一页和当前页数。筛选结果为空时保留一个空页，记录范围显示 0 至 0，上一页和下一页都禁用。
+分页表格的表体和 `Pagination` 共用一个 `rounded-surface` 外框，外框用 `overflow-hidden` 裁出底部圆角。分页放在表体的滚动区域之外，两者之间直接相接，没有 `space-y-*` 或外边距；固定高度的表格用 flex 分配表体高度，分页不收缩。`TablePageLayout` 已经包含这个结构；独立卡片和弹窗也按这个约定，嵌入 `UsageTable` 时传 `flat`，表格只保留外框这一层边框。分页栏和表头行同为 36px：控件（页码、上一页和下一页、每页条数选择框、跳转输入框和按钮）高 28px，上下各留白 4px。选择框和跳转输入框原本继承 `.input` 的 36px 基线，由 `Pagination` 的局部样式压到 28px。桌面分页浅色底 `gray-50/80`，深色底 `dark-900`；窄屏显示上一页、下一页和当前页数，高度也一样。筛选结果为空时保留一个空页，记录范围显示 0 至 0，上一页和下一页都禁用。
 
 移动端卡片里，`DataTable` 的每一行左边是 `text-xs` 标签，右边是单元格内容，两边用 `items-baseline` 按首行文字对齐。单元格的首个元素是图标、头像或色条时，flex 容器会拿这个元素的底边当基线，标签就会偏下。这类单元格给第一行文字加 `self-baseline`，参考 `GroupBadge` 的分组名和 `UsageTable` 的 Token、延迟列。徽章组件也照这样处理，例如 `PlatformBadge`、`CapacityBadge`。文字是裸文本节点时，先包一层 `<span>`。
 

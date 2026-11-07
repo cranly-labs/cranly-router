@@ -74,14 +74,14 @@ MCP 与普通管理 HTTP 共用业务 handler。app 装配专用令牌读取、R
 
 `app/http_transport.go` 把传输相关配置整理给下游，`gateway/provider/transport` 组合请求策略和各平台的传输能力。`infra/httpclient.UpstreamPool` 持有客户端缓存和请求占用计数，成功的请求在响应体关闭时归还占用。OpenAI 的 HTTP/2 回退由 egress 处理，Grok CLI Header 和可重放的 403 策略由 upstream/grok 处理。隐私请求使用共享的 req 客户端池，超时 30 秒，使用 Chrome 指纹。
 
-`cmd/server` 负责参数解析、构建版本变量和 `go generate ./cmd/server` 入口。配置只加载一次，日志、数据库引导和应用依赖图共用这份配置；JWT secret 在数据库引导后补齐，然后重新校验配置。修改 Wire provider 后通过这个生成入口更新结果；只改装配时无需运行 Ent 生成。
+`cmd/server` 负责参数解析、构建版本变量和 `go generate ./cmd/server` 入口。配置只加载一次，先执行文件版本升级、未知键检查和显式环境引用解析，日志、数据库引导和应用依赖图共用结果；JWT secret 在数据库引导后补齐，然后重新校验配置。`app/upstream_identity.go` 在依赖图构造前发布 Anthropic、Antigravity 和 Grok 的启动身份参数。修改 Wire provider 后通过这个生成入口更新结果；只改装配时无需运行 Ent 生成。
 
 <a id="startup_and_shutdown"></a>
 ## 启动与关闭
 
 ### 启动顺序
 
-主入口先处理 `-version` 和 `-setup`：前者输出构建信息后退出，后者执行命令行安装。正常启动时，尚未安装就执行 AUTO_SETUP 或启动独立的 setup server，已经配置好就构造完整应用。setup 里的迁移调用精简版 bootstrap，业务 worker 留到完整应用启动后再构造。
+主入口先处理 `-version`、`-migrate-config` 和 `-setup`，分别用于构建信息、离线配置迁移和命令行安装。正常启动时，尚未安装就执行 AUTO_SETUP 或启动独立的 setup server，已经配置好就构造完整应用。setup 里的迁移调用精简版 bootstrap，业务 worker 留到完整应用启动后再构造。
 
 完整应用启动时：
 
@@ -112,6 +112,12 @@ Wire 构造完对象、登记完资源后，lifecycle 才启动后台工作，�
 提供商的 `BalanceAlertMonitor` 由 app 绑定查询服务、PostgreSQL 运行状态和通知发送。它在 StartOrder 980 启动，在 StopOrder 20 取消并等待检查、发信和结果落库结束，结果落库在取消后仍有独立的五秒预算；随后 StopOrder 25 关闭共享上游查询。提醒运行状态属于备份的 `runtime_data` 选项。
 
 billing 的余额和 Key 缓存队列、订阅过期提醒由 app 接入生命周期。提醒任务启动后立即执行第一轮，之后每分钟扫描一次，执行前取得 Redis 或数据库任务锁；停止时取消并等待正在执行的操作。
+
+### bStats 生命周期
+
+`app/runtime_bstats.go` 构造唯一的 bStats 服务和专用 HTTP 客户端，以构建版本标记 TokenRouter 版本，在 StartOrder 980 启动、StopOrder 20 停止。构造阶段不采集或发送数据，只有读取有效设置并持久保存实例 UUID 后才启动计时器。统计初始化失败允许应用继续启动；关闭时取消并等待上报，再释放设置和日志资源。
+
+综合设置提交后把四项已保存的控制发布给同一服务。关闭和重新开启串行切换 worker，日志更新只替换快照，避免重置官方上报时序。调度、数据范围和默认值见 [bStats 安装统计](../interfaces/configuration.md#bstats_reporting)。
 
 ### 关闭顺序
 

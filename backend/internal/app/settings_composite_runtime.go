@@ -5,6 +5,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/audit"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/bstats"
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
@@ -47,7 +48,7 @@ func provideCompositeSettingsHTTP(source *composite.Runtime, registry *settings.
 // headers come from cfg's published values, while Grok default-model
 // publication uses the platform setter.
 func provideCompositeReadOptions(cfg *config.Config, oauth *identity.OAuthSettings, gatewayRules *gateway.AdminSettingsRules, defaults *scheduler.AdminDefaults, sockets *ws.Runtime) *composite.ReadOptions {
-	return &composite.ReadOptions{ResponsesWS: sockets, OAuth: oauth, Gateway: *gatewayRules, Scheduler: *defaults, DefaultBalance: func() float64 { return cfg.Default.UserBalance }, DefaultConcurrency: func() int { return cfg.Default.UserConcurrency }, Forwarded: func() runtimeconfig.ForwardedInput {
+	return &composite.ReadOptions{ResponsesWS: sockets, OAuth: oauth, Gateway: *gatewayRules, Scheduler: *defaults, DefaultBalance: func() float64 { return cfg.UserDefaults.Balance }, DefaultConcurrency: func() int { return cfg.UserDefaults.Concurrency }, Forwarded: func() runtimeconfig.ForwardedInput {
 		value := cfg.ForwardedClientIPSettings()
 		return runtimeconfig.ForwardedInput{APIKeyACLTrustForwardedIP: value.TrustForwardedIP, ForwardedClientIPHeaders: value.Headers}
 	}, PublishModel: func(model string) {
@@ -56,15 +57,19 @@ func provideCompositeReadOptions(cfg *config.Config, oauth *identity.OAuthSettin
 }
 
 // provideCompositeRuntime binds preparation and ordered post-save application
-// callbacks. The WS step can return its publication error; subsequent steps
-// publish gateway, scheduler, provider, forwarded-IP, and client settings, then
+// callbacks. Metrics reconcile first so a saved opt-out reaches the worker
+// before other runtime updates. The WS step can return its publication error;
+// subsequent steps publish gateway, scheduler, provider, forwarded-IP, and client settings, then
 // notify site and adjust creative workers plus Ops monitoring. Persistence and
 // application-error handling remain owned by composite.Runtime.
-func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *composite.ReadOptions, grants *identity.GrantSettings, gatewayRuntime *gateway.RuntimeSettings, gatewayRules *gateway.AdminSettingsRules, defaults *scheduler.AdminDefaults, plans *billing.Plans, backendMode *admission.BackendMode, providerRuntime *provider.RuntimeSettings, quota *provider.QuotaSettingsCache, forwarded *runtimeconfig.ForwardedSettings, shared *schedulerSharedState, worker *creative.CreativeWorkerRuntime, monitor *ops.OpsService) *composite.Runtime {
+func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *composite.ReadOptions, grants *identity.GrantSettings, gatewayRuntime *gateway.RuntimeSettings, gatewayRules *gateway.AdminSettingsRules, defaults *scheduler.AdminDefaults, plans *billing.Plans, backendMode *admission.BackendMode, providerRuntime *provider.RuntimeSettings, quota *provider.QuotaSettingsCache, forwarded *runtimeconfig.ForwardedSettings, shared *schedulerSharedState, worker *creative.CreativeWorkerRuntime, monitor *ops.OpsService, metrics *bstats.Service) *composite.Runtime {
 	prepare := composite.PrepareOptions{ReadValues: store.GetAll, Gateway: *gatewayRules, Scheduler: *defaults, ValidatePlans: func(ctx context.Context, value []billing.DefaultSubscriptionSetting) error {
 		return billing.ValidateDefaultSubscriptionPlans(ctx, value, plans.GetPlan)
 	}}
 	steps := []composite.Application{
+		{Module: "bstats", Apply: func(ctx context.Context, s *composite.Snapshot) error {
+			return metrics.Apply(ctx, s.BStatsConfig())
+		}},
 		{Module: "responses-ws", Apply: func(_ context.Context, s *composite.Snapshot) error {
 			if read.ResponsesWS != nil {
 				return read.ResponsesWS.Publish(string(s.ResponsesWS))
@@ -107,7 +112,7 @@ func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *co
 			return nil
 		}},
 	}
-	return composite.NewRuntime(store, *read, prepare, grants, gatewayRuntime, cfg.Totp.EncryptionKeyConfigured, steps)
+	return composite.NewRuntime(store, *read, prepare, grants, gatewayRuntime, cfg.Security.SecretEncryptionKeyConfigured, steps)
 }
 
 // provideSettingsParticipants constructs the module registry from static field
@@ -127,5 +132,5 @@ func staticSettingsParticipants(runtime *payment.Runtime, grants *identity.Grant
 	if len(socketDefaults) > 0 {
 		defaults = socketDefaults[0]
 	}
-	return []settings.Participant{ws.SettingsParticipant(defaults), settings.LocalizationParticipant(), identity.SettingsParticipant(grants), team.SettingsParticipant(), moderation.SettingsParticipant(), creative.SettingsParticipant(), runtimeconfig.SettingsParticipant(), billing.SettingsParticipant(), scheduler.SettingsParticipant(*schedulerDefaults), routing.SettingsParticipant(), site.SettingsParticipant(), provider.SettingsParticipant(), ops.SettingsParticipant(), payment.VisibleSettingsParticipant(), notification.SMTPSettingsParticipant(), promotion.SettingsParticipant(), usage.SettingsParticipant(), audit.SettingsParticipant(), gateway.FastSettingsParticipant(), gateway.AdminSettingsParticipant(*gatewayRules), payment.SettingsParticipant(runtime.RefreshProvidersChecked)}
+	return []settings.Participant{bstats.SettingsParticipant(), ws.SettingsParticipant(defaults), settings.LocalizationParticipant(), identity.SettingsParticipant(grants), team.SettingsParticipant(), moderation.SettingsParticipant(), creative.SettingsParticipant(), runtimeconfig.SettingsParticipant(), billing.SettingsParticipant(), scheduler.SettingsParticipant(*schedulerDefaults), routing.SettingsParticipant(), site.SettingsParticipant(), provider.SettingsParticipant(), ops.SettingsParticipant(), payment.VisibleSettingsParticipant(), notification.SMTPSettingsParticipant(), promotion.SettingsParticipant(), usage.SettingsParticipant(), audit.SettingsParticipant(), gateway.FastSettingsParticipant(), gateway.AdminSettingsParticipant(*gatewayRules), payment.SettingsParticipant(runtime.RefreshProvidersChecked)}
 }

@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+# apple-container-test.sh checks Apple Container lifecycle commands with
+# isolated command fixtures. It verifies environment-file permissions, startup
+# and teardown, ownership rejection, and legacy volume reuse without creating
+# real containers or changing a running deployment.
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$(cd "${TEST_DIR}/.." && pwd)"
 SCRIPT="${DEPLOY_DIR}/apple-container.sh"
@@ -43,11 +48,18 @@ if "${SCRIPT}" up >/dev/null 2>&1; then
 fi
 chmod 600 "${ENV_FILE}"
 
+# Deliberately retain one retired scalar and one reference-only secret in the
+# deployment file; application environment construction must distinguish them.
+printf 'GATEWAY_MAX_BODY_SIZE=1234\nUPDATE_GITHUB_TOKEN=fixture-reference-token\n' >>"${ENV_FILE}"
 "${SCRIPT}" up
 assert_exists "${STATE_DIR}/containers/tokenrouter-apple"
 assert_exists "${STATE_DIR}/containers/tokenrouter-apple-postgres"
 assert_exists "${STATE_DIR}/containers/tokenrouter-apple-redis"
 assert_exists "${STATE_DIR}/running/tokenrouter-apple"
+grep -q '^GATEWAY_MAX_BODY_SIZE=' "${STATE_DIR}/tokenrouter-apple.env" && fail "retired scalar reached application environment"
+grep -q '^UPDATE_GITHUB_TOKEN=fixture-reference-token$' "${STATE_DIR}/tokenrouter-apple.env" || fail "explicit-reference secret was dropped"
+grep -q '^DATABASE_PASSWORD=' "${STATE_DIR}/tokenrouter-apple.env" || fail "setup password was dropped"
+grep -q '^POSTGRES_PASSWORD=' "${STATE_DIR}/tokenrouter-apple.env" && fail "database service variable reached application environment"
 grep -Fq 'ghcr.io/tokenflux/tokenrouter:latest' "${STATE_DIR}/commands.log" || fail "up did not use the TokenRouter application image"
 "${SCRIPT}" status >/dev/null
 
@@ -76,7 +88,9 @@ if "${SCRIPT}" status >/dev/null 2>&1; then
     fail "status accepted an unowned same-name container"
 fi
 
-# 旧栈继续使用原卷和归属标签，旧变量也能指定环境文件。
+# Legacy stacks retain their original volumes and ownership labels. The
+# previous environment variable must also continue selecting the deployment
+# environment file.
 rm -f "${STATE_DIR}/containers/tokenrouter-apple" "${STATE_DIR}/unowned/container/tokenrouter-apple"
 touch "${STATE_DIR}/volumes/sub2api-apple-data" "${STATE_DIR}/volumes/sub2api-apple-postgres-data" "${STATE_DIR}/volumes/sub2api-apple-redis-data"
 TOKENROUTER_ENV_FILE= SUB2API_ENV_FILE="${ENV_FILE}" "${SCRIPT}" up

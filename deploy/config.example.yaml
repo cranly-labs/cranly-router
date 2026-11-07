@@ -1,127 +1,213 @@
-# TokenRouter Configuration File
-# TokenRouter 配置文件
-#
-# Copy this file to /etc/tokenrouter/config.yaml and modify as needed
-# 复制此文件到 /etc/tokenrouter/config.yaml 并根据需要修改
-#
-# Documentation / 文档: https://github.com/TokenFlux/TokenRouter
+config_version: 2
+# config.example.yaml documents version 2 startup configuration. Copy it to the
+# selected CONFIG_FILE or data directory and supply the referenced password.
+# File values override code defaults; environment variables have no implicit
+# override role after installation. Changes to process settings require restart.
 
+# ${NAME} requires a set variable; ${NAME:-default} uses a literal fallback when
+# unset or empty. $${ escapes a literal ${. Only values are expanded, and secrets
+# retain their string spelling. Keep referenced variables available after upgrades.
+
+# Environment label for logs and managed batch-image object prefixes.
+environment: production
+# Application calendar zone; TZ does not implicitly override an installed file.
+timezone: Asia/Shanghai
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+log:
+  # Initial logging value; administrator runtime logging settings take precedence.
+  level: "info"
+  # Log format: json/console
+  format: "console"
+  # Service name field written into each log line
+  service_name: "tokenrouter"
+  # Initial logging value; administrator runtime logging settings take precedence.
+  caller: true
+  # Initial logging value; administrator runtime logging settings take precedence.
+  stacktrace_level: "error"
+  output:
+    # Keep stdout/stderr output for container log collection
+    to_stdout: true
+    # Enable file output (default path auto-derived)
+    to_file: true
+    # Empty means:
+    # - DATA_DIR set: {{DATA_DIR}}/logs/tokenrouter.log
+    # - otherwise: /app/data/logs/tokenrouter.log
+    file_path: ""
+  rotation:
+    # Max file size before rotation (MB)
+    max_size_mb: 100
+    # Number of rotated files to keep (0 means unlimited)
+    max_backups: 10
+    # Number of days to keep old log files (0 means unlimited)
+    max_age_days: 7
+    # Compress rotated files
+    compress: true
+    # Use local time for timestamp in rotated filename
+    local_time: true
+  # Initial logging value; administrator runtime logging settings take precedence.
+  sampling:
+    # Enable zap sampler (reduce high-frequency repetitive logs)
+    enabled: false
+    # Number of first entries per second to always log
+    initial: 100
+    # Thereafter keep 1 out of N entries per second
+    thereafter: 100
 # =============================================================================
 # Server Configuration
-# 服务器配置
 # =============================================================================
 server:
   # Bind address (0.0.0.0 for all interfaces)
-  # 绑定地址（0.0.0.0 表示监听所有网络接口）
   host: "0.0.0.0"
   # Port to listen on
-  # 监听端口
   port: 8080
   # Mode: "debug" for development, "release" for production
-  # 运行模式："debug" 用于开发，"release" 用于生产环境
-  mode: "release"
-  # 为管理端 Web 页面发出的已认证请求返回 Server-Timing
+  mode: release
+  # Return Server-Timing for authenticated requests from admin web pages.
   enable_server_timing: false
-  # Frontend URL for email links and MCP OAuth; OAuth requires an HTTPS origin.
-  # Example: "https://example.com"
-  frontend_url: ""
-  # Maximum time to receive complete request headers. Does not limit response streams.
-  # 完整读取请求头的最大时间；不限制响应流持续时间。
-  read_header_timeout: 10
   # Request header limit in bytes (64 KiB); also bounds the HTTP/2 header list.
-  # 请求头上限（字节，默认 64 KiB）；同时约束 HTTP/2 header list。
   max_header_bytes: 65536
-  # Keep-alive idle timeout in seconds.
-  # Keep-Alive 空闲连接超时（秒）。
-  idle_timeout: 120
-  # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
-  # List only the exact proxy addresses that connect directly to TokenRouter.
-  # Set [] explicitly to disable forwarded-IP trust in high-security mode.
-  # security.trust_forwarded_ip_for_api_key_acl=false 时使用的可信代理。
-  # 只填写直接连接 TokenRouter 的精确代理地址；显式设置 [] 可在高安全模式下
-  # 禁用转发 IP 信任。
-  trusted_proxies:
-    - 127.0.0.1/32
-    - ::1/128
-  # Global max request body size in bytes (default: 256MB)
-  # 全局最大请求体大小（字节，默认 256MB）
-  # Applies to all requests, especially important for h2c first request memory protection
-  # 适用于所有请求，对 h2c 第一请求的内存保护尤为重要
-  max_request_body_size: 268435456
   # HTTP/2 Cleartext (h2c) configuration
-  # HTTP/2 Cleartext (h2c) 配置
   h2c:
     # Enable HTTP/2 Cleartext for client connections
-    # 启用 HTTP/2 Cleartext 客户端连接
     enabled: true
     # Max concurrent streams per connection
-    # 每个连接的最大并发流数量
     max_concurrent_streams: 50
-    # Idle timeout for connections (seconds)
-    # 连接空闲超时时间（秒）
-    idle_timeout: 75
-    # Max frame size in bytes (default: 1MB)
-    # 最大帧大小（字节，默认 1MB）
-    max_read_frame_size: 1048576
     # Max upload buffer per connection in bytes (default: 2MB)
-    # 每个连接的最大上传缓冲区（字节，默认 2MB）
-    max_upload_buffer_per_connection: 2097152
+    max_upload_buffer_per_connection_bytes: 2097152
     # Max upload buffer per stream in bytes (default: 512KB)
-    # 每个流的最大上传缓冲区（字节，默认 512KB）
-    max_upload_buffer_per_stream: 524288
-
-# =============================================================================
-# WebAuthn / Passkey 配置
-# =============================================================================
-# Passkey 在生产环境要求 HTTPS。RP ID 只填写域名（不含协议和端口），RP origins
-# 填写浏览器访问使用的完整 Origin。
-webauthn:
-  enabled: false
-  rp_display_name: "TokenRouter"
-  # 示例: "tokenrouter.example.com"
-  rp_id: ""
-  # 示例: ["https://tokenrouter.example.com"]
-  rp_origins: []
-
-# =============================================================================
-# CORS Configuration
-# 跨域资源共享 (CORS) 配置
-# =============================================================================
-cors:
-  # Allowed origins list. Leave empty to disable cross-origin requests.
-  # 允许的来源列表。留空则禁用跨域请求。
-  allowed_origins: []
-  # Allow credentials (cookies/authorization headers). Cannot be used with "*".
-  # 允许携带凭证（cookies/授权头）。不能与 "*" 通配符同时使用。
-  allow_credentials: true
-
+    max_upload_buffer_per_stream_bytes: 524288
+    # Max frame size in bytes (default: 1MB)
+    max_read_frame_bytes: 1048576
+    # Idle timeout for connections (seconds)
+    idle_timeout_seconds: 75
+  client_ip:
+    # Initial client-IP policy; administrator settings publish the effective runtime
+    # value. Read the live policy rather than the original startup field after updates.
+    trust_forwarded_headers: false
+    # Initial client-IP policy; administrator settings publish the effective runtime
+    # value. Read the live policy rather than the original startup field after updates.
+    forwarded_headers: []
+    # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
+    # List only the exact proxy addresses that connect directly to TokenRouter.
+    # Set [] explicitly to disable forwarded-IP trust in high-security mode.
+    trusted_proxies:
+      - 127.0.0.1/32
+      - ::1/128
+  # Global ingress body limit in bytes; zero falls back to gateway.max_request_body_bytes.
+  max_request_body_bytes: 268435456
+  # Maximum time to receive complete request headers. Does not limit response streams.
+  read_header_timeout_seconds: 10
+  # Keep-alive idle timeout in seconds.
+  idle_timeout_seconds: 120
+site:
+  # Fallback public site URL when the database value is empty or unavailable.
+  # Used for email links and MCP OAuth origins; it is not an upstream API address.
+  frontend_url: ""
+auth:
+  jwt:
+    access_token_ttl_minutes: 1440
+    # Initial JWT signing input. Once persisted, the database security_secrets value
+    # is authoritative; keep it stable across restarts and upgrades.
+    secret: "change-this-to-a-secure-random-string"
+  # Require an enabled captcha provider when server.mode is release. This flag
+  # does not select or enable a captcha provider by itself.
+  require_captcha: false
+  # Fallback OAuth defaults when the corresponding administrator setting is absent.
+  # Database settings remain authoritative after administrators configure them.
+  oauth:
+    # =============================================================================
+    # LinuxDo Connect OAuth Login (SSO)
+    # =============================================================================
+    linuxdo:
+      enabled: false
+      client_id: ""
+      client_secret: ""
+      authorize_url: "https://connect.linux.do/oauth2/authorize"
+      token_url: "https://connect.linux.do/oauth2/token"
+      userinfo_url: "https://connect.linux.do/api/user"
+      scopes: "user"
+      # Example: "https://your-domain.com/api/v1/auth/oauth/linuxdo/callback"
+      redirect_url: ""
+      # Redirect security:
+      # - Prefer a same-origin relative path starting with / to avoid sending
+      # tokens to an unintended third-party domain.
+      # - Do not include a #fragment; the implementation uses the URL fragment to
+      # carry access_token.
+      frontend_redirect_url: "/auth/linuxdo/callback"
+      token_auth_method: "client_secret_post" # client_secret_post | client_secret_basic | none
+      # PKCE is required when token_auth_method=none identifies a public client.
+      use_pkce: true
+      userinfo_email_path: ""
+      userinfo_id_path: ""
+      userinfo_username_path: ""
+    # =============================================================================
+    # Generic OIDC OAuth Login (SSO)
+    # =============================================================================
+    oidc:
+      enabled: false
+      provider_name: "OIDC"
+      client_id: ""
+      client_secret: ""
+      # Example: "https://keycloak.example.com/realms/myrealm"
+      issuer_url: ""
+      # Optional OIDC Discovery URL. When empty, configure
+      # authorize/token/userinfo/jwks URLs manually.
+      discovery_url: ""
+      authorize_url: ""
+      token_url: ""
+      # Optional; supplements email and username only, and does not establish a
+      # trusted sub binding.
+      userinfo_url: ""
+      # Required when validate_id_token=true.
+      jwks_url: ""
+      scopes: "openid email profile"
+      # Example: "https://your-domain.com/api/v1/auth/oauth/oidc/callback"
+      redirect_url: ""
+      # Redirect security:
+      # - Prefer a same-origin relative path starting with / to avoid sending
+      # tokens to an unintended third-party domain.
+      # - Do not include a #fragment; the implementation uses the URL fragment to
+      # carry access_token.
+      frontend_redirect_url: "/auth/oidc/callback"
+      token_auth_method: "client_secret_post" # client_secret_post | client_secret_basic | none
+      # PKCE is required when token_auth_method=none identifies a public client.
+      use_pkce: false
+      # Validate the id_token signature and claims when enabled (recommended).
+      validate_id_token: true
+      allowed_signing_algs: "RS256,ES256,PS256"
+      # Allowed clock skew (seconds).
+      clock_skew_seconds: 120
+      # Reject login when the provider returns email_verified=false.
+      require_email_verified: false
+      userinfo_email_path: ""
+      userinfo_id_path: ""
+      userinfo_username_path: ""
+  # =============================================================================
+  # WebAuthn / Passkey Configuration
+  # =============================================================================
+  # Passkeys require HTTPS in production. Set RP ID to the domain without a
+  # scheme or port, and set RP origins to the complete origins used by browsers.
+  webauthn:
+    enabled: false
+    rp_display_name: "TokenRouter"
+    # Example: "tokenrouter.example.com"
+    rp_id: ""
+    # Example: ["https://tokenrouter.example.com"]
+    rp_origins: []
 # =============================================================================
 # Security Configuration
-# 安全配置
 # =============================================================================
 security:
-  # Legacy compatibility switch. When true, raw forwarded headers take over
-  # server.trusted_proxies. Set false to enforce the trusted proxy chain above.
-  # 旧版兼容开关。开启时原始转发头会接管 server.trusted_proxies；关闭后严格
-  # 使用上方配置的可信代理链。示例配置采用高安全模式。
-  trust_forwarded_ip_for_api_key_acl: false
-  # Optional client-IP headers for third-party CDNs, checked in list order before
-  # CF-Connecting-IP, X-Real-IP, and X-Forwarded-For. Valid only while the legacy
-  # compatibility switch above is true; maximum 16 unique HTTP header names.
-  # 第三方 CDN 的可选客户端 IP 请求头，按列表顺序优先于内置请求头解析。
-  # 仅在上方旧版兼容开关为 true 时生效；最多配置 16 个不重复的合法 HTTP 头名。
-  # Environment / 环境变量: SECURITY_FORWARDED_CLIENT_IP_HEADERS=True-Client-IP,X-CDN-Client-IP
-  forwarded_client_ip_headers: []
-  # Example / 示例:
+  # Example:
   # forwarded_client_ip_headers:
   #   - "True-Client-IP"
   #   - "X-CDN-Client-IP"
   url_allowlist:
     # Enable URL allowlist validation (disable to skip all URL checks)
-    # 启用 URL 白名单验证（禁用则跳过所有 URL 检查）
     enabled: false
     # Allowed upstream hosts for API proxying
-    # 允许代理的上游 API 主机列表
     upstream_hosts:
       - "api.openai.com"
       - "api.anthropic.com"
@@ -133,200 +219,401 @@ security:
       - "generativelanguage.googleapis.com"
       - "cloudcode-pa.googleapis.com"
       - "*.openai.azure.com"
+    # Allow localhost/private IPs for upstream/pricing/CRS (use only in trusted networks)
+    allow_private_hosts: true
+    # Allow HTTP URLs when the allowlist is disabled. Defaults to true; false
+    # permits only HTTPS URLs.
+    allow_insecure_http: true
     # Allowed hosts for pricing data download
-    # 允许下载定价数据的主机列表
-    pricing_hosts:
+    model_catalog_hosts:
       - "models.dev"
       - "raw.githubusercontent.com"
     # Allowed hosts for CRS sync (required when using CRS sync)
-    # 允许 CRS 同步的主机列表（使用 CRS 同步功能时必须配置）
-    crs_hosts: []
-    # Allow localhost/private IPs for upstream/pricing/CRS (use only in trusted networks)
-    # 允许本地/私有 IP 地址用于上游/定价/CRS（仅在可信网络中使用）
-    allow_private_hosts: true
-    # 白名单禁用时是否允许 http:// URL（默认: true，设为 false 则仅允许 https）
-    allow_insecure_http: true
-  response_headers:
-    # Enable configurable response header filtering (default: true)
-    # 启用可配置的响应头过滤（默认启用，过滤上游敏感响应头）
-    enabled: true
-    # Extra allowed response headers from upstream
-    # 额外允许的上游响应头
-    additional_allowed: []
-    # Force-remove response headers from upstream
-    # 强制移除的上游响应头
-    force_remove: []
+    crs_sync_hosts: []
   csp:
     # Enable Content-Security-Policy header
-    # 启用内容安全策略 (CSP) 响应头
     enabled: true
     # Default CSP policy (override if you host assets on other domains)
-    # 默认 CSP 策略（如果静态资源托管在其他域名，请自行覆盖）
     # Note: __CSP_NONCE__ will be replaced with 'nonce-xxx' at request time for inline script security
-    # 注意：__CSP_NONCE__ 会在请求时被替换为 'nonce-xxx'，用于内联脚本安全
     policy: "default-src 'self'; worker-src 'self' blob:; script-src 'self' __CSP_NONCE__ https://accounts.google.com/gsi/client https://challenges.cloudflare.com https://*.alicdn.com https://static.cloudflareinsights.com https://turing.captcha.qcloud.com https://turing.captcha.gtimg.com https://ca.turing.captcha.qcloud.com https://global.turing.captcha.gtimg.com https://www.tycaptcha.com https://cloudcache.tencentcs.com https://*.stripe.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; style-src 'self' 'unsafe-inline' https://*.captcha.gtimg.com https://accounts.google.com/gsi/style https://fonts.googleapis.com https://*.alicdn.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' http://127.0.0.1:43110 http://127.0.0.1:43111 http://127.0.0.1:43112 http://127.0.0.1:43113 http://127.0.0.1:43114 http://127.0.0.1:43115 http://127.0.0.1:43116 http://127.0.0.1:43117 http://127.0.0.1:43118 http://127.0.0.1:43119 https://accounts.google.com/gsi/ https://turing.captcha.qcloud.com https://www.tycaptcha.com https://rce.tencentrio.com https:; frame-src https://accounts.google.com/gsi/ https://challenges.cloudflare.com https://turing.captcha.qcloud.com https://ca.turing.captcha.qcloud.com https://www.tycaptcha.com https://*.stripe.com https://checkout.airwallex.com https://checkout-demo.airwallex.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  # Stable 32-byte hexadecimal encryption key for stored credentials and TOTP.
+  # Generate with openssl rand -hex 32; unset input creates an ephemeral, unconfigured key.
+  secret_encryption_key: ""
+  # =============================================================================
+  # CORS Configuration
+  # =============================================================================
+  cors:
+    # Allowed origins list. Leave empty to disable cross-origin requests.
+    allowed_origins: []
+    # Allow credentials (cookies/authorization headers). Cannot be used with "*".
+    allow_credentials: true
+egress:
   proxy_probe:
-    # Allow skipping TLS verification for proxy probe (debug only)
-    # 允许代理探测时跳过 TLS 证书验证（仅用于调试）
-    insecure_skip_verify: false
-    # 可选的有序探测目标；留空时使用内置 ip-api/ipify 回退。
-    # parser 支持：ip-api、ipify、chatgpt-trace。
+    # Optional ordered probe targets. Leave empty to use the built-in
+    # ip-api/ipify fallback sequence.
+    # Supported parsers: ip-api, ipify, chatgpt-trace.
     urls: []
     # urls:
     #   - url: "https://chatgpt.com/cdn-cgi/trace"
     #     parser: "chatgpt-trace"
     #   - url: "https://api64.ipify.org?format=json"
     #     parser: "ipify"
-  proxy_fallback:
-    # Allow auxiliary services (update check, pricing data) to fallback to direct
-    # connection when proxy initialization fails. Does NOT affect AI gateway connections.
-    # 辅助服务（更新检查、定价数据拉取）代理初始化失败时是否允许回退直连。
-    # 不影响 AI 提供商网关连接。默认 false：fail-fast 防止 IP 泄露。
-    allow_direct_on_error: false
 
+    # Max bytes to read for proxy probe responses (default: 1MB)
+    response_max_bytes: 1048576
+# =============================================================================
+# Database Configuration (PostgreSQL)
+# =============================================================================
+database:
+  # Database host address
+  host: "localhost"
+  # Database port
+  port: 5432
+  # Database username
+  user: "postgres"
+  # PostgreSQL password, explicitly supplied by the container or process environment.
+  password: ${DATABASE_PASSWORD}
+  # Database name
+  dbname: "tokenrouter"
+  # SSL mode: disable (plaintext), prefer (TLS when available), require (TLS),
+  # verify-ca (validate the CA), verify-full (validate the CA and hostname).
+  # The default "prefer" uses TLS when the database supports it and falls back
+  # to plaintext otherwise.
+  sslmode: "prefer"
+  # Maximum open connections. For high concurrency, consider 256 or more and
+  # adjust PostgreSQL max_connections accordingly.
+  max_open_conns: 256
+  # Maximum idle connections. Consider half of max_open_conns to reduce
+  # repeated connection establishment.
+  max_idle_conns: 128
+  # Connection max lifetime (minutes)
+  conn_max_lifetime_minutes: 30
+  # Connection max idle time (minutes)
+  conn_max_idle_time_minutes: 5
+# =============================================================================
+# Redis Configuration
+# =============================================================================
+redis:
+  # Redis host address
+  host: "localhost"
+  # Redis port
+  port: 6379
+  # Redis ACL username (leave empty for default user)
+  username: ""
+  # Redis password (leave empty if no password is set)
+  password: ""
+  # Database number (0-15)
+  db: 0
+  # Connection pool size (max concurrent connections)
+  pool_size: 1024
+  # Minimum idle connections. For high concurrency, consider at least 128 to
+  # retain enough warm connections.
+  min_idle_conns: 128
+  # Enable TLS/SSL connection
+  enable_tls: false
+storage:
+  # Application data root for model catalog and plugin fallback paths. DATA_DIR has
+  # separate setup, logging, backup, and plugin fallback rules.
+  dir: "./data"
+model_catalog:
+  # Configure custom selling prices in the admin pricing settings and
+  # associate them with the relevant groups.
+  # Catalog check interval (minutes): synchronize the remote catalog with
+  # conditional requests and reload custom supplements.
+  # A deleted file restores embedded values. An invalid file retains the last
+  # valid data and is retried at the next check.
+  check_interval_minutes: 10
+  # Official pricing supplements are embedded. Optionally provide a separate
+  # custom JSON file path here.
+  # Catalog prices take precedence, followed by custom supplements; embedded
+  # supplements fill the remaining fields.
+  # File changes and deletion take effect at the next catalog check. Deletion
+  # restores the embedded supplements.
+  supplement_file: ""
+  # URL for the models.dev catalog shared by prices and display attributes.
+  catalog_url: "https://models.dev/catalog.json?type=all"
+outbound_proxy:
+  # Allow auxiliary services (update check, pricing data) to fallback to direct
+  # connection when proxy initialization fails. Does NOT affect AI gateway connections.
+  # Defaults to false so proxy initialization errors stop auxiliary requests
+  # before a direct connection can expose the server IP.
+  allow_direct_on_error: false
+  # Proxy URL for accessing GitHub (used for online updates and pricing data)
+  # Supports: http, https, socks5, socks5h
+  # Examples:
+  #   - HTTP proxy: "http://127.0.0.1:7890"
+  #   - SOCKS5 proxy: "socks5://127.0.0.1:1080"
+  #   - With authentication: "http://user:pass@proxy.example.com:8080"
+  # Leave empty for a direct connection.
+  url: ""
 # =============================================================================
 # Gateway Configuration
-# 网关配置
 # =============================================================================
 gateway:
-  # Timeout for waiting upstream response headers (seconds)
-  # 等待上游响应头超时时间（秒）
-  response_header_timeout: 600
-  # OpenAI/Codex upstream response header timeout (seconds, 0=disabled)
-  # OpenAI/Codex 等待上游响应头超时时间（秒，0=禁用本地响应头超时）
-  openai_response_header_timeout: 0
-  # OpenAI 原生 HTTP Responses 首个语义输出超时（秒，0=禁用）
-  # 包含等待响应头的时间；不适用于 passthrough 或 WebSocket 传输。
-  # Grok text Responses first-byte timeout (seconds, 0=disabled; default 120)
-  # Grok 文本 Responses 首字节超时时间（秒，0=禁用；默认 120）
-  grok_response_header_timeout: 120
-  # Native OpenAI HTTP Responses first semantic output timeout (seconds, 0=disabled)
-  # Includes response-header wait; does not apply to passthrough or WebSocket transports.
-  # A timed-out request may already have incurred upstream usage; provider failover can therefore duplicate upstream billing.
-  # 超时请求可能已产生上游用量；切换提供商重试可能导致上游重复计费。
-  # 首次输出前的单次尝试暂存上限为 8 MiB；溢出时切号且不暴露不完整 SSE 数据。
-  openai_first_output_timeout_seconds: 0
-  # 可选的 high/xhigh/max 覆盖值（秒，0=使用标准超时）
-  openai_high_effort_first_output_timeout_seconds: 0
-  # Max request body size in bytes (default: 256MB)
-  # 请求体最大字节数（默认 256MB）
-  max_body_size: 268435456
-  # Pure-text endpoint body limit (embeddings and alpha/search), default 32 MiB.
-  # 纯文本端点请求体上限（embeddings、alpha/search），默认 32 MiB。
-  text_max_body_size: 33554432
+  # The local Grok free-tier soft gate filters scheduling only. Admin quota
+  # queries and import probes bypass it.
+  # Enabled by default; a provider is classified as free only when
+  # subscription_tier or plan_type explicitly equals "free".
+  # Statistics and query failures leave the gate open so database errors do
+  # not block all Grok traffic.
+  grok:
+    # Grok text Responses first-byte timeout (seconds, 0=disabled; default 120)
+    response_header_timeout_seconds: 120
+  openai:
+    # Deployment defaults for persistent Responses connections. Values saved
+    # under Gateway Settings > OpenAI take precedence.
+    # Group protocol settings determine whether clients may use persistent
+    # connections.
+    responses_ws:
+      # Connection-to-concurrency ratio for API key providers.
+      api_key_max_conns_factor: 1
+      # Maximum connections per provider.
+      max_conns_per_provider: 128
+      # Minimum idle connections to prepare.
+      min_idle_per_provider: 4
+      # Maximum idle connections to retain.
+      max_idle_per_provider: 12
+      # Scale the connection limit with provider concurrency.
+      dynamic_max_conns_by_provider_concurrency_enabled: true
+      # Connection-to-concurrency ratio for OAuth providers.
+      oauth_max_conns_factor: 1
+      # Maximum queued requests per connection.
+      queue_limit_per_conn: 64
+      # Target connection pool utilization for prewarming.
+      pool_target_utilization: 0.7
+      # Minimum interval between prewarming attempts (milliseconds).
+      prewarm_cooldown_ms: 300
+      # Timeout for the first client message (seconds).
+      client_first_message_timeout_seconds: 30
+      # Maximum idle time between turns (seconds); zero disables the limit.
+      ingress_inter_turn_idle_timeout_seconds: 300
+      # Maximum client connections per API key; zero disables the limit.
+      max_ingress_connections_per_api_key: 64
+      # Maximum client message size (bytes).
+      client_read_limit_bytes: 67108864
+      # Bridge the first request to HTTP when it reaches this size and the group
+      # permits HTTP (bytes).
+      http_bridge_threshold_bytes: 15728640
+      # Upstream connection timeout (seconds).
+      dial_timeout_seconds: 10
+      # Message read timeout (seconds).
+      read_timeout_seconds: 900
+      # Message write timeout (seconds).
+      write_timeout_seconds: 120
+      # Attempt recovery when the upstream cannot find the previous response.
+      ingress_previous_response_recovery_enabled: true
+    # Optional timeout override for high/xhigh/max effort (seconds). Zero uses
+    # the standard timeout.
+    high_effort_first_output_timeout_seconds: 0
+    # Forward client timeout headers, such as x-stainless-timeout, in OpenAI
+    # passthrough mode.
+    # Defaults to false to filter these headers and reduce the risk of upstream
+    # streams ending prematurely.
+    passthrough_allow_timeout_headers: false
+    codex:
+      # Optional: template file used to build the final top-level Codex `instructions`.
+      #
+      # This is applied on the `/v1/messages -> Responses/Codex` conversion path,
+      # after Claude `system` has already been normalized into Codex `instructions`.
+      #
+      # The template can reference:
+      # - {{ .ExistingInstructions }} : converted client instructions/system
+      # - {{ .OriginalModel }}        : original requested model
+      # - {{ .NormalizedModel }}      : normalized routing model
+      # - {{ .BillingModel }}         : billing model
+      # - {{ .UpstreamModel }}        : final upstream model
+      #
+      # If you want to preserve client system prompts, keep {{ .ExistingInstructions }}
+      # somewhere in the template. If omitted, the template output fully replaces it.
+      #
+      # Docker users can mount a host file to /app/data/codex-instructions.md.tmpl
+      # and point this field there.
+      forced_instructions_template_file: ""
+      # Automatically inject the image_generation tool and bridge instructions
+      # into Codex /responses requests.
+      #
+      # Defaults to false, preserving text-only Codex requests. An explicitly
+      # supplied image_generation tool is still forwarded when the group allows
+      # image generation.
+      image_generation_bridge_enabled: false
+      # Force Codex CLI mode: treat all /openai/v1/responses requests as Codex CLI.
+      # Use this fallback when an intermediary drops or rewrites User-Agent before
+      # forwarding the request to TokenRouter.
+      #
+      # Enabling this changes behavior for every client, including clients other
+      # than VS Code and Codex CLI.
+      force_cli: false
+    # Native OpenAI HTTP Responses first semantic output timeout (seconds, 0=disabled)
+    # Includes response-header wait; does not apply to passthrough or WebSocket transports.
+    # A timed-out request may already have incurred upstream usage; provider failover can therefore duplicate upstream billing.
+    # Each attempt buffers at most 8 MiB before the first output. Exceeding this
+    # limit switches providers without exposing incomplete SSE data.
+    first_output_timeout_seconds: 0
+    # OpenAI/Codex upstream response header timeout (seconds, 0=disabled)
+    response_header_timeout_seconds: 0
+    # OpenAI Responses SSE proxy circuit breaker. Isolation is keyed by proxy_id
+    # across providers and affects only subsequent scheduling.
+    # Isolation is a scheduling preference: fail open when every candidate proxy
+    # is isolated. Concurrent stream failures within three seconds count as one
+    # failure.
+    proxy_stream_circuit:
+      failure_threshold: 2
+      window_seconds: 60
+      ttl_seconds: 600
+      enabled: true
+    # OpenAI HTTP upstream protocol strategy.
+    # Defaults to HTTP/2, with temporary HTTP/1.1 fallback when a proxy is
+    # confirmed incompatible.
+    http2:
+      enabled: true
+      allow_proxy_fallback_to_http1: true
+      fallback_error_threshold: 2
+      fallback_window_seconds: 60
+      fallback_ttl_seconds: 600
+    # Hard duration limit for each ChatGPT Frameless Live session (seconds).
+    live:
+      max_session_duration_seconds: 3600
+  images:
+    # Keepalive interval for non-streaming image JSON responses (seconds); zero
+    # disables it. The first heartbeat commits HTTP status 200.
+    nonstream_keepalive_interval_seconds: 0
+    # Image stream data interval timeout (seconds), 0=disable; independent from ordinary text streams
+    stream_data_idle_timeout_seconds: 900
+    # Image stream keepalive interval (seconds), 0=disable; independent from ordinary text streams
+    stream_keepalive_interval_seconds: 10
+    # Image generation independent concurrency limiter (process-local, default disabled)
+    # The combined limit across instances is approximately the instance count
+    # multiplied by the per-process limit.
+    concurrency:
+      # Enable image-only concurrency protection; false keeps existing behavior unchanged
+      enabled: false
+      # Max concurrent image generation requests in this process, 0=unlimited
+      max_concurrent_requests: 0
+      # Overflow mode when the image concurrency limit is full: reject/wait
+      # Reject requests immediately or wait for a slot when the image
+      # concurrency limit is reached.
+      overflow_mode: "reject"
+      # Wait timeout for overflow_mode=wait (seconds), 0=do not wait
+      wait_timeout_seconds: 30
+      # Max image requests waiting in this process when overflow_mode=wait, 0=unlimited
+      max_waiting_requests: 100
+  upstream_error_body_log:
+    # Max bytes to log from upstream error body
+    max_bytes: 2048
+    # Log upstream error response body summary (safe/truncated; does not log request content)
+    enabled: true
   # Max bytes to read for non-stream upstream responses (default: 8MB)
-  # 非流式上游响应体读取上限（默认 8MB）
-  upstream_response_read_max_bytes: 8388608
+  upstream_response_max_bytes: 8388608
+  gemini:
+    # Enable Gemini upstream response header debug logs (default: false)
+    debug_response_headers: false
+  streaming:
+    # Stream data interval timeout (seconds), 0=disable
+    data_idle_timeout_seconds: 180
+    # Stream keepalive interval (seconds), 0=disable
+    keepalive_interval_seconds: 10
+    # SSE ping interval during concurrency wait (seconds)
+    wait_ping_interval_seconds: 10
   # Max bytes to read for upstream model-list responses (default: 8MB)
-  # 上游模型列表响应体读取上限（默认 8MB）
-  models_list_read_max_bytes: 8388608
-  # Max bytes to read for proxy probe responses (default: 1MB)
-  # 代理探测响应体读取上限（默认 1MB）
-  proxy_probe_response_read_max_bytes: 1048576
-  # Enable Gemini upstream response header debug logs (default: false)
-  # 是否开启 Gemini 上游响应头调试日志（默认 false）
-  gemini_debug_response_headers: false
-  # Connection pool isolation strategy:
-  # 连接池隔离策略：
-  # - proxy: Isolate by proxy, same proxy shares connection pool (suitable for few proxies, many providers)
-  # - proxy: 按代理隔离，同一代理共享连接池（适合代理少、提供商多）
-  # - provider: Isolate by provider, same provider shares connection pool (suitable for few providers, strict isolation)
-  # - provider: 按提供商隔离，同一提供商共享连接池（适合提供商少、需严格隔离）
-  # - provider_proxy: Isolate by provider+proxy combination (default, finest granularity)
-  # - provider_proxy: 按提供商+代理组合隔离（默认，最细粒度）
-  connection_pool_isolation: "provider_proxy"
-  # Force Codex CLI mode: treat all /openai/v1/responses requests as Codex CLI.
-  # 强制按 Codex CLI 处理 /openai/v1/responses 请求（用于网关未透传/改写 User-Agent 的兜底）。
-  #
-  # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
-  force_codex_cli: false
-  # 是否为 Codex /responses 请求自动注入 image_generation 工具与桥接指令。
-  #
-  # 默认 false：保持纯文本 Codex 请求不被改写；客户端显式提供 image_generation tool 时，
-  # 仍会在分组允许图片生成的情况下正常转发。
-  codex_image_generation_bridge_enabled: false
-  # Optional: template file used to build the final top-level Codex `instructions`.
-  # 可选：用于构建最终 Codex 顶层 `instructions` 的模板文件路径。
-  #
-  # This is applied on the `/v1/messages -> Responses/Codex` conversion path,
-  # after Claude `system` has already been normalized into Codex `instructions`.
-  # 该模板作用于 `/v1/messages -> Responses/Codex` 转换链路，且发生在 Claude `system`
-  # 已经被归一化为 Codex `instructions` 之后。
-  #
-  # The template can reference:
-  # 模板可引用：
-  # - {{ .ExistingInstructions }} : converted client instructions/system
-  # - {{ .OriginalModel }}        : original requested model
-  # - {{ .NormalizedModel }}      : normalized routing model
-  # - {{ .BillingModel }}         : billing model
-  # - {{ .UpstreamModel }}        : final upstream model
-  #
-  # If you want to preserve client system prompts, keep {{ .ExistingInstructions }}
-  # somewhere in the template. If omitted, the template output fully replaces it.
-  # 如需保留客户端 system 提示词，请在模板中显式包含 {{ .ExistingInstructions }}。
-  # 若省略，则模板输出会完全覆盖它。
-  #
-  # Docker users can mount a host file to /app/data/codex-instructions.md.tmpl
-  # and point this field there.
-  # Docker 用户可将宿主机文件挂载到 /app/data/codex-instructions.md.tmpl，
-  # 然后把本字段指向该路径。
-  forced_codex_instructions_template_file: ""
-  # OpenAI 透传模式是否放行客户端超时头（如 x-stainless-timeout）
-  # 默认 false：过滤超时头，降低上游提前断流风险。
-  openai_passthrough_allow_timeout_headers: false
-  # ChatGPT Frameless Live 单会话硬上限（秒）。
-  live:
-    max_session_duration_seconds: 3600
-  # Responses 长连接参数的部署默认值，管理端“网关设置 → OpenAI”保存的值优先。
-  # 是否允许客户端使用长连接，由分组协议控制。
-  openai_ws:
-    # 每个提供商的连接数上限
-    max_conns_per_provider: 128
-    # 至少准备的空闲连接数
-    min_idle_per_provider: 4
-    # 最多保留的空闲连接数
-    max_idle_per_provider: 12
-    # 根据提供商并发计算连接数量
-    dynamic_max_conns_by_provider_concurrency_enabled: true
-    # OAuth 连接数与并发的比例
-    oauth_max_conns_factor: 1
-    # API Key 连接数与并发的比例
-    apikey_max_conns_factor: 1
-    # 每条连接的排队上限
-    queue_limit_per_conn: 64
-    # 预热目标使用率
-    pool_target_utilization: 0.7
-    # 两次预热的最短间隔（毫秒）
-    prewarm_cooldown_ms: 300
-    # 等待首条客户端消息的时间（秒）
-    client_first_message_timeout_seconds: 30
-    # 轮间空闲上限（秒），0 表示不限制
-    ingress_inter_turn_idle_timeout_seconds: 300
-    # 单 Key 的客户端连接上限，0 表示不限制
-    max_ingress_connections_per_api_key: 64
-    # 客户端消息上限（字节）
-    client_read_limit_bytes: 67108864
-    # 首条请求达到该大小时按分组许可转为 HTTP（字节）
-    http_bridge_threshold_bytes: 15728640
-    # 连接上游超时（秒）
-    dial_timeout_seconds: 10
-    # 读取消息超时（秒）
-    read_timeout_seconds: 900
-    # 发送消息超时（秒）
-    write_timeout_seconds: 120
-    # 上游找不到上一轮时尝试恢复
-    ingress_previous_response_recovery_enabled: true
-    # 提供商会话记录有效期（秒）
-    sticky_session_ttl_seconds: 3600
-    # 响应续接记录有效期（秒）
-    sticky_response_id_ttl_seconds: 3600
-  # 通用高级调度器配置。是否使用由每个分组的 scheduler_type 决定。
-  advanced_scheduler:
-    # 每次加权选择前保留的高分候选数量。
+  models_list_response_max_bytes: 8388608
+  transport:
+    # Connection pool isolation strategy:
+    # - proxy: Isolate by proxy, same proxy shares connection pool (suitable for few proxies, many providers)
+    # - provider: Isolate by provider, same provider shares connection pool (suitable for few providers, strict isolation)
+    # - provider_proxy: Isolate by provider+proxy combination (default, finest granularity)
+    connection_pool_isolation: "provider_proxy"
+    # Idle connection timeout (seconds)
+    idle_conn_timeout_seconds: 90
+    client_cache:
+      # client_idle_ttl_seconds: Client idle reclaim threshold (seconds), reclaimed when idle and no active requests
+      idle_ttl_seconds: 900
+      # Upstream client cache settings
+      # max_upstream_clients: Max cached clients, evicts least recently used when exceeded
+      max_clients: 5000
+    # Configured idle-connection limit. Under provider_proxy isolation the transport
+    # uses provider concurrency to choose the effective per-provider pool size.
+    max_idle_conns_per_host: 120
+    # Timeout for waiting upstream response headers (seconds)
+    response_header_timeout_seconds: 600
+    # Max connections per host
+    max_conns_per_host: 1024
+    # Configured idle-connection limit. Under provider_proxy isolation the transport
+    # uses provider concurrency to choose the effective per-provider pool size.
+    max_idle_conns: 2560
+  anthropic:
+    # Auto inject anthropic-beta header for API-key providers when needed (default: off)
+    inject_beta_for_api_key: false
+  # Pure-text endpoint body limit (embeddings and alpha/search), default 32 MiB.
+  text_max_request_body_bytes: 33554432
+  upstream_response_headers:
+    # Filter sensitive upstream response headers by default; additional allow
+    # and removal lists below customize which headers reach the client.
+    enabled: true
+    # Extra allowed response headers from upstream
+    additional_allowed: []
+    # Force-remove response headers from upstream
+    force_remove: []
+  failover:
+    # Allow failover on selected 400 errors (default: off)
+    messages_on_400: false
+  # Max request body size in bytes (default: 256MB)
+  max_request_body_bytes: 268435456
+  # SSE max line size in bytes (default: 40MB)
+  max_sse_line_bytes: 41943040
+scheduling:
+  session_affinity:
+    # Response continuation record lifetime (seconds).
+    response_id_ttl_seconds: 3600
+    # Provider session record lifetime (seconds).
+    ttl_seconds: 3600
+    # Read the older Redis session-hash format while legacy entries remain live.
+    read_legacy_hash: true
+    # Write both Redis session-hash formats during the data-compatibility window.
+    dual_write_legacy_hash: true
+  sticky_provider_wait:
+    # Sticky session wait timeout (duration)
+    timeout_seconds: 120
+    # Sticky session max waiting queue size
+    max_waiting: 3
+  grok_free_quota:
+    # Statistics cache for the free-tier soft gate. The request path does not
+    # wait for the database; a miss leaves the gate open and triggers
+    # background refresh.
+    # Use at least 60 seconds in production.
+    stats_cache_seconds: 60
+    enabled: true
+    threshold_percent: 95
+    window_hours: 24
+    token_limit: 500000
+  load_batch:
+    # Tiny in-process TTL for batch load reads in milliseconds (0 disables)
+    cache_ttl_ms: 200
+    # Enable batch load calculation for scheduling
+    enabled: true
+  alternate_provider_wait:
+    # Fallback wait timeout (duration)
+    timeout_seconds: 30
+    # Fallback max waiting queue size
+    max_waiting: 100
+  # Slot cleanup interval (duration)
+  slot_cleanup_interval_seconds: 30
+  # In load-aware selection, prefer providers whose session windows reset
+  # soonest. False keeps the default priority, load ratio, then LRU
+  # ordering.
+  prefer_soonest_reset: false
+  # Concurrency slot expiration time (minutes)
+  concurrency_slot_ttl_minutes: 30
+  # Shared advanced scheduler settings. Each group selects this scheduler
+  # through scheduler_type.
+  advanced:
+    # Number of top-scoring candidates retained before each weighted
+    # selection.
     lb_top_k: 7
-    # 错误率 EWMA 平滑系数（0<值<=1）；值越大越重视最新请求结果。
+    # Error-rate EWMA smoothing factor (0 < value <= 1). Higher values give
+    # more weight to recent request outcomes.
     ewma_error_rate_alpha: 0.2
-    # 首 token 延迟 EWMA 平滑系数（0<值<=1）；值越大越重视最新观测。
+    # Time-to-first-token EWMA smoothing factor (0 < value <= 1). Higher
+    # values give more weight to recent observations.
     ewma_ttft_alpha: 0.2
     score_weights:
       priority: 1.0
@@ -334,806 +621,399 @@ gateway:
       queue: 0.7
       error_rate: 0.8
       ttft: 0.5
-      # 倾向会话窗口最早重置的提供商，剩余重置时间越短得分越高。
+      # Prefer providers whose session windows reset sooner; shorter remaining
+      # time produces a higher score.
       reset: 0.0
-      # 倾向 Codex 7d 剩余额度更健康的提供商；非对应能力提供商使用中性信号。
+      # Prefer providers with more remaining Codex seven-day quota. Providers
+      # without this capability receive a neutral signal.
       quota_headroom: 0.0
       previous_response: 5.0
       session_sticky: 3.0
-    # 是否允许 session_hash sticky 在提供商健康度恶化时临时逃逸；false 可回退旧行为
+    # Allow session_hash affinity to temporarily switch providers when
+    # provider health deteriorates. False retains the previous affinity
+    # behavior.
     sticky_escape_enabled: true
-    # TTFT EWMA 超过该阈值（毫秒）时跳过 sticky，默认 15s，避免轻微抖动就逃逸
+    # Bypass affinity when TTFT EWMA exceeds this threshold (milliseconds).
+    # The 15-second default avoids switching on minor fluctuations.
     sticky_escape_ttft_ms: 15000
-    # 错误率 EWMA 超过该阈值时跳过 sticky，默认 0.5，仅在明显降级时触发
+    # Bypass affinity when error-rate EWMA exceeds this threshold. The 0.5
+    # default requires substantial degradation.
     sticky_escape_error_rate: 0.5
-  # OpenAI HTTP upstream protocol strategy.
-  # OpenAI HTTP 上游协议策略（默认 HTTP/2；代理明确不兼容时可临时回退 HTTP/1.1）。
-  openai_http2:
-    enabled: true
-    allow_proxy_fallback_to_http1: true
-    fallback_error_threshold: 2
-    fallback_window_seconds: 60
-    fallback_ttl_seconds: 600
-  # OpenAI Responses SSE 代理断流熔断；按 proxy_id 跨提供商隔离，仅影响下一次调度。
-  # 隔离仅作为调度偏好：全部候选代理都被隔离时自动 fail-open；3 秒内并发断流合并为一次故障。
-  openai_proxy_stream_circuit:
-    disabled: false
-    failure_threshold: 2
-    window_seconds: 60
-    ttl_seconds: 600
-  # Grok 免费层本地软性门禁，仅用于调度过滤；管理端额度查询与导入探测会绕过该门禁。
-  # 默认启用，因为免费提供商识别要求 subscription_tier 或 plan_type 明确为 "free"。
-  # 统计或查询失败时采用失败开放策略，避免数据库故障阻断全部 Grok 流量。
-  grok:
-    # 邮箱密码 OAuth 默认关闭且不在管理界面显示。
-    # 设置为 true 后启用 POST /admin/grok/oauth/password（密码 → SSO → Build OAuth）。
-    # 生产环境优先使用 SSO Cookie、浏览器 OAuth 或 refresh_token 重新认证。
-    password_auth_enabled: false
-    free_quota_soft_gate_enabled: true
-    free_quota_token_limit: 500000
-    free_quota_soft_gate_percent: 95
-    free_quota_window_hours: 24
-    # 免费层软性门禁的统计缓存。热点路径不等待数据库，未命中时失败开放并在后台刷新。
-    # 生产环境建议配置为至少 60 秒。
-    free_quota_stats_cache_seconds: 60
-  # HTTP upstream connection pool settings (HTTP/2 + multi-proxy scenario defaults)
-  # HTTP 上游连接池配置（HTTP/2 + 多代理场景默认值）
-  # Max idle connections across all hosts
-  # 所有主机的最大空闲连接数
-  max_idle_conns: 2560
-  # Max idle connections per host
-  # 每个主机的最大空闲连接数
-  max_idle_conns_per_host: 120
-  # Max connections per host
-  # 每个主机的最大连接数
-  max_conns_per_host: 1024
-  # Idle connection timeout (seconds)
-  # 空闲连接超时时间（秒）
-  idle_conn_timeout_seconds: 90
-  # Upstream client cache settings
-  # 上游连接池客户端缓存配置
-  # max_upstream_clients: Max cached clients, evicts least recently used when exceeded
-  # max_upstream_clients: 最大缓存客户端数量，超出后淘汰最久未使用的
-  max_upstream_clients: 5000
-  # client_idle_ttl_seconds: Client idle reclaim threshold (seconds), reclaimed when idle and no active requests
-  # client_idle_ttl_seconds: 客户端空闲回收阈值（秒），超时且无活跃请求时回收
-  client_idle_ttl_seconds: 900
-  # Concurrency slot expiration time (minutes)
-  # 并发槽位过期时间（分钟）
-  concurrency_slot_ttl_minutes: 30
-  # Stream data interval timeout (seconds), 0=disable
-  # 流数据间隔超时（秒），0=禁用
-  stream_data_interval_timeout: 180
-  # Stream keepalive interval (seconds), 0=disable
-  # 流式 keepalive 间隔（秒），0=禁用
-  stream_keepalive_interval: 10
-  # Image stream data interval timeout (seconds), 0=disable; independent from ordinary text streams
-  # 图片流数据间隔超时（秒），0=禁用；独立于普通文本流式
-  image_stream_data_interval_timeout: 900
-  # Image stream keepalive interval (seconds), 0=disable; independent from ordinary text streams
-  # 图片流式 keepalive 间隔（秒），0=禁用；独立于普通文本流式
-  image_stream_keepalive_interval: 10
-  # 图片非流式 JSON keepalive 间隔（秒），0=禁用；首个心跳后 HTTP 状态会固化为 200
-  image_nonstream_keepalive_interval: 0
-  # Image generation independent concurrency limiter (process-local, default disabled)
-  # 图片生成独立并发限制（进程级，默认关闭；多实例总上限约为实例数×该值）
-  image_concurrency:
-    # Enable image-only concurrency protection; false keeps existing behavior unchanged
-    # 是否启用图片独立并发保护；false 保持现有行为不变
-    enabled: false
-    # Max concurrent image generation requests in this process, 0=unlimited
-    # 当前进程允许同时处理的图片生成请求数，0=不限制
-    max_concurrent_requests: 0
-    # Overflow mode when the image concurrency limit is full: reject/wait
-    # 图片并发满时的处理方式：reject=立即拒绝，wait=等待槽位
-    overflow_mode: "reject"
-    # Wait timeout for overflow_mode=wait (seconds), 0=do not wait
-    # wait 模式等待图片并发槽位的超时时间（秒），0=不等待
-    wait_timeout_seconds: 30
-    # Max image requests waiting in this process when overflow_mode=wait, 0=unlimited
-    # wait 模式当前进程允许排队等待的图片请求数，0=不限制
-    max_waiting_requests: 100
-  # SSE max line size in bytes (default: 40MB)
-  # SSE 单行最大字节数（默认 40MB）
-  max_line_size: 41943040
-  # Log upstream error response body summary (safe/truncated; does not log request content)
-  # 记录上游错误响应体摘要（安全/截断；不记录请求内容）
-  log_upstream_error_body: true
-  # Max bytes to log from upstream error body
-  # 记录上游错误响应体的最大字节数
-  log_upstream_error_body_max_bytes: 2048
-  # Auto inject anthropic-beta header for API-key providers when needed (default: off)
-  # 需要时自动为 API-key 提供商注入 anthropic-beta 头（默认：关闭）
-  inject_beta_for_apikey: false
-  # Allow failover on selected 400 errors (default: off)
-  # 允许在特定 400 错误时进行故障转移（默认：关闭）
-  failover_on_400: false
   # Scheduling configuration
-  # 调度配置
-  scheduling:
-    # Sticky session max waiting queue size
-    # 粘性会话最大排队长度
-    sticky_session_max_waiting: 3
-    # Sticky session wait timeout (duration)
-    # 粘性会话等待超时（时间段）
-    sticky_session_wait_timeout: 120s
-    # Fallback wait timeout (duration)
-    # 兜底排队等待超时（时间段）
-    fallback_wait_timeout: 30s
-    # Fallback max waiting queue size
-    # 兜底最大排队长度
-    fallback_max_waiting: 100
-    # 负载感知选择时优先用尽「会话窗口最早重置」的提供商；false 保持
-    # 原有「优先级 → 负载率 → LRU」行为（默认）。
-    prefer_soonest_reset: false
-    # Enable batch load calculation for scheduling
-    # 启用调度批量负载计算
-    load_batch_enabled: true
-    # Tiny in-process TTL for batch load reads in milliseconds (0 disables)
-    # 调度批量负载读取的进程内短缓存 TTL（毫秒，0 表示禁用）
-    load_batch_cache_ttl_ms: 200
-    # Slot cleanup interval (duration)
-    # 并发槽位清理周期（时间段）
-    slot_cleanup_interval: 30s
-    # 是否允许受控回源到 DB（默认 true，保持现有行为）
+  snapshot:
+    # Allow controlled database fallback (default true, retaining existing
+    # behavior).
     db_fallback_enabled: true
-    # 受控回源超时（秒），0 表示不额外收紧超时
+    # Controlled database fallback timeout (seconds); zero adds no tighter
+    # timeout.
     db_fallback_timeout_seconds: 0
-    # 受控回源限流（实例级 QPS），0 表示不限制
+    # Controlled database fallback rate limit (queries per second per
+    # instance); zero disables the limit.
     db_fallback_max_qps: 0
-    # outbox 轮询周期（秒）
+    # Outbox polling interval (seconds).
     outbox_poll_interval_seconds: 1
-    # outbox 滞后告警阈值（秒）
+    # Outbox lag warning threshold (seconds).
     outbox_lag_warn_seconds: 5
-    # outbox 触发强制重建阈值（秒）
+    # Outbox lag threshold that forces a snapshot rebuild (seconds).
     outbox_lag_rebuild_seconds: 10
-    # outbox 连续滞后触发次数
+    # Consecutive outbox lag observations required to trigger a rebuild.
     outbox_lag_rebuild_failures: 3
-    # outbox 积压触发重建阈值（行数）
+    # Outbox backlog size that triggers a rebuild (rows).
     outbox_backlog_rebuild_rows: 10000
-    # 全量重建周期（秒），0 表示禁用
+    # Full snapshot rebuild interval (seconds); zero disables periodic
+    # rebuilds.
     full_rebuild_interval_seconds: 300
-  # TLS fingerprint simulation / TLS 指纹伪装
-  # Default profile "claude_cli_v2" simulates Node.js 20.x
-  # 默认模板 "claude_cli_v2" 模拟 Node.js 20.x 指纹
-  tls_fingerprint:
+provider:
+  grok:
+    # Email/password OAuth is disabled by default and hidden from the admin
+    # interface.
+    # True enables POST /admin/grok/oauth/password, which exchanges the
+    # password for SSO and then Build OAuth credentials.
+    # Prefer SSO cookies, browser OAuth, or refresh_token reauthentication in
+    # production.
+    password_auth_enabled: false
+    # Optional API base URL override; normal URL trust validation still applies.
+    base_url: ""
+    # Allow format-only validation for explicit Grok URL overrides.
+    allow_unsafe_url_overrides: false
+    # Permit Grok concurrency above the normal safe default.
+    unsafe_allow_concurrency_above_one: false
+    # Optional supported Grok CLI version; empty retains the bundled identity.
+    cli_version: ""
+    # Optional YesCaptcha authentication key used by password-based Grok login.
+    yescaptcha_client_key: ""
+    oauth:
+      # Optional OAuth authorize url override; empty uses the bundled default.
+      authorize_url: ""
+      # Optional OAuth token url override; empty uses the bundled default.
+      token_url: ""
+      # Optional OAuth client id override; empty uses the bundled default.
+      client_id: ""
+      # Optional OAuth scope override; empty uses the bundled default.
+      scope: ""
+      # Optional OAuth redirect uri override; empty uses the bundled default.
+      redirect_uri: ""
+  # Token refresh behavior
+  token_refresh:
+    # Consecutive transient failures that open the platform circuit in the
+    # current cycle (maximum 100).
+    platform_failure_threshold: 3
+    # Maximum concurrent refreshes per platform (maximum 32).
+    platform_concurrency: 4
+    # Refresh requests per second per platform in each server process (maximum
+    # 100).
+    platform_qps: 2
+    # Candidate providers loaded per cursor page (maximum 1000).
+    candidate_page_size: 200
+    # Timeout for one upstream refresh attempt (seconds, maximum 300).
+    attempt_timeout_seconds: 15
+    # Total timeout for one background refresh cycle (seconds, maximum 3600).
+    cycle_timeout_seconds: 240
+  cooldown:
+    # Fallback overload cooldown in minutes, used only when the database setting cannot be read.
+    overload_minutes: 10
+  # =============================================================================
+  # Gemini OAuth (Required for Gemini providers)
+  # =============================================================================
+  # TokenRouter supports TWO Gemini OAuth modes:
+  #
+  # 1. Code Assist OAuth (requires GCP project_id)
+  #    - Uses: cloudcode-pa.googleapis.com (Code Assist API)
+  #
+  # 2. AI Studio OAuth (no project_id needed)
+  #    - Uses: generativelanguage.googleapis.com (AI Studio API)
+  #
+  # Default: Uses Gemini CLI's public OAuth credentials (same as Google's official CLI tool)
+  gemini:
+    oauth:
+      # OAuth client configuration:
+      # 1) Leave client_id/client_secret empty to use the built-in Gemini CLI
+      # OAuth client and its bundled public client secret.
+      # 2) Set both client_id and client_secret to use your own OAuth client
+      # (recommended for broader permissions).
+      #
+      # Set both client_id and client_secret, or leave both empty.
+      client_id: ""
+      client_secret: ""
+      # Optional scopes (space-separated). Leave empty to auto-select based on oauth_type.
+      scopes: ""
+    quota:
+      # Optional: local quota simulation for Gemini Code Assist (local billing).
+      # These values are used for UI progress + precheck scheduling, not official Google quotas.
+      tiers:
+        LEGACY:
+          # Pro model requests per day
+          pro_rpd: 50
+          # Flash model requests per day
+          flash_rpd: 1500
+          # Cooldown time (minutes) after hitting quota
+          cooldown_minutes: 30
+        PRO:
+          # Pro model requests per day
+          pro_rpd: 1500
+          # Flash model requests per day
+          flash_rpd: 4000
+          # Cooldown time (minutes) after hitting quota
+          cooldown_minutes: 5
+        ULTRA:
+          # Pro model requests per day
+          pro_rpd: 2000
+          # Flash model requests per day (0 = unlimited)
+          flash_rpd: 0
+          # Cooldown time (minutes) after hitting quota
+          cooldown_minutes: 5
+  antigravity:
+    # Fallback provider cooldown in seconds; must be positive.
+    fallback_cooldown_seconds: 60
+    # auto chooses by paid tier; prod fixes production and daily fixes the daily endpoint.
+    forward_endpoint: auto
+    # OAuth client-secret override; empty retains the bundled client identity.
+    oauth_client_secret: ""
+    # Optional decimal major.minor.patch User-Agent identity; empty retains the bundled version.
+    user_agent_version: ""
+  anthropic:
+    # Optional supported Claude CLI version for both request headers and billing identity.
+    claude_cli_version: ""
+# =============================================================================
+# Billing Configuration
+# =============================================================================
+billing:
+  # Conservative minimum balance required before forwarding balance-billed requests.
+  # Set to 0 to only require balance > 0.
+  minimum_balance_reserve: 0.000001
+  balance_check_circuit_breaker:
+    # Enable circuit breaker for billing service
     enabled: true
-    # profiles:
-    #   profile_1:
-    #     name: "Custom Profile 1"
-    #   profile_2:
-    #     name: "Custom Profile 2"
-
-# =============================================================================
-# Logging Configuration
-# 日志配置
-# =============================================================================
-log:
-  # Log level: debug/info/warn/error
-  # 日志级别：debug/info/warn/error
-  level: "info"
-  # Log format: json/console
-  # 日志格式：json/console
-  format: "console"
-  # Service name field written into each log line
-  # 每条日志都会附带 service 字段
-  service_name: "tokenrouter"
-  # Environment field written into each log line
-  # 每条日志都会附带 env 字段
-  env: "production"
-  # Include caller information
-  # 是否输出调用方位置信息
-  caller: true
-  # Stacktrace threshold: none/error/fatal
-  # 堆栈输出阈值：none/error/fatal
-  stacktrace_level: "error"
-  output:
-    # Keep stdout/stderr output for container log collection
-    # 保持标准输出用于容器日志采集
-    to_stdout: true
-    # Enable file output (default path auto-derived)
-    # 启用文件输出（默认路径自动推导）
-    to_file: true
-    # Empty means:
-    # - DATA_DIR set: {{DATA_DIR}}/logs/tokenrouter.log
-    # - otherwise: /app/data/logs/tokenrouter.log
-    # 留空时：
-    # - 设置 DATA_DIR：{{DATA_DIR}}/logs/tokenrouter.log
-    # - 否则：/app/data/logs/tokenrouter.log
-    file_path: ""
-  rotation:
-    # Max file size before rotation (MB)
-    # 单文件滚动阈值（MB）
-    max_size_mb: 100
-    # Number of rotated files to keep (0 means unlimited)
-    # 保留历史文件数量（0 表示不限制）
-    max_backups: 10
-    # Number of days to keep old log files (0 means unlimited)
-    # 历史日志保留天数（0 表示不限制）
-    max_age_days: 7
-    # Compress rotated files
-    # 是否压缩历史日志
-    compress: true
-    # Use local time for timestamp in rotated filename
-    # 滚动文件名时间戳使用本地时区
-    local_time: true
-  sampling:
-    # Enable zap sampler (reduce high-frequency repetitive logs)
-    # 启用 zap 采样（减少高频重复日志）
-    enabled: false
-    # Number of first entries per second to always log
-    # 每秒无采样保留的前 N 条日志
-    initial: 100
-    # Thereafter keep 1 out of N entries per second
-    # 之后每 N 条保留 1 条
-    thereafter: 100
-
-# Token refresh behavior
-# token 刷新行为控制
-token_refresh:
-  # 每个游标分页加载的候选提供商数量（最大 1000）
-  candidate_page_size: 200
-  # 每个平台的最大并发刷新数（最大 32）
-  provider_concurrency: 4
-  # 每个服务进程中每个平台每秒允许的刷新请求数（最大 100）
-  provider_qps: 2
-  # 当前周期内触发平台级熔断的连续临时失败次数（最大 100）
-  provider_failure_threshold: 3
-  # 单次上游刷新尝试的超时时间（秒，最大 300）
-  attempt_timeout_seconds: 15
-  # 单个后台刷新周期的总超时时间（秒，最大 3600）
-  cycle_timeout_seconds: 240
-
-# =============================================================================
-# API Key Auth Cache Configuration
-# API Key 认证缓存配置
-# =============================================================================
-api_key_auth_cache:
-  # L1 cache size (entries), in-process LRU/TTL cache
-  # L1 缓存容量（条目数），进程内 LRU/TTL 缓存
-  l1_size: 65535
-  # L1 cache TTL (seconds)
-  # L1 缓存 TTL（秒）
-  l1_ttl_seconds: 15
-  # L2 cache TTL (seconds), stored in Redis
-  # L2 缓存 TTL（秒），Redis 中存储
-  l2_ttl_seconds: 300
-  # Negative cache TTL (seconds)
-  # 负缓存 TTL（秒）
-  negative_ttl_seconds: 30
-  # TTL jitter percent (0-100)
-  # TTL 抖动百分比（0-100）
-  jitter_percent: 10
-  # Enable singleflight for cache misses
-  # 缓存未命中时启用 singleflight 合并回源
-  singleflight: true
+    # Number of failures before opening circuit
+    failure_threshold: 5
+    # Time to wait before attempting reset (seconds)
+    reset_timeout_seconds: 30
+    # Number of requests to allow in half-open state
+    half_open_requests: 3
+  # Rate multiplier (affects billing calculation)
+  fallback_rate_multiplier: 1.0
+api_key:
   # Maximum concurrent database lookups for authentication cache misses
-  # 认证缓存未命中时允许并发回源数据库的最大数量
   lookup_concurrency: 64
   # Process-local invalid-auth abuse protection. Counts only missing, malformed,
   # deprecated-query, and confirmed invalid credentials; valid requests and
   # Redis/DB failures do not consume the budget.
-  # 本机无效鉴权防护：仅统计缺失、格式错误、废弃 query 及确认无效的凭据。
-  invalid_abuse:
+  invalid_key_abuse:
     enabled: true
     # Invalid attempts per trusted client IP (IPv6 grouped by /64) per window.
-    # 每个可信客户端 IP（IPv6 按 /64 聚合）在窗口内允许的无效次数。
     threshold: 120
     window_seconds: 60
     block_seconds: 60
     # Maximum tracked client identities per process; memory remains bounded.
-    # 每进程最多跟踪的客户端身份数量，确保内存有界。
     capacity: 16384
-
-# =============================================================================
-# Dashboard Cache Configuration
-# 仪表盘缓存配置
-# =============================================================================
-dashboard_cache:
-  # Enable dashboard cache
-  # 启用仪表盘缓存
-  enabled: true
-  # Redis key prefix for multi-environment isolation
-  # Redis key 前缀，用于多环境隔离
-  key_prefix: "tokenrouter:"
-  # Fresh TTL (seconds); within this window cached stats are considered fresh
-  # 新鲜阈值（秒）；命中后处于该窗口视为新鲜数据
-  stats_fresh_ttl_seconds: 15
-  # Cache TTL (seconds) stored in Redis
-  # Redis 缓存 TTL（秒）
-  stats_ttl_seconds: 30
-  # Async refresh timeout (seconds)
-  # 异步刷新超时（秒）
-  stats_refresh_timeout_seconds: 30
-
-# =============================================================================
-# Dashboard Aggregation Configuration
-# 用量预聚合部署能力（重启生效）
-# =============================================================================
-dashboard_aggregation:
-  # 部署能力上限；运行时开关在“系统设置 > 通用设置 > 预聚合”中管理
-  enabled: true
-  # 尚无运行时设置时使用的默认刷新间隔（秒）
-  interval_seconds: 60
-  # Lookback window (seconds) for late-arriving data
-  # 回看窗口（秒），处理迟到数据
-  lookback_seconds: 120
-  # Allow manual backfill
-  # 允许手动回填
-  backfill_enabled: false
-  # Backfill max range (days)
-  # 回填最大跨度（天）
-  backfill_max_days: 31
-  # Recompute recent N days on startup
-  # 启动时重算最近 N 天
-  recompute_days: 2
-  # Retention windows (days)
-  # 保留窗口（天）
+  # API key settings
+  # Prefix for generated API keys
+  prefix: "sk-"
+  # =============================================================================
+  # API Key Auth Cache Configuration
+  # =============================================================================
+  auth_cache:
+    # L1 cache size (entries), in-process LRU/TTL cache
+    l1_size: 65535
+    # L1 cache TTL (seconds)
+    l1_ttl_seconds: 15
+    # L2 cache TTL (seconds), stored in Redis
+    l2_ttl_seconds: 300
+    # Negative cache TTL (seconds)
+    negative_ttl_seconds: 30
+    # TTL jitter percent (0-100)
+    jitter_percent: 10
+    # Enable singleflight for cache misses
+    singleflight: true
+# Fallback user defaults when the corresponding administrator setting is absent.
+user_defaults:
+  # Default settings for new users
+  # Max concurrent requests per user
+  concurrency: 5
+  # Initial balance for new users
+  balance: 0
+usage:
   retention:
     # Raw usage_logs retention
-    # 原始 usage_logs 保留天数
-    usage_logs_days: 90
+    logs_days: 90
+  # =============================================================================
+  # Dashboard Aggregation Configuration
+  # Usage pre-aggregation deployment capability; changes require a restart.
+  # =============================================================================
+  aggregation:
     # Hourly aggregation retention
-    # 小时聚合保留天数
-    hourly_days: 180
+    hourly_retention_days: 180
     # Daily aggregation retention
-    # 日聚合保留天数
-    daily_days: 730
-
-# =============================================================================
-# Usage Cleanup Task Configuration
-# 使用记录清理任务配置（重启生效）
-# =============================================================================
-usage_cleanup:
-  # Enable cleanup task worker
-  # 启用清理任务执行器
-  enabled: true
-  # Max date range (days) per task
-  # 单次任务最大时间跨度（天）
-  max_range_days: 31
-  # Batch delete size
-  # 单批删除数量
-  batch_size: 5000
-  # Worker interval (seconds)
-  # 执行器轮询间隔（秒）
-  worker_interval_seconds: 10
-  # Task execution timeout (seconds)
-  # 单次任务最大执行时长（秒）
-  task_timeout_seconds: 1800
-
-# =============================================================================
-# HTTP 写接口幂等配置
-# Idempotency Configuration
-# =============================================================================
-idempotency:
-  # Observe-only 模式：
-  # true: 观察期，不带 Idempotency-Key 仍放行（但会记录）
-  # false: 强制期，不带 Idempotency-Key 直接拒绝（仅对接入幂等保护的接口生效）
-  observe_only: true
-  # 关键写接口幂等记录 TTL（秒）
-  default_ttl_seconds: 86400
-  # 系统操作接口（update/rollback/restart）幂等记录 TTL（秒）
-  system_operation_ttl_seconds: 3600
-  # processing 锁超时（秒）
-  processing_timeout_seconds: 30
-  # 可重试失败退避窗口（秒）
-  failed_retry_backoff_seconds: 5
-  # 持久化响应体最大长度（字节）
-  max_stored_response_len: 65536
-  # 过期幂等记录清理周期（秒）
-  cleanup_interval_seconds: 60
-  # 每轮清理最大删除条数
-  cleanup_batch_size: 500
-
-# =============================================================================
-# Concurrency Wait Configuration
-# 并发等待配置
-# =============================================================================
-concurrency:
-  # SSE ping interval during concurrency wait (seconds)
-  # 并发等待期间的 SSE ping 间隔（秒）
-  ping_interval: 10
-
-# =============================================================================
-# Creative Studio Configuration
-# 创作台配置（图片/编辑/局部重绘异步任务；服务端不持久化图片与 prompt）
-# =============================================================================
-creative:
-  # 是否启用创作台 HTTP API
-  enabled: true
-  # 是否启用创作台队列（第二阶段 worker 使用）
-  queue_enabled: true
-  # 输入载荷与临时输出的保留时间（秒），到期后结果不可恢复
-  transient_ttl_seconds: 1800
-  # 单个上传文件（源图/mask）的大小上限（字节，默认 32 MiB）
-  max_asset_bytes: 33554432
-  # 单次任务输入总大小上限（字节，默认 64 MiB）
-  max_total_input_bytes: 67108864
-  # prompt 最大字符数
-  max_prompt_chars: 8000
-  # 默认输出 MIME 类型
-  default_response_mime_type: "image/png"
-  # 默认图片尺寸
-  default_image_size: "1K"
-  # Redis 队列键配置（一般不修改）
-  queue_ready_key: "creative:queue:ready"
-  queue_delayed_key: "creative:queue:delayed"
-  queue_active_key: "creative:queue:active"
-  inflight_key_prefix: "creative:queue:inflight:"
-  lock_key_prefix: "creative:queue:lock:"
-  inflight_ttl_seconds: 604800
-  job_lock_ttl_seconds: 300
-  default_requeue_delay_seconds: 30
-  error_retry_delay_seconds: 60
-  lock_conflict_delay_seconds: 5
-  stale_active_after_seconds: 600
-  delayed_mover_interval_seconds: 5
-  recovery_interval_seconds: 300
-  delayed_move_limit: 100
-  recover_limit: 100
-  # 单次上游执行调用的超时时间（秒）
-  execute_timeout_seconds: 300
-  # provider 瞬时错误的最大执行次数（含首次）
-  max_execute_attempts: 3
-
-# =============================================================================
-# Database Configuration (PostgreSQL)
-# 数据库配置 (PostgreSQL)
-# =============================================================================
-database:
-  # Database host address
-  # 数据库主机地址
-  host: "localhost"
-  # Database port
-  # 数据库端口
-  port: 5432
-  # Database username
-  # 数据库用户名
-  user: "postgres"
-  # Database password
-  # 数据库密码
-  password: "your_secure_password_here"
-  # Database name
-  # 数据库名称
-  dbname: "tokenrouter"
-  # SSL mode: disable, prefer, require, verify-ca, verify-full
-  # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
-  # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
-  sslmode: "prefer"
-  # Max open connections (高并发场景建议 256+，需配合 PostgreSQL max_connections 调整)
-  # 最大打开连接数
-  max_open_conns: 256
-  # Max idle connections (建议为 max_open_conns 的 50%，减少频繁建连开销)
-  # 最大空闲连接数
-  max_idle_conns: 128
-  # Connection max lifetime (minutes)
-  # 连接最大存活时间（分钟）
-  conn_max_lifetime_minutes: 30
-  # Connection max idle time (minutes)
-  # 空闲连接最大存活时间（分钟）
-  conn_max_idle_time_minutes: 5
-
-# =============================================================================
-# Redis Configuration
-# Redis 配置
-# =============================================================================
-redis:
-  # Redis host address
-  # Redis 主机地址
-  host: "localhost"
-  # Redis port
-  # Redis 端口
-  port: 6379
-  # Redis ACL username (leave empty for default user)
-  # Redis ACL 用户名（使用默认用户时留空）
-  username: ""
-  # Redis password (leave empty if no password is set)
-  # Redis 密码（如果未设置密码则留空）
-  password: ""
-  # Database number (0-15)
-  # 数据库编号（0-15）
-  db: 0
-  # Connection pool size (max concurrent connections)
-  # 连接池大小（最大并发连接数）
-  pool_size: 1024
-  # Minimum number of idle connections (高并发场景建议 128+，保持足够热连接)
-  # 最小空闲连接数
-  min_idle_conns: 128
-  # Enable TLS/SSL connection
-  # 是否启用 TLS/SSL 连接
-  enable_tls: false
-
+    daily_retention_days: 730
+    # Process capability ceiling and fallback for the administrator pre-aggregation switch.
+    enabled: true
+    # Fallback aggregation polling interval in seconds when no administrator interval is stored.
+    interval_seconds: 60
+    # Lookback window (seconds) for late-arriving data
+    lookback_seconds: 120
+    # Allow manual backfill
+    backfill_enabled: false
+    # Backfill max range (days)
+    backfill_max_days: 31
+    # Recompute recent N days on startup
+    recompute_days: 2
+  # =============================================================================
+  # Dashboard Cache Configuration
+  # =============================================================================
+  dashboard_cache:
+    # Enable dashboard cache
+    enabled: true
+    # Redis key prefix for multi-environment isolation
+    key_prefix: "tokenrouter:"
+    # Fresh TTL (seconds); within this window cached stats are considered fresh
+    stats_fresh_ttl_seconds: 15
+    # Cache TTL (seconds) stored in Redis
+    stats_ttl_seconds: 30
+    # Async refresh timeout (seconds)
+    stats_refresh_timeout_seconds: 30
+  # =============================================================================
+  # Usage Cleanup Task Configuration
+  # Usage cleanup worker settings; changes require a restart.
+  # =============================================================================
+  cleanup_tasks:
+    # Enable cleanup task worker
+    enabled: true
+    # Max date range (days) per task
+    max_range_days: 31
+    # Batch delete size
+    batch_size: 5000
+    # Worker interval (seconds)
+    worker_interval_seconds: 10
+    # Task execution timeout (seconds)
+    task_timeout_seconds: 1800
+# Request summaries are stored independently of Ops sampling and buffered in
+# memory for batched database writes.
+request_log:
+  retention_days: 30
 # =============================================================================
 # Ops Monitoring (Optional)
-# 运维监控 (可选)
 # =============================================================================
 ops:
   # Enable ops monitoring features (background jobs and APIs)
-  # 是否启用运维监控功能（后台任务和接口）
   # Set to false to hide ops menu in sidebar and disable all ops features
-  # 设置为 false 可在左侧栏隐藏运维监控菜单并禁用所有运维监控功能
-  # 数据清理等详细设置仍在运维监控设置对话框中配置
+  # Configure detailed options, including data cleanup, in the Ops monitoring
+  # settings dialog.
   enabled: true
   aggregation:
-    # 部署能力上限；运行时开关在“系统设置 > 通用设置 > 预聚合”中管理
+    # Deployment capability ceiling. Manage the runtime switch under System
+    # Settings > General Settings > Pre-aggregation.
     enabled: true
-
-# =============================================================================
-# JWT Configuration
-# JWT 配置
-# =============================================================================
-jwt:
-  # IMPORTANT: Change this to a random string in production!
-  # 重要：生产环境中请更改为随机字符串！
-  # Generate with / 生成命令: openssl rand -hex 32
-  secret: "change-this-to-a-secure-random-string"
-  # Token expiration time in hours (max 168)
-  # 令牌过期时间（小时，最大 168）
-  expire_hour: 24
-  # Access Token 过期时间（分钟）
-  # 优先级说明：
-  # - >0: 按分钟生效（优先于 expire_hour）
-  # - =0: 回退使用 expire_hour
-  access_token_expire_minutes: 0
-
-# =============================================================================
-# TOTP (2FA) Configuration
-# TOTP 双因素认证配置
-# =============================================================================
-totp:
-  # IMPORTANT: Set a fixed encryption key for TOTP secrets.
-  # 重要：设置固定的 TOTP 加密密钥。
-  # If left empty, a random key will be generated on each startup, causing all
-  # existing TOTP configurations to become invalid (users won't be able to
-  # login with 2FA).
-  # 如果留空，每次启动将生成随机密钥，导致现有的 TOTP 配置失效（用户无法使用
-  # 双因素认证登录）。
-  # Generate with / 生成命令: openssl rand -hex 32
-  encryption_key: ""
-
-# =============================================================================
-# LinuxDo Connect OAuth Login (SSO)
-# LinuxDo Connect OAuth 登录（用于 TokenRouter 用户登录）
-# =============================================================================
-linuxdo_connect:
-  enabled: false
-  client_id: ""
-  client_secret: ""
-  authorize_url: "https://connect.linux.do/oauth2/authorize"
-  token_url: "https://connect.linux.do/oauth2/token"
-  userinfo_url: "https://connect.linux.do/api/user"
-  scopes: "user"
-  # 示例: "https://your-domain.com/api/v1/auth/oauth/linuxdo/callback"
-  redirect_url: ""
-  # 安全提示：
-  # - 建议使用同源相对路径（以 / 开头），避免把 token 重定向到意外的第三方域名
-  # - 该地址不应包含 #fragment（本实现使用 URL fragment 传递 access_token）
-  frontend_redirect_url: "/auth/linuxdo/callback"
-  token_auth_method: "client_secret_post" # client_secret_post | client_secret_basic | none
-  # 注意：当 token_auth_method=none（public client）时，必须启用 PKCE
-  use_pkce: true
-  userinfo_email_path: ""
-  userinfo_id_path: ""
-  userinfo_username_path: ""
-
-# =============================================================================
-# Generic OIDC OAuth Login (SSO)
-# 通用 OIDC OAuth 登录（用于 TokenRouter 用户登录）
-# =============================================================================
-oidc_connect:
-  enabled: false
-  provider_name: "OIDC"
-  client_id: ""
-  client_secret: ""
-  # 例如: "https://keycloak.example.com/realms/myrealm"
-  issuer_url: ""
-  # 可选: OIDC Discovery URL。为空时可手动填写 authorize/token/userinfo/jwks
-  discovery_url: ""
-  authorize_url: ""
-  token_url: ""
-  # 可选（仅补充 email/username，不用于 sub 可信绑定）
-  userinfo_url: ""
-  # validate_id_token=true 时必填
-  jwks_url: ""
-  scopes: "openid email profile"
-  # 示例: "https://your-domain.com/api/v1/auth/oauth/oidc/callback"
-  redirect_url: ""
-  # 安全提示：
-  # - 建议使用同源相对路径（以 / 开头），避免把 token 重定向到意外的第三方域名
-  # - 该地址不应包含 #fragment（本实现使用 URL fragment 传递 access_token）
-  frontend_redirect_url: "/auth/oidc/callback"
-  token_auth_method: "client_secret_post" # client_secret_post | client_secret_basic | none
-  # 注意：当 token_auth_method=none（public client）时，必须启用 PKCE
-  use_pkce: false
-  # 开启后强制校验 id_token 的签名和 claims（推荐）
-  validate_id_token: true
-  allowed_signing_algs: "RS256,ES256,PS256"
-  # 允许的时钟偏移（秒）
-  clock_skew_seconds: 120
-  # 若 Provider 返回 email_verified=false，是否拒绝登录
-  require_email_verified: false
-  userinfo_email_path: ""
-  userinfo_id_path: ""
-  userinfo_username_path: ""
-
-# =============================================================================
-# Default Settings
-# 默认设置
-# =============================================================================
-default:
-  # Initial admin provider (created on first run)
-  # 初始管理员账户（首次运行时创建）
-  admin_email: "admin@example.com"
-  admin_password: "admin123"
-
-  # Default settings for new users
-  # 新用户默认设置
-  # Max concurrent requests per user
-  # 每用户最大并发请求数
-  user_concurrency: 5
-  # Initial balance for new users
-  # 新用户初始余额
-  user_balance: 0
-
-  # API key settings
-  # API 密钥设置
-  # Prefix for generated API keys
-  # 生成的 API 密钥前缀
-  api_key_prefix: "sk-"
-
-  # Rate multiplier (affects billing calculation)
-  # 费率倍数（影响计费计算）
-  rate_multiplier: 1.0
-
-# =============================================================================
-# Rate Limiting
-# 速率限制
-# =============================================================================
-rate_limit:
-  # Cooldown time (in minutes) when upstream returns 529 (overloaded)
-  # 上游返回 529（过载）时的冷却时间（分钟）
-  overload_cooldown_minutes: 10
-
-# =============================================================================
-# Pricing Data Source (Optional)
-# 定价数据源（可选）
-# =============================================================================
-pricing:
-  # URL for the unified models.dev catalog
-  # 模型价格与展示属性共用的 models.dev 目录地址
-  remote_url: "https://models.dev/catalog.json?type=all"
-  # Local data directory for caching
-  # 本地数据缓存目录
-  data_dir: "./data"
-  # 官方价格补充已内嵌；此处可选填独立的自定义 JSON 路径。
-  # 目录已有单价优先，自定义补充其次，内嵌补充填补剩余字段。
-  # 文件修改和删除会在下一次目录检查时生效，删除后恢复内嵌补充。
-  fallback_file: ""
-  # 自定义售价通过管理端的价格配置设置，并关联需要使用的分组。
-  # 目录检查间隔（分钟）：条件请求同步远程目录，并重载自定义补充。
-  # 删除文件后恢复内嵌值；文件损坏时保留最近有效数据并在下次检查重试。
-  check_interval_minutes: 10
-
-# =============================================================================
-# Billing Configuration
-# 计费配置
-# =============================================================================
-billing:
-  circuit_breaker:
-    # Enable circuit breaker for billing service
-    # 启用计费服务熔断器
+  cleanup:
+    # Initial cleanup switch; stored Ops advanced settings replace process cleanup
+    # options when present. Without stored advanced settings, the UI may show cleanup
+    # disabled while these process options still run cleanup.
     enabled: true
-    # Number of failures before opening circuit
-    # 触发熔断的失败次数阈值
-    failure_threshold: 5
-    # Time to wait before attempting reset (seconds)
-    # 熔断后重试等待时间（秒）
-    reset_timeout_seconds: 30
-    # Number of requests to allow in half-open state
-    # 半开状态允许通过的请求数
-    half_open_requests: 3
-  # Conservative minimum balance required before forwarding balance-billed requests.
-  # Set to 0 to only require balance > 0.
-  # 余额计费请求转发前要求的保守最小余额；设为 0 则仅要求余额 > 0。
-  minimum_balance_reserve: 0.000001
-
+    # Cleanup cron schedule interpreted in the application timezone.
+    schedule: 0 3 * * *
+    # Error-log retention in days; zero disables cleanup for this dataset.
+    error_log_retention_days: 30
+    # System-log retention in days; zero disables cleanup for this dataset.
+    system_log_retention_days: 30
+    # Minute-metric retention in days; zero disables cleanup for this dataset.
+    minute_metrics_retention_days: 30
+    # Hourly-metric retention in days; zero disables cleanup for this dataset.
+    hourly_metrics_retention_days: 30
+    # Maximum records deleted in one cleanup batch.
+    batch_size: 1000
+  websocket:
+    # Trust forwarded host and client-IP headers only from the trusted direct peers below.
+    trust_proxy: true
+    # Trusted direct-peer IP addresses or CIDR ranges for Ops WebSocket handshakes.
+    trusted_proxies:
+      - 127.0.0.0/8
+      - ::1/128
+    # Missing-Origin policy: strict rejects, permissive accepts. Present origins must match.
+    origin_policy: permissive
+    # Maximum concurrent Ops WebSocket connections; must be positive and fit int32.
+    max_conns: 100
+    # Maximum concurrent connections per client address; zero disables this limit.
+    max_conns_per_ip: 20
 # =============================================================================
-# Turnstile Configuration
-# Turnstile 人机验证配置
+# Idempotency for HTTP write operations.
+# Idempotency Configuration
 # =============================================================================
-turnstile:
-  # Require Turnstile in release mode (when enabled, login/register will fail if not configured)
-  # 在 release 模式下要求 Turnstile 验证（启用后，若未配置则登录/注册会失败）
-  required: false
-
+idempotency:
+  # Observe-only mode:
+  # true: allow requests without Idempotency-Key and record the omission.
+  # false: reject requests without Idempotency-Key on endpoints with
+  # idempotency protection.
+  observe_only: true
+  # Idempotency record lifetime for protected write endpoints (seconds).
+  default_ttl_seconds: 86400
+  # Idempotency record lifetime for system update, rollback, and restart
+  # operations (seconds).
+  system_operation_ttl_seconds: 3600
+  # Timeout for the processing lock (seconds).
+  processing_timeout_seconds: 30
+  # Backoff window after retryable failures (seconds).
+  failed_retry_backoff_seconds: 5
+  # Cleanup interval for expired idempotency records (seconds).
+  cleanup_interval_seconds: 60
+  # Maximum records deleted per cleanup pass.
+  cleanup_batch_size: 500
+  # Maximum persisted response body size (bytes).
+  max_stored_response_bytes: 65536
+batch_image:
+  vertex:
+    # Vertex project used for managed batch-image input and output.
+    project_id: ""
+    # Vertex batch processing region.
+    location: global
+    # Server-owned GCS bucket; empty excludes Vertex from new batch jobs.
+    managed_gcs_bucket: ""
+    # Managed object prefix; {env} uses environment and {batch_id} separates jobs.
+    managed_gcs_prefix: batch-image/{env}/{batch_id}
 # =============================================================================
-# Gemini OAuth (Required for Gemini providers)
-# Gemini OAuth 配置（Gemini 提供商必需）
+# Creative Studio Configuration
+# Asynchronous image generation, editing, and inpainting tasks. The server
+# does not persist images or prompts.
 # =============================================================================
-# TokenRouter supports TWO Gemini OAuth modes:
-# TokenRouter 支持两种 Gemini OAuth 模式：
-#
-# 1. Code Assist OAuth (requires GCP project_id)
-# 1. Code Assist OAuth（需要 GCP project_id）
-#    - Uses: cloudcode-pa.googleapis.com (Code Assist API)
-#    - 使用：cloudcode-pa.googleapis.com（Code Assist API）
-#
-# 2. AI Studio OAuth (no project_id needed)
-# 2. AI Studio OAuth（不需要 project_id）
-#    - Uses: generativelanguage.googleapis.com (AI Studio API)
-#    - 使用：generativelanguage.googleapis.com（AI Studio API）
-#
-# Default: Uses Gemini CLI's public OAuth credentials (same as Google's official CLI tool)
-# 默认：使用 Gemini CLI 的公开 OAuth 凭证（与 Google 官方 CLI 工具相同）
-gemini:
-  oauth:
-    # OAuth 客户端配置说明：
-    # 1) 留空 client_id/client_secret：使用 Gemini CLI 内置 OAuth Client（其 client_secret 需通过环境变量注入）
-    #    - GEMINI_CLI_OAUTH_CLIENT_SECRET
-    # 2) 同时设置 client_id/client_secret：使用你自建的 OAuth Client（推荐，权限更完整）
-    #
-    # 注意：client_id 与 client_secret 必须同时为空或同时非空。
-    client_id: ""
-    client_secret: ""
-    # Optional scopes (space-separated). Leave empty to auto-select based on oauth_type.
-    # 可选的权限范围（空格分隔）。留空则根据 oauth_type 自动选择。
-    scopes: ""
-  quota:
-    # Optional: local quota simulation for Gemini Code Assist (local billing).
-    # 可选：Gemini Code Assist 本地配额模拟（本地计费）。
-    # These values are used for UI progress + precheck scheduling, not official Google quotas.
-    # 这些值用于 UI 进度显示和预检调度，并非 Google 官方配额。
-    tiers:
-      LEGACY:
-        # Pro model requests per day
-        # Pro 模型每日请求数
-        pro_rpd: 50
-        # Flash model requests per day
-        # Flash 模型每日请求数
-        flash_rpd: 1500
-        # Cooldown time (minutes) after hitting quota
-        # 达到配额后的冷却时间（分钟）
-        cooldown_minutes: 30
-      PRO:
-        # Pro model requests per day
-        # Pro 模型每日请求数
-        pro_rpd: 1500
-        # Flash model requests per day
-        # Flash 模型每日请求数
-        flash_rpd: 4000
-        # Cooldown time (minutes) after hitting quota
-        # 达到配额后的冷却时间（分钟）
-        cooldown_minutes: 5
-      ULTRA:
-        # Pro model requests per day
-        # Pro 模型每日请求数
-        pro_rpd: 2000
-        # Flash model requests per day (0 = unlimited)
-        # Flash 模型每日请求数（0 = 无限制）
-        flash_rpd: 0
-        # Cooldown time (minutes) after hitting quota
-        # 达到配额后的冷却时间（分钟）
-        cooldown_minutes: 5
-
-# =============================================================================
-# Update Configuration (在线更新配置)
-# =============================================================================
-update:
-  # Proxy URL for accessing GitHub (used for online updates and pricing data)
-  # 用于访问 GitHub 的代理地址（用于在线更新和定价数据获取）
-  # Supports: http, https, socks5, socks5h
-  # Examples:
-  #   - HTTP proxy: "http://127.0.0.1:7890"
-  #   - SOCKS5 proxy: "socks5://127.0.0.1:1080"
-  #   - With authentication: "http://user:pass@proxy.example.com:8080"
-  # Leave empty for direct connection (recommended for overseas servers)
-  # 留空表示直连（适用于海外服务器）
-  proxy_url: ""
-
-# 请求摘要独立于 Ops 采样保存，通过内存缓冲批量写入数据库。
-request_log:
-  retention_days: 30
-
+creative:
+  # Enable the Creative Studio HTTP API.
+  enabled: true
+  # Retention for input payloads and temporary output (seconds). Results
+  # cannot be recovered after expiry.
+  transient_ttl_seconds: 1800
+  # Maximum uploaded source image or mask size (bytes, default 32 MiB).
+  max_asset_bytes: 33554432
+  # Maximum combined input size per task (bytes, default 64 MiB).
+  max_total_input_bytes: 67108864
+  # Maximum characters per prompt.
+  max_prompt_chars: 8000
+  # Default output image size.
+  default_image_size: "1K"
+  # Timeout for each upstream execution attempt (seconds).
+  execute_timeout_seconds: 300
+  # Maximum execution attempts for transient provider errors, including the
+  # initial attempt.
+  max_execute_attempts: 3
+  queue:
+    delayed_mover_interval_seconds: 5
+    default_requeue_delay_seconds: 30
+    lock_conflict_delay_seconds: 5
+    stale_active_after_seconds: 600
+    error_retry_delay_seconds: 60
+    recovery_interval_seconds: 300
+    inflight_ttl_seconds: 604800
+    job_lock_ttl_seconds: 300
+    inflight_key_prefix: "creative:queue:inflight:"
+    delayed_move_limit: 100
+    delayed_key: "creative:queue:delayed"
+    active_key: "creative:queue:active"
+    lock_key_prefix: "creative:queue:lock:"
+    # Redis queue keys; normally leave these unchanged.
+    ready_key: "creative:queue:ready"
+    recover_limit: 100
+  # Enable the Creative Studio queue used by the second-stage worker.
+  queue_worker_enabled: true
+team:
+  # Process gate for team APIs. The database team_enabled setting separately controls UI visibility.
+  enabled: true
 # Plugins run as trusted code in this single backend instance.
 plugins:
   enabled: true
@@ -1146,3 +1026,16 @@ plugins:
   max_running: 20
   dev_mode: false
   dev_dirs: []
+update:
+  # Optional token for GitHub release checks; use an explicit environment reference if needed.
+  github_token: ""
+payment:
+  # Optional primary payment-resume signing key; configured encryption input remains a legacy verification fallback.
+  resume_signing_key: ""
+debug:
+  # Write detailed model-routing diagnostics.
+  model_routing_log: false
+  # Optional gateway diagnostic body-log path; empty disables file snapshots.
+  gateway_body_log_file: ""
+  # Write Claude mimic identity diagnostics.
+  claude_mimic_log: false

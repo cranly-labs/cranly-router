@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/TokenFlux/TokenRouter/internal/bstats"
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/admission"
 	"github.com/TokenFlux/TokenRouter/internal/payment"
@@ -60,14 +61,14 @@ func (r *delayedBackendReadFixture) GetValue(ctx context.Context, key string) (s
 func TestSettingUpdateLateBackendModeLoad(t *testing.T) {
 	repo := &delayedBackendReadFixture{settingHandlerRepoStub: &settingHandlerRepoStub{values: map[string]string{}}, entered: make(chan struct{}), release: make(chan struct{})}
 	store := settings.New(repo)
-	cfg := &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}}
+	cfg := &config.Config{UserDefaults: config.UserDefaultsConfig{Concurrency: 5}}
 	backend := provideBackendMode(store)
 	grants := provideGrantSettings(store, cfg, nil)
 	defaults := provideSchedulerAdminDefaults(cfg)
 	rules := provideGatewayAdminRules()
 	gatewaySettings := provideGatewaySettings(store)
 	shared := &schedulerSharedState{Settings: scheduler.NewSettingsRuntime(scheduler.Diagnostics{})}
-	source := provideCompositeRuntime(store, cfg, provideCompositeReadOptions(cfg, provideOAuthSettings(store, cfg), rules, defaults, nil), grants, gatewaySettings, rules, defaults, nil, backend, provideProviderSettings(store), provideQuotaSettings(store), provideForwardedSettings(store, cfg), shared, nil, nil)
+	source := provideCompositeRuntime(store, cfg, provideCompositeReadOptions(cfg, provideOAuthSettings(store, cfg), rules, defaults, nil), grants, gatewaySettings, rules, defaults, nil, backend, provideProviderSettings(store), provideQuotaSettings(store), provideForwardedSettings(store, cfg), shared, nil, nil, bstats.New(store, nil, nil))
 	participants := staticSettingsParticipants(&payment.Runtime{}, grants, defaults, rules)
 	participants[len(participants)-1] = payment.SettingsParticipant(nil)
 	registry, err := settings.NewRegistry(participants...)

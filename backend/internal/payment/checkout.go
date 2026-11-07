@@ -39,7 +39,8 @@ import (
 // negotiates locale, defaults blank order type to balance and normalizes the
 // visible method before reading current configuration.
 //
-// Credited entitlement and limit principal are calculated separately.
+// Credited entitlement and limit principal are calculated separately. Personal
+// recharge terms override global settings only for new balance orders.
 // Subscription currency conversion precedes fees, and a selected currency
 // difference recalculates gateway charge after instance selection. Stripe
 // retains validated billing information; other providers discard it.
@@ -87,7 +88,16 @@ func (s *Checkout) CreateOrder(ctx context.Context, req CreateOrderRequest) (*Cr
 		orderAmount = plan.Price
 		limitAmount = plan.Price
 	} else if req.OrderType == OrderTypeBalance {
-		orderAmount = CalculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
+		rates, err := ResolveBalanceRechargeRates(cfg.BalanceRechargeMultiplier, user.BalanceRechargeMultiplier)
+		if err != nil {
+			return nil, err
+		}
+		orderAmount = CalculateCreditedBalance(req.Amount, rates.Effective)
+		// Validate the rounded entitlement before creating an external payment;
+		// zero or oversized credits cannot be delivered by the redemption wallet.
+		if !IsValidCreditedBalance(orderAmount) {
+			return nil, infraerrors.BadRequest("INVALID_CREDITED_AMOUNT", "credited balance must be at least 0.01 and less than 1000000000000")
+		}
 	}
 	methodFee := cfg.EffectiveMethodFee(req.PaymentType)
 	methodCurrency := DefaultPaymentCurrency
@@ -164,12 +174,28 @@ func (s *Checkout) CreateOrder(ctx context.Context, req CreateOrderRequest) (*Cr
 	return resp, nil
 }
 
-// ValidateOrderInput checks balance enablement or delegates subscription
-// sale-plan lookup using nonnil configuration. Other order types follow the
-// finite positive amount and inclusive configured min/max checks; it returns
-// nil plan for those amount-based purchases and does not validate a closed
-// order-type enum here.
+// GetBalanceRechargeRates reads the authenticated buyer's current recharge
+// terms using the caller's global configuration observation. Buyer lookup and
+// invalid override errors abort the preview instead of displaying inherited terms.
+func (s *Checkout) GetBalanceRechargeRates(ctx context.Context, userID int64, global float64) (BalanceRechargeRates, error) {
+	user, err := s.runtime.User(ctx, userID)
+	if err != nil {
+		return BalanceRechargeRates{}, fmt.Errorf("get user: %w", err)
+	}
+	if user.Status != EntityStatusActive {
+		return BalanceRechargeRates{}, infraerrors.Forbidden("USER_INACTIVE", "user account is disabled")
+	}
+	return ResolveBalanceRechargeRates(global, user.BalanceRechargeMultiplier)
+}
+
+// ValidateOrderInput rejects unsupported order types before selecting balance
+// or subscription rules. CreateOrder normalizes omitted types to balance;
+// balance purchases require finite positive principal within configured limits,
+// while subscriptions delegate sale-plan lookup using nonnil configuration.
 func (s *Checkout) ValidateOrderInput(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig) (*SubscriptionPlan, error) {
+	if req.OrderType != OrderTypeBalance && req.OrderType != OrderTypeSubscription {
+		return nil, infraerrors.BadRequest("INVALID_CHECKOUT_ORDER_TYPE", "order_type must be balance or subscription")
+	}
 	if req.OrderType == OrderTypeBalance && cfg.BalanceDisabled {
 		return nil, infraerrors.Forbidden("BALANCE_PAYMENT_DISABLED", "balance recharge has been disabled")
 	}

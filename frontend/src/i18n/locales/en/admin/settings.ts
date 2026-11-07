@@ -185,6 +185,23 @@ export default {
         'If the window and bucket size would produce more than 720 bars, the backend widens the bucket size automatically.',
     },
     features: {
+      bstats: {
+        title: 'bStats',
+        description:
+          'Send basic runtime information to bStats to help understand TokenRouter adoption and version distribution and guide future improvements. Enabled by default; you can turn it off at any time.',
+        enabled: 'Enable bStats',
+        dataHint:
+          'Reports a random instance ID, operating system and version, architecture, CPU core count, and TokenRouter and Go versions. bStats derives the country from the reporting connection. No accounts, API keys, prompts, requests, usage, or payment data are sent.',
+        viewStatistics: 'View public statistics',
+        logErrors: 'Log reporting errors',
+        logErrorsHint: 'Write failed reporting attempts to the server log. Disabled by default.',
+        logSentData: 'Log submitted data',
+        logSentDataHint:
+          'Write the submitted JSON to the server log, including the persistent instance UUID. Disabled by default.',
+        logResponse: 'Log bStats responses',
+        logResponseHint:
+          'Write successful bStats response content to the server log. Disabled by default.',
+      },
       team: {
         title: 'Team Features',
         description: 'Control whether team pages are available to users and administrators.',
@@ -297,7 +314,7 @@ export default {
       totp: 'Two-Factor Authentication (2FA)',
       totpHint: 'Allow users to use authenticator apps like Google Authenticator',
       totpKeyNotConfigured:
-        'Please configure TOTP_ENCRYPTION_KEY in environment variables first. Generate a key with: openssl rand -hex 32',
+        'Configure security.secret_encryption_key in config.yaml first. Generate a key with: openssl rand -hex 32',
     },
     security: {
       stepUp: 'Step-up 2FA for Sensitive Operations',
@@ -416,7 +433,7 @@ export default {
         'Choose which client IP is used by API Key allowlists/denylists, admin audit logs, and session IP/UA binding',
       trustForwardedIp: 'Trust forwarded client IP',
       trustForwardedIpHint:
-        'Enabled by default for upgrade compatibility. When enabled, raw CF-Connecting-IP, X-Real-IP, or X-Forwarded-For values take over server.trusted_proxies for client-IP resolution. Disable it to enforce the Gin trusted-proxy chain configured by server.trusted_proxies. Only enable takeover mode when the origin cannot be reached directly. Changing this switch changes existing session IP fingerprints.',
+        'Enabled by default for upgrade compatibility. When enabled, raw CF-Connecting-IP, X-Real-IP, or X-Forwarded-For values take over server.client_ip.trusted_proxies for client-IP resolution. Disable it to enforce the Gin trusted-proxy chain configured by server.client_ip.trusted_proxies. Only enable takeover mode when the origin cannot be reached directly. Changing this switch changes existing session IP fingerprints.',
       forwardedClientIpHeaders: 'Custom client-IP headers',
       forwardedClientIpHeadersHint:
         'Add CDN or proxy header names to check before the built-in headers.',
@@ -886,7 +903,7 @@ export default {
       contactInfo: 'Contact Info',
       contactInfoPlaceholder: 'e.g., QQ: 123456789',
       contactInfoHint:
-        'Customer support contact info, displayed on the profile and header user menu.',
+        'Contact details shown in the header Contact Us menu and on the user dashboard.',
       docUrl: 'Documentation URL',
       docUrlPlaceholder: 'https://docs.example.com',
       docUrlHint: 'Link to your documentation site. Leave empty to hide the documentation link.',

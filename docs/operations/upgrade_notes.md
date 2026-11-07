@@ -6,6 +6,37 @@
 
 各节里提到的认证缓存版本（v34 到 v46）、调度缓存命名空间，都是对应迁移发布时的值。当前代码的认证缓存版本是 46，调度缓存命名空间是 `sched:v4:`，以[提供商调度与缓存一致性](../architecture/provider_scheduling_and_cache.md)为准。后面的迁移可能取代前面的字段，所以不能只看某一节判断当前的接口；"当前状态"一列标出了已被取代的专题。
 
+<a id="config_version_2"></a>
+## 配置文件版本 2
+
+首次启动会将缺少 `config_version` 的旧文件视为 v1，按旧优先级导入当时的环境变量，再改名、转换单位和删除失效项。敏感环境值写为 `${变量名}`，不把实际凭据写进新文件。新安装直接生成 `config_version: 2`。
+
+旧文件中的空值继续使用默认值，点分键遵循 YAML 合并的显式覆盖顺序，微信数字开关保留原渠道选择。若此前的升级已将留空的 `server.mode` 写成 `debug`，或改变了微信登录模式，应对照 v1 备份核对这两处设置；当前版本的文件不会再次迁移。
+
+自动安装和 v1 迁移会将非空的 `DATABASE_HOST`、`REDIS_HOST` 保存为引用，以适应容器地址变化。已经生成 v2 文件的 Apple Container 部署应核对 `database.host: ${DATABASE_HOST}` 和 `redis.host: ${REDIS_HOST}`；若仍为旧 IP，备份后修改这两个字段，再执行 `apple-container.sh up`。v2 文件不会自动重写。
+
+原文件的逐字节备份在 `config.yaml.v1.bak`，同名备份存在时追加 UTC 时间戳；权限为 `0600`。符号链接保持不变，升级写回实际目标；临时文件使用唯一名称，残留文件不会阻止重试。单文件挂载支持直接写回的回退。配置目录只读时启动会失败，使用相同的环境变量执行：
+
+```bash
+./tokenrouter -migrate-config -config /path/config.yaml -out /writable/config.v2.yaml
+```
+
+命令不修改源文件；用输出文件替换挂载后再启动。`-out -` 输出到 stdout。保留配置里每个 `${VAR}` 所需的容器变量，尤其是从旧部署导入的 OAuth secret、更新令牌和代理凭据。新模板保留这些可能被引用的敏感变量；其余应用配置移到数据卷中的 `config.yaml`。自定义引用需要在容器的 `environment` 中显式传递。
+
+未被文件引用的旧应用变量不再覆盖配置，每次启动会告警其名称。安装输入与生效配置一致时不告警。重启不会再次升级 v2 文件。v2 中的拼写错误、旧键和已删除键会使启动失败，并给出已知的改名或删除提示。
+
+新安装的数据库最大连接数为 256、最大空闲连接数为 128，Redis 最小空闲连接数为 128，OpenAI compact-model 覆盖为空。它们采用代码默认值，不再继承旧 Compose 中的 `DATABASE_MAX_OPEN_CONNS=50`、`DATABASE_MAX_IDLE_CONNS=10`、`REDIS_MIN_IDLE_CONNS=10` 和 `GATEWAY_OPENAI_COMPACT_MODEL=gpt-5.4`。已有部署会在第一次升级时导入当时的值。
+
+`ALIPAY_MOBILE_PRECREATE_DEEP_LINK` 环境覆盖已删除，管理员应在支付设置中核对该开关。`GEMINI_CLI_OAUTH_CLIENT_SECRET` 原本不会覆盖内置密钥，现已删除。时间、大小和所属模块的完整新名称见 [配置示例](../../deploy/config.example.yaml)；升级规则见[配置版本](../interfaces/configuration.md#config_versioning)。
+
+回退前停止新进程，将原始 `config.yaml.v1.bak` 恢复为配置文件，再启动旧二进制并保留旧部署的环境变量。旧二进制不认识 v2 的新键和 `${VAR}`。数据库与业务数据的回退仍遵守本页各迁移的独立要求。
+
+## 迁移 308：用户专属余额充值倍率
+
+迁移为 users 增加可空的双精度浮点字段 `balance_recharge_multiplier`，现有用户保留 NULL 并继续使用全局倍率。数据库约束拒绝非正数、NaN 和无穷值。升级后验证用户设置、清空、列表排序和充值到账金额，历史订单金额保持原样。
+
+前后端整体更新后再设置专属倍率。旧二进制会忽略用户覆盖值，新订单恢复采用全局倍率；需要回退时先停止充值入口并核对用户条款，保留新增列及原订单数据，不能只回退二进制后继续按专属倍率对外展示。
+
 ## 迁移 307：插件测试安装与归档目录
 
 迁移为当前和上一包分别保存 `ignore_host_version`，现有记录默认为 false。前后端一起更新后，安装审阅可选择忽略网关版本要求和强制覆盖；权限、协议、平台与包完整性继续校验。
