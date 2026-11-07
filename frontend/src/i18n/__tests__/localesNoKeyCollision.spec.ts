@@ -20,6 +20,16 @@ import zhCommon from '../locales/zh/common'
 import zhDashboard from '../locales/zh/dashboard'
 import zhLanding from '../locales/zh/landing'
 import zhMisc from '../locales/zh/misc'
+import ruAdminProviders from '../locales/ru/admin/providers'
+import ruAdminPricing from '../locales/ru/admin/pricing'
+import ruAdminOps from '../locales/ru/admin/ops'
+import ruAdminOverview from '../locales/ru/admin/overview'
+import ruAdminResources from '../locales/ru/admin/resources'
+import ruAdminSettings from '../locales/ru/admin/settings'
+import ruCommon from '../locales/ru/common'
+import ruDashboard from '../locales/ru/dashboard'
+import ruLanding from '../locales/ru/landing'
+import ruMisc from '../locales/ru/misc'
 
 // localesNoKeyCollision.spec.ts checks catalog namespace assembly and selected
 // provider translation paths. Object spreads can replace earlier keys silently,
@@ -54,6 +64,7 @@ function collisions(modules: Modules): string[] {
 const roots: Record<string, Modules> = {
   zh: { landing: zhLanding, common: zhCommon, dashboard: zhDashboard, misc: zhMisc },
   en: { landing: enLanding, common: enCommon, dashboard: enDashboard, misc: enMisc },
+  ru: { landing: ruLanding, common: ruCommon, dashboard: ruDashboard, misc: ruMisc },
 }
 
 // admins groups administrator catalog fragments checked for duplicate namespaces
@@ -66,6 +77,14 @@ const admins: Record<string, Modules> = {
     resources: zhAdminResources,
     ops: zhAdminOps,
     settings: zhAdminSettings,
+  },
+  ru: {
+    overview: ruAdminOverview,
+    channels: ruAdminPricing,
+    providers: ruAdminProviders,
+    resources: ruAdminResources,
+    ops: ruAdminOps,
+    settings: ruAdminSettings,
   },
   en: {
     overview: enAdminOverview,
@@ -108,6 +127,7 @@ describe('provider scheduling threshold locale hierarchy', () => {
   it.each([
     ['zh', zhAdminProviders.providers],
     ['en', enAdminProviders.providers],
+    ['ru', ruAdminProviders.providers],
   ] as const)('%s keeps threshold form keys outside status', (_locale, messages) => {
     const record = messages as unknown as Record<string, unknown>
     const status = record.status as Record<string, unknown>
@@ -151,6 +171,7 @@ describe('advanced scheduler diagnostic locale keys', () => {
   it.each([
     ['zh', zhAdminProviders.providers],
     ['en', enAdminProviders.providers],
+    ['ru', ruAdminProviders.providers],
   ] as const)('%s translates every diagnostic setting', (_locale, messages) => {
     const settingNames = (
       messages as unknown as {

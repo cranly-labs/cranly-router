@@ -7,6 +7,12 @@ may contain the other quote character, an escaped quote, or a Vue I18n
 placeholder with braces. A regex over the raw text mis-reads such a value as a
 nested object and silently corrupts every key after it.
 
+Both walks skip a string literal whole once they know it is a value rather than
+a key. Braces inside one are text: a message may carry a JSON example such as a
+Claude Code system-block list, which holds more opening than closing braces, and
+counting them as structure would shift every later key onto the wrong nesting
+level.
+
 Two entry points are provided. `extract` returns ordered key paths with their
 source text, which is what a translation pass consumes. `render` writes a
 catalog back in the source layout, which is what keeps a regenerated file
@@ -111,7 +117,9 @@ def extract(path):
             i += 1
             continue
         # A key is an identifier or a quoted string, each followed by a colon.
-        if c in "'\"":
+        # A string that is not followed by one is a value, and skipping it whole
+        # keeps any braces inside it from being read as structure.
+        if c in "'\"`":
             key, j = read_value(src, i)
             k = j
             while k < n and src[k] in " \t":
@@ -137,7 +145,9 @@ def extract(path):
                 continue
         while i < n and src[i] in " \t\r\n":
             i += 1
-        if i < n and src[i] in "'\"":
+        # A template literal is a message too; it may carry a JSON example whose
+        # braces would otherwise be read as nesting.
+        if i < n and src[i] in "'\"`":
             value, i = read_value(src, i)
             pairs.append((".".join(stack + [key]), value))
             continue
