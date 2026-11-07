@@ -166,6 +166,7 @@ export default {
     updateAvailable: 'A new version is available!',
     releaseNotes: 'Release Notes',
     noReleaseNotes: 'No release notes',
+    noReleaseNotesDesc: 'Release notes are not available for this version yet.',
     viewUpdate: 'View Update',
     viewRelease: 'View Release',
     viewChangelog: 'View Changelog',
@@ -657,6 +658,8 @@ export default {
     amountTooHigh: 'Maximum amount is {max}',
     amountNoMethod: 'No payment method available for this amount',
     rechargeRatePreview: 'Current rate: 1 {currency} = {amount} {unitName}',
+    personalRechargeRateAccessible:
+      'Current personal rate: 1 {currency} = {amount} {unitName}; global rate: {defaultAmount}',
     refundReason: 'Refund Reason',
     refundReasonPlaceholder: 'Please describe your refund reason',
     stripeLoadFailed: 'Failed to load payment component. Please refresh and try again.',
@@ -699,6 +702,9 @@ export default {
       USER_INACTIVE: 'Your account is disabled.',
       BALANCE_PAYMENT_DISABLED: 'Balance recharge has been disabled.',
       INVALID_AMOUNT: 'Invalid amount.',
+      INVALID_CHECKOUT_ORDER_TYPE: 'Invalid checkout order type.',
+      INVALID_CREDITED_AMOUNT:
+        'The credited balance is outside the supported range at this rate. Adjust the payment amount or contact an administrator.',
       INVALID_INPUT: 'Invalid request.',
       PLAN_NOT_AVAILABLE: 'Plan not found or no longer available.',
       GROUP_NOT_FOUND: 'Subscription group is no longer available.',

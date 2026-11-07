@@ -32,7 +32,7 @@ Claude 浏览器 OAuth 从 `https://claude.com/cai/oauth/authorize` 发起授权
 
 ## 协议分派
 
-Anthropic 的报文类型和 Beta 常量在 `protocol/anthropic`，Responses 和 Chat 之间的转换只在 `protocol/bridge` 实现。`gateway/clientmeta` 只解析客户端字符串和版本；CLI 版本的环境变量覆盖、默认 Header 和平台指纹常量在 `upstream/anthropic`，在进程初始化时解析一次。入站许可由调用方判断。
+Anthropic 的报文类型和 Beta 常量在 `protocol/anthropic`，Responses 和 Chat 之间的转换只在 `protocol/bridge` 实现。`gateway/clientmeta` 只解析客户端字符串和版本；`provider.anthropic.claude_cli_version` 覆盖、默认 Header 和平台指纹常量在 `upstream/anthropic`，在进程初始化时解析一次。入站许可由调用方判断。
 
 Anthropic 的原生入口是 `POST /v1/messages` 和 `POST /v1/messages/count_tokens`。客户端也可以从 OpenAI Chat Completions 和 Responses 入口发来请求：处理器先把请求归一化成 Anthropic 格式，每次 attempt 选提供商并转发，再把非流式或 SSE 结果转回客户端的协议。分组是否开放这三个入口，由分组的 `allowed_protocols` 决定，见[统一协议能力](protocol_capabilities.md)。被关闭的协议，在读取正文和提供商调度之前，就返回对应客户端格式的 `403`，不会产生上游 attempt 或结算。
 
@@ -45,6 +45,8 @@ API Key、OAuth 和 Setup Token 走 Anthropic 的 HTTP 路径；Bedrock 有单�
 Messages 上游转 Responses 或 Chat Completions 时，流式和非流式客户端共用 SSE 帧解析。转换器按空行划分事件并合并多行 `data:`，支持省略 `event:`、冒号后无空格和帧内注释。事件类型优先读取 JSON 的 `type`，缺失时读取 `event:`。末尾没有空行时，正常 EOF 会交付该帧。连接异常时，完整 JSON 仍用于读取 usage 和停止原因，截断 JSON 则丢弃，读取错误随结果返回。读取失败且尚未收到停止原因时，流式响应发送协议错误事件，非流式响应返回 502。文本、工具调用和 usage 在解析后进入各自的转换流程。
 
 单帧累计大小使用部署配置的 `MaxLineSize`，未配置时为 500 MiB。转换器在缓存每行之前累计字节数，data、event、注释和换行符均计入限制，空行结束帧后重置。超限时释放帧缓冲并返回错误，已读取的用量随错误结果保留。 HTTP 输出层在完整 JSON 或流式终态写出成功后标记交付状态，外层据此跳过补发错误。读取错误继续返回给日志和用量处理，调用方可用 `errors.Is` 检查原始错误。
+
+转换读取器先归一化兼容缓存别名和 `cache_creation` 的 5 分钟、1 小时分档，再把累计用量交给客户端转换与计费。只有缓存读取或写入、普通输入与输出都为零的观察同样有效；没有正数写入总量时由已报告分档补齐，已有聚合数不再与分档相加。OpenAI 输出的总输入包含普通输入、缓存读取和缓存写入，详见[客户端用量与缓存](protocol_capabilities.md#client_usage_cache)。
 
 Responses 请求转换成 Anthropic Messages 时，只发送 Anthropic 入站协议认识的内容块。OpenAI 的 `reasoning`、`reasoning_text`、未知的专有分片、空内容的消息和纯空白的文本块会被过滤；空白文本和合法的图片在一起时，只删掉坏的文本，图片保留。`function_call` 和 `function_call_output` 仍按调用 ID 转成相邻的 `tool_use` 和 `tool_result`，过滤之后，工具调用的配对、角色交替和历史顺序都保持完整。
 
@@ -77,7 +79,7 @@ Claude Code-only 约束在 CLI UA 之后，校验必需的 Header、metadata 和
 
 Auto mode 的安全分类请求，可以在监视器提示词前后带上独立的会话上下文块。校验器遍历所有文本 system 块，查找同时满足固定前缀、最小长度和全部结构标记的提示词；附加的上下文不会导致误拒，但光有上下文块也通不过校验。
 
-Messages 和 CountTokens 的 OAuth 出站请求里，`x-anthropic-billing-header` 的 `cc_version` 需要和最终的 User-Agent 一致。开启 Claude Code 伪装时，使用运行时的 CLI 默认头（包括合法的 CLI 版本环境变量覆盖），即使没有提供商指纹服务、或者指纹统一功能被关闭，也要同步版本；普通的指纹转发使用提供商缓存的 UA。三位十六进制的指纹后缀由版本和用户消息计算得出，版本同步时要重新计算，重复处理的结果相同，用户消息保持不变；这一步在构造最终的出站请求体之前完成。
+Messages 和 CountTokens 的 OAuth 出站请求里，`x-anthropic-billing-header` 的 `cc_version` 需要和最终的 User-Agent 一致。开启 Claude Code 伪装时，使用运行时的 CLI 默认头（包括合法的 CLI 版本配置覆盖），即使没有提供商指纹服务、或者指纹统一功能被关闭，也要同步版本；普通的指纹转发使用提供商缓存的 UA。三位十六进制的指纹后缀由版本和用户消息计算得出，版本同步时要重新计算，重复处理的结果相同，用户消息保持不变；这一步在构造最终的出站请求体之前完成。
 
 这些功能是否启用，可能来自全局运行设置、分组或提供商的 extra。各层的分工见[网关策略控制](../domains/gateway_policy_controls.md)。
 

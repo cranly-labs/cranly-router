@@ -1,25 +1,9 @@
 # =============================================================================
-# Docker build context ignore rules
+# .dockerignore selects source inputs for TokenRouter image builds. Local data,
+# credentials, and deployment tooling are excluded from the build context;
+# the runtime entrypoint and legal documents remain available to the Dockerfiles
+# that copy them into build stages.
 # =============================================================================
-# Consumed by docker build with the repository root as the context:
-#
-#   docker build -f docker/Dockerfile.hardened .
-#
-# Docker only reads .dockerignore from the build context root, so this file is
-# authoritative. docker/.dockerignore documents the rationale for the hardened
-# rule set and is kept in sync with the block below.
-#
-# Docker evaluates rules in order and the last match wins, so the re-includes
-# near the end name exact paths rather than whole trees. Naming a tree such as
-# "!frontend/" would pull host node_modules back into the context.
-#
-# Paths the build consumes and that must stay in context:
-#   .node-version, frontend/, backend/, docs/legal/, plugin-sdk/,
-#   backend/internal/pkg/locale/*.json, docker/entrypoint.sh
-# =============================================================================
-
-# --- Upstream baseline rules -------------------------------------------------
-
 
 # Git
 .git
@@ -28,7 +12,6 @@
 
 # Documentation
 *.md
-!deploy/DOCKER.md
 docs/
 # admin-compliance gate 的 LegalDocumentView.vue 构建时会导入 docs/legal/*.md?raw。
 # docs/ 其他内容仍排除，只把法律文档子树放入 Docker 构建上下文。
@@ -86,13 +69,9 @@ tmp/
 temp/
 *.tmp
 
-# Deploy files (not needed in image)
-deploy/install.sh
-deploy/tokenrouter.service
-deploy/tokenrouter-sudoers
-deploy/data/
-deploy/postgres_data/
-deploy/redis_data/
+# Only the runtime entrypoint is consumed from the deployment directory.
+deploy/*
+!deploy/docker-entrypoint.sh
 
 # GoReleaser
 .goreleaser.yaml
@@ -114,147 +93,3 @@ backend/data/
 .agents/
 refactor/
 output/
-
-# --- Hardened downstream rules -----------------------------------------------
-
-# -----------------------------------------------------------------------------
-# VCS metadata
-# -----------------------------------------------------------------------------
-.git
-.gitignore
-.gitattributes
-.gitmodules
-.githooks/
-upstream.git/
-*.orig
-*.rej
-
-# -----------------------------------------------------------------------------
-# CI metadata
-# -----------------------------------------------------------------------------
-.github/
-.gitlab-ci.yml
-.circleci/
-.goreleaser.yaml
-.goreleaser.simple.yaml
-.golangci-version
-.govulncheck-version
-.agents/
-AGENTS.md
-BRANDING.md
-BRANDING_EN.md
-README.md
-README_ZH.md
-LICENSE
-Makefile
-
-# -----------------------------------------------------------------------------
-# Documentation (the legal subtree is re-included at the bottom)
-# -----------------------------------------------------------------------------
-docs/
-**/*.md
-
-# -----------------------------------------------------------------------------
-# Editor and IDE files
-# -----------------------------------------------------------------------------
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-*.sublime-project
-*.sublime-workspace
-
-# -----------------------------------------------------------------------------
-# OS metadata
-# -----------------------------------------------------------------------------
-.DS_Store
-.DS_Store?
-._*
-Thumbs.db
-Desktop.ini
-
-# -----------------------------------------------------------------------------
-# Installed dependencies and build output (rebuilt inside the image)
-# -----------------------------------------------------------------------------
-# These are the high-value exclusions: host node_modules trees and previous
-# build output must never enter the build context.
-node_modules/
-**/node_modules/
-frontend/node_modules/
-plugin-sdk/**/node_modules/
-frontend/dist/
-plugin-sdk/**/dist/
-backend/vendor/
-dist/
-build/
-coverage/
-.nyc_output/
-
-# -----------------------------------------------------------------------------
-# Tests, fixtures and local verification binaries
-# -----------------------------------------------------------------------------
-*_test.go
-**/*.test.js
-**/*.spec.js
-**/*.test.ts
-**/*.spec.ts
-backend/bin/
-backend/server
-backend/*.test
-backend/data/
-testdata/
-output/
-
-# -----------------------------------------------------------------------------
-# Environment and local configuration
-# -----------------------------------------------------------------------------
-# Example files are documentation and stay in the context; real environment
-# files never do.
-.env
-.env.*
-config.yaml
-config.local.yaml
-
-# -----------------------------------------------------------------------------
-# Logs and temporary files
-# -----------------------------------------------------------------------------
-*.log
-logs/
-tmp/
-temp/
-*.tmp
-
-# -----------------------------------------------------------------------------
-# Deployment runtime data (populated at runtime on the host or in volumes)
-# -----------------------------------------------------------------------------
-deploy/data/
-deploy/postgres_data/
-deploy/redis_data/
-deploy/install.sh
-deploy/tokenrouter.service
-deploy/tokenrouter-sudoers
-
-# -----------------------------------------------------------------------------
-# Local agent and planning artifacts
-# -----------------------------------------------------------------------------
-.claude/
-CLAUDE.md
-issues/
-refactor/
-
-# -----------------------------------------------------------------------------
-# Re-includes: exact paths the build needs
-# -----------------------------------------------------------------------------
-# Each entry names a specific file or directory that an earlier broad rule
-# would otherwise drop. Do not replace these with whole-tree negations, and do
-# not add a directory that contains node_modules.
-!.node-version
-!docs/legal/
-!docs/legal/**
-!docker/entrypoint.sh
-# Keep the annotated environment templates in the context: they are small
-# documentation artifacts that operators copy out of the repository.
-!.env.example
-!.env.*.example
-!deploy/coolify/.env.example

@@ -303,7 +303,7 @@ Testcontainers 的启动函数可能同时返回已创建的容器和错误。�
 | go-integration | 安装 PostgreSQL 18 客户端，再执行 `make test-integration` |
 | frontend | `make lint-frontend`、`make test-frontend` |
 | build | `make build`、`make test-embed` |
-| scripts | 在 macOS 上执行 `make test-scripts`，覆盖系统自带的 Bash 3.2 和 BSD `stat`。宿主的 macOS runner 是 GitHub 上最紧张的资源池，而这个 job 拿到 runner 后不到一分钟就跑完，因此它单独声明了按排队时间预留的 `timeout-minutes`；沿用默认值会在等待期间取消 job，把没有运行过的检查报成代码失败 |
+| scripts | 在 macOS 上执行 `make test-scripts`，覆盖系统自带的 Bash 3.2 |
 | installer | `make test-installer`，Linux 安装器依赖 Bash 4+ 和 `sha256sum` |
 
 workflow 设置 `GOFLAGS=-count=1`，每次重新执行 Go 测试。同一分支推送新提交时，还在运行的旧检查会被取消。失败原因看对应 job 的日志，`go test` 在输出末尾列出失败的测试和断言。
@@ -429,34 +429,7 @@ DOMPurify 用于 Markdown 页面、公告、支付说明和 SVG 图标的内容�
 
 同步之后，只检查 `git diff upstream/...` 不足以证明行为正确，还要核对本 fork 的迁移顺序、默认配置、i18n、生成文件、部署样例、文档链接和安全检查。fork 已有的修改，不能为了减少冲突而悄悄回退。
 
-### 自动化流程
-
-`.github/workflows/upstream-sync.yml` 按 nightly 计划、手动 dispatch 和上游发布事件运行，依次执行四个 job：
-
-1. `sync` 把 vendored 源码推进到上游快照，并写出 `sync-report.json`。读取 `preserveLocalPaths` 时，上游若同时修改了某个保留路径，脚本以非零状态退出并记录 `conflict`。
-2. 快照干净时，`sync` job 内的自动合并步骤以 squash 方式合入 main 并删除分支；`allowAutomaticMerge` 控制这一行为。仓库开启了分支保护、要求人工 approve 时，这一步会保留 PR 等人工处理，并输出警告而不是失败。
-3. `release-tag` 在合并落地后读取 `backend/cmd/server/VERSION` 和 `.github/custom-revision`，折算出版本号，把计数器提交进 main，再打上注释 tag 并触发镜像构建。
-4. `mirror-tags` 和 `dispatch-builds` 另外把上游的历史 release tag 镜像进来，每次最多取最新的 `TAG_LIMIT` 个，为每个 tag 触发一次构建。
-
-合并后的判断不能依赖 `changed`。它来自 `git add -A` 之后与 HEAD 的比较，无法区分上游源码变化和本流程自己重写的记录文件，所以下游 job 一律以 `sync-report.json` 的 `status` 为准。
-
-tag 必须打在 main 的合并提交上。镜像构建按 ref 检出源码，tag 若留在已删除的同步分支上，构建会取不到对应的提交。
-
-自动合并依赖 GitHub Actions 能创建 pull request。仓库勾选 **Allow GitHub Actions to create and approve pull requests**（`Settings → Actions → General`）之前，`gh pr create` 会以 `GitHub Actions is not permitted to create or approve pull requests` 失败，同步的推进就停在本地分支上。这一项只能在仓库设置里开启，workflow 无法自行声明。
-
-`mirror-tags` 需要仓库级的 **Actions 权限**：GitHub 不允许 workflow 令牌创建树上含 `.github/workflows/` 的 tag，除非为 GitHub Actions 应用授予 `Workflows` 权限。缺少该权限时，push 会被拒绝并提示 `refusing to allow a GitHub App to create or update workflow ...`，镜像里一个 tag 都留不下，后续的镜像构建和 release 全部跳过。这一项无法在 workflow 文件里声明，只能由仓库管理员在组织或仓库的 Actions 设置中开启。
-
-只读令牌能读上游，但推送镜像 tag、提交版本计数器、创建 release tag 都需要写权限。仓库的默认 workflow 令牌权限设为只读时，上述 push 同样会被拒绝。
-
 ## 发布
-
-### 下游版本号
-
-本发行版的版本号是 `<上游版本>-custom.<修订号>`，例如 `0.6.3-custom.1`。`-custom.` 之前的部分来自 vendored 的 `backend/cmd/server/VERSION`，同步流程会随上游一起刷新它；修订号记录在下游自己的 `.github/custom-revision` 里，放在 `backend/` 之外，同步不会重置它。上游版本变化时修订号回到 1，因此 `0.6.3-custom.2` 表示在 upstream 0.6.3 之上的第二个下游版本。
-
-`.github/scripts/version-bump.sh` 负责折算：默认只打印结果，`--write` 才更新计数器。同一个 upstream 版本下重复发版会递增，换了 upstream 版本则重新从 1 开始。计数器必须先提交进 main 再打 tag，否则下一次运行会读到旧值并重复生成已经存在的 tag。
-
-`vX.Y.Z-custom.N` 是合法且完整的 Docker tag；`+` 在 Docker tag 中不允许，所以采用连字符而不是 semver 的 build metadata 写法。release 说明会去掉 `-custom.N` 再回查上游 tag，因此镜像仍然能追溯到它基于的上游发布。
 
 项目内置 [tr-release 技能](../../.agents/skills/tr-release/SKILL.md)，用于准备版本范围、核对发布说明和发布验收。Release 描述默认展示英文；技能在发布流程完成后，将完整的简体中文译文追加到描述最底部的「中文翻译」折叠区，覆盖更新说明、安装和文档部分。在仓库根目录运行 `python3 .agents/skills/tr-release/scripts/tr_release.py --prepare` 获取待发布范围。
 

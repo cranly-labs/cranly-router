@@ -7,6 +7,7 @@
 - [全局入口](#全局入口)：所有请求共同经过的处理顺序。
 - [路由族](#路由族)：URL 前缀、认证方式和负责的模块。
 - [支付管理恢复](#payment_admin_recovery)：订单强制过期和退款查单。
+- [用户专属充值倍率](#personal_recharge_multiplier_api)：管理员覆盖值、排序和用户充值预览。
 - [身份登录接口](#身份登录接口)：修改 OAuth start、人机验证和 One Tap 时读取。
 - [创作台接口](#创作台接口)：修改工作区、任务和输出交付时读取。
 - [提供商管理接口](#提供商管理接口)：修改批量管理、测试、诊断和导入时读取。
@@ -101,6 +102,17 @@ Markdown 正文需要 JWT，并且菜单可见；管理员页面只对管理员�
 - `POST /api/v1/subscriptions/:id/revoke` 需要用户 JWT。服务端只接受当前用户本人的、处于 `active`、并且最高层有限额度已经用完的订阅。成功时在事务里撤销当前记录，让同一套餐的下一份 pending 订阅提前生效，并自动改绑指定了这个订阅的 Key。
 - 成功响应的 `data` 是 `{ revoked_subscription_id, replacement_subscription_id, rebound_api_key_count }`；没有接续的订阅时，`replacement_subscription_id` 为 `null`，改绑数量为 `0`。
 - 订阅不属于当前用户或不存在，返回 `SUBSCRIPTION_NOT_FOUND`；不是当前 active 的记录，返回 `SUBSCRIPTION_NOT_ACTIVE`（409）；最高层额度还有剩余或套餐不限额，返回 `SUBSCRIPTION_QUOTA_NOT_EXHAUSTED`（409）。撤销不退款，用户端也没有恢复接口。
+
+<a id="personal_recharge_multiplier_api"></a>
+## 用户专属充值倍率
+
+管理员用户列表、详情和更新响应包含可空数字 `balance_recharge_multiplier`。`PUT /api/v1/admin/users/:id` 省略该字段时保留原值，传 null 时清除覆盖，传有限正数时设置覆盖；其他数值返回 `INVALID_BALANCE_RECHARGE_MULTIPLIER`。普通用户的资料更新没有这个可写字段。
+
+`GET /api/v1/admin/users` 支持 `sort_by=balance_recharge_multiplier` 和 `sort_order=asc|desc`，数值排序后按同方向用户 ID 排序，NULL 始终末尾。MCP 的 `users.update` 使用相同字段与语义。
+
+`GET /api/v1/payment/checkout-info` 需要当前用户身份，返回 `balance_recharge_multiplier`（实际倍率）、`default_balance_recharge_multiplier`（全局倍率）和 `user_balance_recharge_multiplier`（可空的专属倍率）。下单接口不接收用户指定的倍率，服务端读取当前条款。资金快照规则见[用户专属充值倍率](../domains/payments_and_entitlements.md#personal_recharge_multiplier)。
+
+创建订单的 `order_type` 省略或空串表示 `balance`，其他有效值只有 `subscription`。未知值返回 `INVALID_CHECKOUT_ORDER_TYPE`。余额到账金额舍入后为零、非有限值或达到 1 万亿时，返回 `INVALID_CREDITED_AMOUNT`；两类错误均在订单保存和渠道支付创建之前返回 HTTP 400。
 
 <a id="payment_admin_recovery"></a>
 ## 支付管理恢复
@@ -329,6 +341,8 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 `timings` 保存当次模式、上游流式与完成状态、usage 完整性，以及 `values` 中的毫秒观测。事件时刻以所属逻辑请求的入口为参考；`upstream_started_ms`、`upstream_first_event_ms`、`upstream_first_output_ms`、`upstream_last_output_ms` 和 `upstream_finished_ms` 属于产生该条 usage 的同一次尝试。首包和首字分别减去本次上游开始时刻，排队和之前提供商的失败不会进入该提供商的延迟。`duration_ms` 是该次上游尝试耗时，请求摘要里的总耗时则覆盖整个逻辑请求。
 
 `request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 分解 HTTP 首次准入前的耗时。原始 Body 的读取才计入读取时间，容量检查执行时间属于其他处理，等待只统计检查之间的排队。`retry_provider_slot_wait_ms` 单列后续等待。`provider_slot_acquired_ms` 是首次取得执行资格的时刻；它与连接、发送、响应和输出事件都不能作为时长相加。
+
+启用 HTTP 文本计时的请求在尝试适配器接收调度器已取得的槽位或排队取得槽位后记录准入，先于后续的粘性绑定和上游执行。首次成功将 `timing_admitted` 置为 `1`，冻结前述四段耗时和槽位时刻；重试取得槽位不会移动这个时刻。始终未取得槽位的请求保留 `timing_admitted=0`，不生成槽位时刻。原生 Gemini 和 Antigravity 专用入口遵循同一规则。
 
 首事件允许正常元数据，排除心跳和空的保活 delta。有效内容包含正文、明文思考、工具名称及实际参数，排除单独的角色、ID、空占位、签名和密文；重复的完整终态不延长内容输出区间。`first_visible_output_ms` 表示成功写入最终下游 writer，`first_downstream_flush_ms` 表示包含上游事件的首次 HTTP Flush，可由元数据触发。二者不证明客户端已经收到或渲染内容，本地产生的错误与排队心跳不建立这些交付指标。
 

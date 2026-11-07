@@ -2,6 +2,19 @@
 
 set -euo pipefail
 
+# apple-container.sh manages TokenRouter and its PostgreSQL and Redis
+# dependencies through Apple Container. Resources are identified by stack names
+# and ownership labels before lifecycle commands can modify them. Existing
+# legacy stacks keep their original volume names, and mixed current and legacy
+# resources stop the operation. A shared lock prevents concurrent invocations
+# of current and legacy scripts from modifying the same deployment.
+#
+# Environment files carry connection settings and secrets with restricted
+# permissions. Dependency containers start before the application, which is
+# recreated with their current addresses after a restart. Stopping or destroying
+# containers preserves persistent volumes unless the operator explicitly requests
+# volume removal and confirms that destructive operation.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${TOKENROUTER_ENV_FILE:-${SUB2API_ENV_FILE:-${SCRIPT_DIR}/.env}}"
 
@@ -17,7 +30,8 @@ REDIS_VOLUME="tokenrouter-apple-redis-data"
 PLATFORM="linux/arm64"
 
 TEMP_DIR=""
-# 兼容旧脚本的互斥锁，避免两种入口同时修改同一旧栈。
+# Share the legacy script lock so old and new entrypoints cannot modify the
+# same stack concurrently.
 LOCK_DIR="${TMPDIR:-/tmp}/sub2api-apple-container.lock"
 STACK_NAME="tokenrouter"
 LOCK_ACQUIRED=false
@@ -193,7 +207,12 @@ assert_resource_owned() {
     fi
 }
 
-# 依据资源名和归属标签接管旧栈，不重命名或复制持久卷。
+# select_stack_identity selects resource names and the ownership label for the
+# detected stack. Call it before checking individual resource ownership.
+# Existing legacy resources keep their names and persistent volumes; the
+# function never renames or copies them. A mixture of current and legacy
+# resource names stops the operation because choosing either identity could
+# direct later lifecycle commands at only part of the deployment.
 select_stack_identity() {
     local resource_type resource_name resources new_found=false old_found=false
     for resource_type in container network volume; do
@@ -487,11 +506,45 @@ EOF
     chmod 600 "${POSTGRES_ENV_FILE}" "${POSTGRES_PROBE_ENV_FILE}" "${REDIS_ENV_FILE}"
 }
 
+# prepare_app_environment writes the private environment passed to the application.
+# Dependency addresses must already be known. Only installation inputs, runtime
+# proxy settings, and potential explicit secret references are copied from the
+# deployment file; unrelated service settings stay outside the application.
+#
+# Container-owned addresses and ports are appended after those inputs so the
+# generated environment uses this stack's discovered dependency endpoints. The
+# source deployment file remains unchanged, and the script's temporary-directory
+# cleanup removes this draft after the container receives its environment.
 prepare_app_environment() {
     [[ -n "${POSTGRES_ADDRESS}" && -n "${REDIS_ADDRESS}" ]] || \
         die "Dependency network addresses are not available."
 
-    cp "${ENV_FILE}" "${APP_ENV_FILE}"
+    # Keep deployment-only and retired application settings outside the process.
+    # Named secrets remain available for explicit references in migrated files.
+    : >"${APP_ENV_FILE}"
+    local name value
+    for name in \
+        ADMIN_EMAIL ADMIN_PASSWORD ANTIGRAVITY_OAUTH_CLIENT_SECRET \
+        AUTO_SETUP CONFIG_FILE DATABASE_DBNAME \
+        DATABASE_HOST DATABASE_PASSWORD DATABASE_PORT \
+        DATABASE_SSLMODE DATABASE_USER DATA_DIR \
+        DINGTALK_CONNECT_CLIENT_SECRET GEMINI_OAUTH_CLIENT_SECRET GITHUB_OAUTH_CLIENT_SECRET \
+        GOMEMLIMIT GOOGLE_OAUTH_CLIENT_SECRET HTTPS_PROXY \
+        HTTP_PROXY JWT_EXPIRE_HOUR JWT_SECRET \
+        LINUXDO_CONNECT_CLIENT_SECRET NO_PROXY OIDC_CONNECT_CLIENT_SECRET \
+        PAYMENT_RESUME_SIGNING_KEY PLUGINS_DOWNLOAD_PROXY PLUGINS_PLUGIN_HTTP_PROXY \
+        REDIS_DB REDIS_ENABLE_TLS REDIS_HOST \
+        REDIS_PASSWORD REDIS_PORT REDIS_USERNAME \
+        SERVER_HOST SERVER_MODE SERVER_PORT \
+        SETUP_MIGRATION_TIMEOUT_SECONDS SKIP_SETUP TOTP_ENCRYPTION_KEY \
+        TZ UPDATE_GITHUB_TOKEN UPDATE_PROXY_URL \
+        WECHAT_CONNECT_APP_SECRET WECHAT_CONNECT_MOBILE_APP_SECRET WECHAT_CONNECT_MP_APP_SECRET \
+        WECHAT_CONNECT_OPEN_APP_SECRET WECHAT_OAUTH_MP_APP_SECRET WECHAT_OAUTH_OPEN_APP_SECRET \
+        YESCAPTCHA_API_KEY YESCAPTCHA_CLIENT_KEY
+    do
+        value="$(read_env_value "${name}")"
+        printf '%s=%s\n' "${name}" "${value}" >>"${APP_ENV_FILE}"
+    done
     cat >>"${APP_ENV_FILE}" <<EOF
 
 AUTO_SETUP=true
@@ -507,6 +560,7 @@ REDIS_HOST=${REDIS_ADDRESS}
 REDIS_PORT=6379
 REDIS_PASSWORD=${REDIS_PASSWORD}
 DATA_DIR=/app/storage/data
+TZ=${TZ_VALUE}
 EOF
     chmod 600 "${APP_ENV_FILE}"
 }
@@ -712,7 +766,10 @@ cmd_up() {
     POSTGRES_ADDRESS="$(container_ipv4_address "${POSTGRES_CONTAINER}")"
     REDIS_ADDRESS="$(container_ipv4_address "${REDIS_CONTAINER}")"
     prepare_app_environment
-    # 依赖服务的轻量虚拟机重启后 IP 可能变化。
+    # Dependency virtual machines can receive new IP addresses after
+    # restarting, so recreate the application with the addresses resolved
+    # above. Auto-setup and v1 migration retain DATABASE_HOST and REDIS_HOST
+    # references so the application loads these addresses on subsequent starts.
     delete_container_if_present "${APP_CONTAINER}"
     create_app_container
     start_app

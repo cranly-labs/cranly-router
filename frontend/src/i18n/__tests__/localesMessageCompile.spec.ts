@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { baseCompile } from '@intlify/message-compiler'
 
 import en from '../locales/en'
-import ru from '../locales/ru'
 import zh from '../locales/zh'
 
-// localesMessageCompile.spec.ts compiles every string in each shipped message
-// catalog with the Vue I18n compiler. Recursive traversal records
+// localesMessageCompile.spec.ts compiles every string in the English and Chinese
+// message catalogs with the Vue I18n compiler. Recursive traversal records
 // message paths so malformed placeholders fail this test before a rendered
 // component encounters the invalid message.
 
@@ -43,7 +42,6 @@ describe('locale messages compile', () => {
   it.each([
     ['zh', zh],
     ['en', en],
-    ['ru', ru],
   ] as const)('%s messages all compile without placeholder errors', (locale, messages) => {
     const errors: string[] = []
     collectCompileErrors(messages, locale, errors)

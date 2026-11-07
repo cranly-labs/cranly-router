@@ -177,6 +177,21 @@ export default {
       bucketLimitHint: '如果窗口和粒度会产生超过 720 根柱子，后端会自动放大单柱时间窗口。',
     },
     features: {
+      bstats: {
+        title: 'bStats',
+        description:
+          '将基础运行信息发送至 bStats，帮助了解 TokenRouter 的安装与版本分布，为后续改进提供参考。默认开启，可随时关闭。',
+        enabled: '启用 bStats',
+        dataHint:
+          '上报随机实例标识、操作系统及版本、架构、CPU 核数，以及 TokenRouter 和 Go 版本。bStats 根据上报连接推导国家分布，不上报账户、API Key、提示词、请求、用量或支付数据。',
+        viewStatistics: '查看公开统计',
+        logErrors: '记录上报错误',
+        logErrorsHint: '将上报失败信息写入服务端日志，默认关闭。',
+        logSentData: '记录上报内容',
+        logSentDataHint: '将上报 JSON 写入服务端日志，其中包含持久保存的实例 UUID，默认关闭。',
+        logResponse: '记录 bStats 响应',
+        logResponseHint: '将 bStats 成功响应的内容写入服务端日志，默认关闭。',
+      },
       team: {
         title: '团队功能',
         description: '控制用户团队页和管理员团队管理页是否开放。',
@@ -280,7 +295,7 @@ export default {
       totp: '双因素认证 (2FA)',
       totpHint: '允许用户使用 Google Authenticator 等应用进行二次验证',
       totpKeyNotConfigured:
-        '请先在环境变量中配置 TOTP_ENCRYPTION_KEY。使用命令 openssl rand -hex 32 生成密钥。',
+        '请先在 config.yaml 中配置 security.secret_encryption_key。使用命令 openssl rand -hex 32 生成密钥。',
     },
     security: {
       stepUp: '敏感操作二次验证 (step-up 2FA)',
@@ -389,7 +404,7 @@ export default {
       description: '控制 API Key 白/黑名单、操作审计日志与会话 IP/UA 绑定使用哪个客户端 IP 判断',
       trustForwardedIp: '信任反代传递的客户端 IP',
       trustForwardedIpHint:
-        '为保证升级兼容默认开启。开启后 CF-Connecting-IP、X-Real-IP 或 X-Forwarded-For 会直接接管客户端 IP 解析并覆盖 server.trusted_proxies；关闭后严格使用 server.trusted_proxies 配置的 Gin 可信代理链。仅在源站无法被直接访问时开启接管模式。切换会改变现有会话的 IP 指纹。',
+        '为保证升级兼容默认开启。开启后 CF-Connecting-IP、X-Real-IP 或 X-Forwarded-For 会直接接管客户端 IP 解析并覆盖 server.client_ip.trusted_proxies；关闭后严格使用 server.client_ip.trusted_proxies 配置的 Gin 可信代理链。仅在源站无法被直接访问时开启接管模式。切换会改变现有会话的 IP 指纹。',
       forwardedClientIpHeaders: '自定义客户端 IP 请求头',
       forwardedClientIpHeadersHint: '添加 CDN 或反代请求头名称，解析时优先于内置请求头。',
       forwardedClientIpHeadersPlaceholder: 'X-Client-IP',
@@ -827,9 +842,9 @@ export default {
         descriptionPlaceholder: '如：支持 OpenAI 格式请求',
         add: '添加端点',
       },
-      contactInfo: '客服联系方式',
+      contactInfo: '联系方式',
       contactInfoPlaceholder: '例如：QQ: 123456789',
-      contactInfoHint: '填写客服联系方式，将展示在个人资料、顶部用户菜单等位置',
+      contactInfoHint: '填写联系方式，将展示在顶栏的“联系我们”菜单和用户仪表盘中',
       docUrl: '文档链接',
       docUrlHint: '文档网站的链接。留空则隐藏文档链接。',
       docUrlPlaceholder: 'https://docs.example.com',
