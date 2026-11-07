@@ -4,10 +4,12 @@
 # =============================================================================
 # Purpose
 #   Fetches the configured upstream repository and rewrites the local checkout of
-#   the mirror branch so that vendored upstream sources match upstream exactly,
-#   while every path listed under sync.preserveLocalPaths in .upstream-sync.json
-#   keeps the downstream version. Downstream locales are then re-applied to the
-#   shared manifest, which upstream owns but this distribution extends.
+#   the mirror branch so that vendored upstream sources match upstream exactly:
+#   every path upstream carries is taken from upstream, and every path upstream
+#   has deleted is dropped locally. Paths listed under sync.preserveLocalPaths
+#   in .upstream-sync.json keep the downstream version. Downstream locales are
+#   then re-applied to the shared manifest, which upstream owns but this
+#   distribution extends.
 #
 # Contract
 #   - Exits 0 when the branch already matched upstream (no commit created).
@@ -16,6 +18,9 @@
 #     expected to open a conflict pull request instead of merging automatically.
 #   - Merging downstream locales is idempotent and never reports a conflict, so
 #     an upstream manifest edit does not require manual reconciliation.
+#   - A path is deleted only when upstream no longer carries it and this branch
+#     still tracks it. Paths absent from both sides, and paths that exist only in
+#     the working tree, are left alone.
 #
 # Environment
 #   MIRROR_ROOT        repository root (default: git toplevel)
@@ -112,6 +117,8 @@ fi
 # Any preserved path that upstream touched since the merge base forces the
 # conflict path, because the downstream copy would otherwise be overwritten.
 CONFLICTS=()
+# Paths upstream no longer carries, removed above and reported with the advance.
+REMOVED=()
 while IFS= read -r changed; do
     [ -z "$changed" ] && continue
     for kept in "${PRESERVED_PATHS[@]}"; do
@@ -124,11 +131,12 @@ while IFS= read -r changed; do
     done
 done < <(git diff --name-only "$BASE_SHA" "$UPSTREAM_REF")
 
-# Restore upstream-tracked files that exist on the upstream side, plus delete
-# local copies of files upstream removed. Paths missing from upstream are skipped
-# rather than treated as errors: the local branch carries the upstream tree plus
-# the downstream layer, so a path that is absent upstream simply has no
-# counterpart to copy.
+# Make every path that upstream carries match upstream, and drop the local copy
+# of every path upstream has removed. Both halves matter: a file upstream
+# deleted but this branch still carries keeps compiling against a tree it no
+# longer matches, so a dropped feature would leave an orphan that fails the
+# build. Removal is restricted to paths the two trees disagree on, and to paths
+# this branch tracks, so the downstream layer is never touched.
 while IFS= read -r path; do
   [ -z "$path" ] && continue
   # Never touch workflow files or sync metadata from the upstream side; those
@@ -144,11 +152,17 @@ while IFS= read -r path; do
     esac
   done
   [ "$skip" = 1 ] && continue
-  # Skip anything upstream does not actually carry; nothing to copy or delete.
-  if ! git cat-file -e "${UPSTREAM_REF}:${path}" 2>/dev/null; then
+  if git cat-file -e "${UPSTREAM_REF}:${path}" 2>/dev/null; then
+    git checkout "$UPSTREAM_REF" -- "$path"
     continue
   fi
-  git checkout "$UPSTREAM_REF" -- "$path"
+  # Absent upstream. Removing it is right only when this branch still tracks a
+  # file at that path; a path absent from both sides, or one that survives only
+  # in the working tree, is not this loop's to delete.
+  if git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+    git rm -q -f --ignore-unmatch -- "$path"
+    REMOVED+=("$path")
+  fi
 done < <(git diff --name-only --no-renames HEAD "$UPSTREAM_REF")
 
 # Downstream locale entries live in an upstream-owned manifest that the copy
@@ -173,6 +187,11 @@ if [ "${#CONFLICTS[@]}" -gt 0 ]; then
 fi
 
 printf '%s\n' "$UPSTREAM_SHA" >"$STATE_FILE"
+
+if [ "${#REMOVED[@]}" -gt 0 ]; then
+  echo "sync-upstream: removed ${#REMOVED[@]} path(s) upstream no longer carries"
+  printf '  %s\n' "${REMOVED[@]}"
+fi
 
 python3 - "$SYNC_REPORT" "$UPSTREAM_SHA" "$SUCCESS" "${CONFLICTS[@]+"${CONFLICTS[@]}"}" <<'PY'
 import json, sys
