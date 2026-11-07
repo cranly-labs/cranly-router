@@ -6,8 +6,8 @@
 # Modes
 #   scheduled  Nightly fast-forward attempt; opens or refreshes a sync pull
 #              request when upstream advanced.
-#   release    Runs on an upstream tag; mirrors the tag and dispatches the image
-#              build for that revision.
+#   release    Runs on an upstream tag; advances the sources and releases the
+#              resulting revision under a downstream tag.
 #   manual     workflow_dispatch with the option to force a full fetch.
 #
 # Guarantees
@@ -15,6 +15,12 @@
 #   overwritten. When upstream edits one of those paths the job fails its
 #   conflict gate and opens a labelled pull request for manual reconciliation,
 #   so CI keeps the merge blocked until a human resolves it.
+#
+#   Upstream's own release tags are deliberately not mirrored. A mirrored tag
+#   carries upstream's workflow files in its tree, which GitHub refuses to
+#   accept from a workflow token, and a copy of a foreign tag names a release
+#   this distribution does not ship. Each downstream release is tagged on main
+#   by the release-tag job instead.
 # =============================================================================
 
 name: Upstream Sync
@@ -300,64 +306,6 @@ jobs:
             echo "| Conflict | ${{ steps.sync.outputs.conflicted }} |"
             echo "| Auto-merged | ${{ steps.automerge.outputs.merged || 'no' }} |"
           } >>"$GITHUB_STEP_SUMMARY"
-
-  mirror-tags:
-    name: Mirror upstream release tags
-    runs-on: ubuntu-latest
-    needs: sync
-    # Tag mirroring is independent of whether the source snapshot changed: a
-    # manual run or a scheduled sweep must still pick up upstream releases that
-    # were tagged since the last pass. Only a hard failure of the sync job, or a
-    # run that produced no usable revision, skips this.
-    if: >-
-      ${{
-        always() &&
-        needs.sync.result == 'success' &&
-        github.event_name != 'pull_request'
-      }}
-    outputs:
-      tags: ${{ steps.tags.outputs.created }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      # Annotated tags need a committer identity. This job creates its own
-      # checkout, so it inherits no identity from the synchronise job.
-      - name: Configure git identity
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      # The script adds the remote itself when it is absent, so an unconditional
-      # `git remote add` would fail on a runner that already has it configured.
-      - id: tags
-        env:
-          PUSH_TAGS: 'true'
-          # Upstream carries years of release tags. Mirroring the newest few per
-          # run keeps a first sync from queueing an image build for every tag at
-          # once, and later runs continue from the backlog. Set to 0 to mirror
-          # every outstanding tag in one pass.
-          TAG_LIMIT: '5'
-        run: |
-          created="$(bash .github/scripts/sync-tags.sh)"
-          echo "created<<EOF" >>"$GITHUB_OUTPUT"
-          echo "${created}" >>"$GITHUB_OUTPUT"
-          echo "EOF" >>"$GITHUB_OUTPUT"
-
-  dispatch-builds:
-    name: Dispatch release builds
-    runs-on: ubuntu-latest
-    needs: mirror-tags
-    if: ${{ needs.mirror-tags.outputs.tags != '' }}
-    steps:
-      - name: Trigger image build per mirrored tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAGS: ${{ needs.mirror-tags.outputs.tags }}
-        run: |
-          while IFS= read -r tag; do
-            [ -z "${tag}" ] && continue
-            gh workflow run build-images.yml --ref "${tag}" -f release_tag="${tag}"
-          done <<<"${TAGS}"
 
   release-tag:
     name: Tag the released version

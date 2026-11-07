@@ -78,7 +78,6 @@ jobs:
       - name: Dry-run upstream sync resolver
         run: |
           bash -n .github/scripts/sync-upstream.sh
-          bash -n .github/scripts/sync-tags.sh
           bash -n .github/scripts/resolve-version.sh
           version="$(bash .github/scripts/resolve-version.sh)"
           echo "resolved version: ${version}"
