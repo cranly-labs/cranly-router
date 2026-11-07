@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
-      changed: ${{ steps.sync.outputs.changed }}
+      changed: ${{ steps.commit.outputs.changed }}
       upstream_sha: ${{ steps.upstream.outputs.sha }}
       conflicted: ${{ steps.sync.outputs.conflicted }}
       status: ${{ steps.sync.outputs.status }}
@@ -148,19 +148,15 @@ jobs:
           # every later run, because a tracked path ignores its ignore rule.
           git add -A
           git reset -q -- .sync-state sync-report.json 2>/dev/null || true
-          # The two flags answer different questions and are not
-          # interchangeable. "changed" asks whether the branch holds something
-          # the base branch does not, which is what decides if opening or
-          # refreshing the pull request can make progress; comparing against this
-          # branch's own bookkeeping instead would miss an advance a previous run
-          # already committed but never merged. "staged" asks whether this run
-          # produced anything to commit, which is false when the branch already
-          # carries the snapshot and committing would fail on an empty index.
-          if git diff --quiet "origin/${BASE_BRANCH}...HEAD" -- . ':(exclude).sync-state'; then
-            echo "changed=false" >>"$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >>"$GITHUB_OUTPUT"
-          fi
+          # "staged" records whether this run produced a snapshot to commit, and
+          # it is the only gate the commit needs. It is false when the branch
+          # already carries the snapshot, where committing would fail on an empty
+          # index.
+          #
+          # "changed" cannot be computed here. The apply step leaves the snapshot
+          # in the working tree, so HEAD still points at the base branch and a
+          # comparison against it reports no change on every fresh run. It is
+          # computed after the commit, where HEAD holds the snapshot.
           if git diff --cached --quiet; then
             echo "staged=false" >>"$GITHUB_OUTPUT"
           else
@@ -169,32 +165,48 @@ jobs:
           exit 0
 
       - name: Commit synchronised sources
-        if: >-
-          steps.sync.outputs.changed == 'true' &&
-          steps.sync.outputs.staged == 'true'
+        id: commit
+        env:
+          BASE_BRANCH: ${{ env.BASE_BRANCH }}
+          STAGED: ${{ steps.sync.outputs.staged }}
         run: |
-          short="${GITHUB_SHA::7}"
-          # The state file records the upstream revision this branch last
-          # consumed, so it is committed with the snapshot it describes.
-          git add -A
-          # An earlier run committed the per-run report before it was excluded
-          # from the branch, and a tracked path ignores its gitignore entry, so
-          # unstaging it is not enough; it has to leave the index for the ignore
-          # rule to apply again.
-          git rm -q --cached --ignore-unmatch sync-report.json
-          git commit -m "chore(sync): advance vendored upstream to ${short}" \
-                     -m "Automated mirror update produced by .github/workflows/upstream-sync.yml." \
-                     -m "Upstream-Revision: ${{ steps.upstream.outputs.sha }}"
+          if [ "${STAGED}" = "true" ]; then
+            short="${GITHUB_SHA::7}"
+            # The state file records the upstream revision this branch last
+            # consumed, so it is committed with the snapshot it describes.
+            git add -A
+            # An earlier run committed the per-run report before it was excluded
+            # from the branch, and a tracked path ignores its gitignore entry, so
+            # unstaging it is not enough; it has to leave the index for the ignore
+            # rule to apply again.
+            git rm -q --cached --ignore-unmatch sync-report.json
+            git commit -m "chore(sync): advance vendored upstream to ${short}" \
+                       -m "Automated mirror update produced by .github/workflows/upstream-sync.yml." \
+                       -m "Upstream-Revision: ${{ steps.upstream.outputs.sha }}"
+          else
+            # Nothing to commit, so the branch already carried the snapshot. It
+            # may still be unmerged, and the comparison below reports that.
+            echo "branch already carries the snapshot; nothing to commit"
+          fi
+          # HEAD holds the snapshot once the commit above has run, so this
+          # answers whether the branch carries something the base branch does
+          # not. Computing it before the commit would compare the base branch
+          # with itself on every fresh run, because the apply step leaves the
+          # snapshot in the working tree rather than in a commit.
+          if git diff --quiet "origin/${BASE_BRANCH}...HEAD" -- . ':(exclude).sync-state'; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >>"$GITHUB_OUTPUT"
+          fi
 
       - name: Push sync branch
         if: >-
-          steps.sync.outputs.changed == 'true' &&
-          steps.sync.outputs.staged == 'true'
+          steps.commit.outputs.changed == 'true'
         run: |
           git push --force-with-lease origin "${SYNC_BRANCH}"
 
       - name: Open or refresh sync pull request
-        if: steps.sync.outputs.changed == 'true'
+        if: steps.commit.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CONFLICTED: ${{ steps.sync.outputs.conflicted }}
@@ -254,7 +266,7 @@ jobs:
       - name: Merge clean sync automatically
         id: automerge
         if: >-
-          steps.sync.outputs.changed == 'true' &&
+          steps.commit.outputs.changed == 'true' &&
           steps.sync.outputs.status == 'advanced'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -284,7 +296,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Upstream revision | \`${{ steps.upstream.outputs.sha }}\` |"
             echo "| Status | ${{ steps.sync.outputs.status }} |"
-            echo "| Changed | ${{ steps.sync.outputs.changed }} |"
+            echo "| Changed | ${{ steps.commit.outputs.changed }} |"
             echo "| Conflict | ${{ steps.sync.outputs.conflicted }} |"
             echo "| Auto-merged | ${{ steps.automerge.outputs.merged || 'no' }} |"
           } >>"$GITHUB_STEP_SUMMARY"
