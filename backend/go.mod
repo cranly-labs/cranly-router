@@ -5,13 +5,13 @@ go 1.27.3
 require (
 	entgo.io/ent v0.14.5
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/TokenFlux/TokenRouter/plugin-sdk/go v0.2.0
+	github.com/TokenFlux/TokenRouter/plugin-sdk/go v0.2.1
 	github.com/alibabacloud-go/captcha-20230305 v1.1.3
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.1.13
 	github.com/alibabacloud-go/tea v1.3.13
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/alitto/pond/v2 v2.6.2
-	github.com/andybalholm/brotli v1.2.0
+	github.com/andybalholm/brotli v1.2.7
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.25
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.24
@@ -31,7 +31,7 @@ require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/imroc/req/v3 v3.59.0
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.20.2
 	github.com/lib/pq v1.10.9
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/ory/fosite v0.49.0
