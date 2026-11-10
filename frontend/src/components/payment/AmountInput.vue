@@ -1,21 +1,31 @@
 <template>
   <div class="space-y-4">
     <!-- Preset amounts use a button grid under the section heading supplied by the parent. -->
-    <div class="grid grid-cols-3 gap-2 sm:grid-cols-5">
+    <div class="grid grid-cols-3 gap-2">
       <button
         v-for="amt in filteredAmounts"
         :key="amt"
         type="button"
         :aria-pressed="modelValue === amt"
         :class="[
-          'h-9 rounded-control border px-3 text-center text-sm font-medium tabular-nums transition-colors',
+          'relative flex min-h-11 min-w-0 items-center justify-center gap-1 rounded-control border px-1 text-sm tabular-nums sm:text-base',
           modelValue === amt
-            ? 'border-primary-500 bg-primary-500/8 text-primary-600 ring-1 ring-primary-500 dark:text-primary-400'
-            : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-dark-600 dark:bg-dark-950 dark:text-dark-100 dark:hover:border-dark-500',
+            ? 'border-gray-300 bg-gray-50 font-semibold text-gray-900 dark:border-dark-500 dark:bg-dark-700 dark:text-white'
+            : 'border-gray-200 bg-white font-medium text-gray-700 hover:border-gray-300 dark:border-dark-600 dark:bg-dark-950 dark:text-dark-100 dark:hover:border-dark-500',
         ]"
         @click="selectAmount(amt)"
       >
-        {{ amt }}
+        <span class="text-xs text-gray-500 dark:text-dark-300">{{ symbol }}</span>
+        <span>{{ formatNumberLocaleString(amt) }}</span>
+        <!-- The corner check leaves the full button width available for currency codes on phones. -->
+        <Icon
+          v-if="modelValue === amt"
+          name="check"
+          size="xs"
+          class="pointer-events-none absolute right-1 top-1 text-emerald-700 sm:inset-y-0 sm:right-2 sm:my-auto dark:text-emerald-400"
+          :stroke-width="3"
+          :animate-on-hover="false"
+        />
       </button>
     </div>
 
@@ -51,6 +61,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Icon from '@/components/icons/Icon.vue'
+import { formatNumberLocaleString } from '@/utils/format'
 import { currencySymbol } from '@/utils/payment/currency'
 
 /**
