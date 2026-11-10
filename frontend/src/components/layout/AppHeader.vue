@@ -7,10 +7,11 @@
     <div class="flex h-[var(--header-h)] items-center justify-between gap-3 px-4 md:px-6 lg:px-8">
       <!-- The global header owns site branding. -->
       <div class="flex min-w-0 shrink-0 items-center gap-2 sm:gap-4">
+        <!-- The sidebar toggle stays square at widths where navigation labels begin to show. -->
         <button
           v-if="!publicPage && !isCreativeStudio"
           @click="appStore.toggleMobileSidebar()"
-          class="btn-ghost btn-icon lg:hidden"
+          class="header-nav-link md:w-9 md:px-0 lg:hidden"
           :aria-label="t('common.toggleMenu')"
           :title="t('common.toggleMenu')"
         >
@@ -18,9 +19,7 @@
         </button>
 
         <!-- Version details and the homepage link remain separate controls. -->
-        <div
-          class="header-brand flex min-w-0 items-center gap-2.5 rounded-control px-1.5 py-1 transition-colors hover:bg-primary-100/70 dark:hover:bg-dark-700"
-        >
+        <div class="header-brand group/brand flex min-w-0 items-center gap-2.5 px-1.5 py-1">
           <router-link
             :to="homePath"
             class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-control bg-primary-100 dark:bg-dark-800"
@@ -36,7 +35,7 @@
           <span class="hidden min-w-0 sm:block">
             <router-link
               :to="homePath"
-              class="block max-w-44 truncate text-base font-bold leading-tight text-gray-900 dark:text-white"
+              class="block max-w-44 truncate text-base font-bold leading-tight text-gray-900 transition-colors duration-fast focus-visible:text-primary-600 group-hover/brand:text-primary-600 dark:text-white dark:focus-visible:text-primary-500 dark:group-hover/brand:text-primary-500"
               >{{ siteName }}</router-link
             >
             <VersionBadge :version="siteVersion" />
@@ -56,23 +55,27 @@
       </div>
 
       <!--
-        Utility icons share one size; balance and avatar controls form the adjacent
-        account group.
+        The global search entry leads the right-hand group, followed by labeled
+        navigation entries and the language switcher, the guest theme toggle, and the
+        balance and avatar that form the trailing account group.
       -->
       <div class="header-status-actions">
-        <div class="header-status-icon-group">
+        <GlobalSearchTrigger />
+
+        <!-- Navigation entries show text labels from md upward and icons below md. -->
+        <div class="header-nav-group">
           <router-link
             v-if="publicPage"
             to="/models"
-            class="header-status-icon-button hidden sm:flex"
+            class="header-nav-link hidden sm:flex"
             :aria-label="t('nav.modelMarketplace')"
-            :title="t('nav.modelMarketplace')"
           >
-            <Icon name="modelMarketplace" size="md" />
+            <Icon name="modelMarketplace" size="md" class="md:hidden" />
+            <span class="hidden md:inline">{{ t('nav.modelMarketplace') }}</span>
           </router-link>
 
           <div v-if="user" class="hidden sm:block">
-            <AnnouncementBell variant="status" />
+            <AnnouncementBell variant="text" />
           </div>
 
           <a
@@ -80,38 +83,38 @@
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="header-status-icon-button hidden sm:flex"
+            class="header-nav-link hidden sm:flex"
             :aria-label="t('nav.docs')"
-            :title="t('nav.docs')"
           >
-            <Icon name="book" size="md" />
+            <Icon name="book" size="md" class="md:hidden" />
+            <span class="hidden md:inline">{{ t('nav.docs') }}</span>
           </a>
 
           <HeaderContactSupport />
 
-          <LocaleSwitcher variant="status" />
-
-          <!--
-            Authenticated users select themes inside the account menu; guests retain a
-            header theme toggle.
-          -->
-          <button
-            v-if="!user"
-            type="button"
-            data-testid="theme-toggle"
-            class="header-status-icon-button"
-            :aria-label="isDark ? t('nav.lightMode') : t('nav.darkMode')"
-            :title="isDark ? t('nav.lightMode') : t('nav.darkMode')"
-            @click="toggleTheme"
-          >
-            <!-- Sun and moon colors distinguish the theme toggle states. -->
-            <Icon
-              :name="isDark ? 'sun' : 'moon'"
-              size="md"
-              :class="isDark ? 'text-amber-500' : 'text-blue-500'"
-            />
-          </button>
+          <LocaleSwitcher variant="text" />
         </div>
+
+        <!--
+          Authenticated users select themes inside the account menu; guests retain a
+          header theme toggle.
+        -->
+        <button
+          v-if="!user"
+          type="button"
+          data-testid="theme-toggle"
+          class="header-status-icon-button"
+          :aria-label="isDark ? t('nav.lightMode') : t('nav.darkMode')"
+          :title="isDark ? t('nav.lightMode') : t('nav.darkMode')"
+          @click="toggleTheme"
+        >
+          <!-- Sun and moon colors distinguish the theme toggle states. -->
+          <Icon
+            :name="isDark ? 'sun' : 'moon'"
+            size="md"
+            :class="isDark ? 'text-amber-500' : 'text-blue-500'"
+          />
+        </button>
 
         <template v-if="user">
           <div class="header-status-divider hidden sm:block"></div>
@@ -314,6 +317,7 @@ import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMi
 import AnnouncementBell from '@/components/announcements/AnnouncementBell.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import HeaderContactSupport from '@/components/layout/HeaderContactSupport.vue'
+import GlobalSearchTrigger from '@/components/layout/search/GlobalSearchTrigger.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { IconName } from '@/components/icons'
 import VersionBadge from '@/components/admin/system/VersionBadge.vue'
@@ -321,10 +325,14 @@ import { sanitizeUrl } from '@/utils/url'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { useTheme, type ThemeMode } from '@/composables/useTheme'
 
-// AppHeader.vue renders the shared brand, utility buttons, balance, and account menu.
-// Public pages add guest navigation, authenticated menus follow public feature settings,
-// and the creative workspace provides a dashboard return link beside the brand. Menu
-// listeners belong to the mounted header.
+// AppHeader.vue renders the shared brand, the global search entry, labeled navigation
+// entries, balance, and account menu. Marketplace, announcement, docs, support, and
+// language entries show text from md upward so new users can read what each entry does;
+// narrower headers fall back to icons. Authenticated users choose themes in the account
+// menu, while guests keep a header theme toggle. Public pages add guest navigation,
+// authenticated menus follow public feature settings, and the creative workspace
+// provides a dashboard return link beside the brand. Menu listeners belong to the
+// mounted header.
 
 // publicPage hides the sidebar toggle and enables marketplace and guest login links
 // while keeping the shared brand and account controls.
@@ -509,8 +517,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/*
+ * The right-hand group may shrink so a crowded header narrows the search entry, the
+ * only child with a flexible width; navigation and account controls keep their size.
+ */
 .header-status-actions {
-  @apply ml-auto flex min-w-0 shrink-0 items-center gap-2 sm:gap-5;
+  @apply ml-auto flex min-w-0 items-center gap-2 sm:gap-5;
 }
 
 /*
@@ -521,8 +533,12 @@ onBeforeUnmount(() => {
   max-width: min(18rem, 42vw);
 }
 
-.header-status-icon-group {
-  @apply flex items-center gap-1 sm:gap-2;
+/*
+ * Icon-sized entries below md sit 4px apart, widening to 8px from sm. From md the
+ * entries' own horizontal padding separates the labels, so the gap returns to 4px.
+ */
+.header-nav-group {
+  @apply flex items-center gap-1 sm:gap-2 md:gap-1;
 }
 
 .header-status-divider {
