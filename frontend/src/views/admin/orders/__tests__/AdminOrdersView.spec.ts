@@ -13,6 +13,7 @@ import AdminOrdersView from '../AdminOrdersView.vue'
 const {
   mockGetOrders,
   mockRefundOrder,
+  mockQueryRefund,
   mockForceExpireOrder,
   mockShowError,
   mockShowSuccess,
@@ -20,6 +21,7 @@ const {
 } = vi.hoisted(() => ({
   mockGetOrders: vi.fn(),
   mockRefundOrder: vi.fn(),
+  mockQueryRefund: vi.fn(),
   mockForceExpireOrder: vi.fn(),
   mockShowError: vi.fn(),
   mockShowSuccess: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock('@/api/admin/payment', () => {
   const paymentAPI = {
     getOrders: (...args: unknown[]) => mockGetOrders(...args),
     refundOrder: (...args: unknown[]) => mockRefundOrder(...args),
+    queryRefund: (...args: unknown[]) => mockQueryRefund(...args),
     forceExpireOrder: (...args: unknown[]) => mockForceExpireOrder(...args),
   }
   return {
@@ -133,6 +136,7 @@ describe('AdminOrdersView', () => {
   beforeEach(() => {
     mockGetOrders.mockReset()
     mockRefundOrder.mockReset()
+    mockQueryRefund.mockReset()
     mockForceExpireOrder.mockReset()
     mockShowError.mockReset()
     mockShowSuccess.mockReset()
@@ -164,6 +168,59 @@ describe('AdminOrdersView', () => {
     expect(findRefundAction(wrapper)).toBeUndefined()
     expect(mockRefundOrder).toHaveBeenCalledTimes(1)
     wrapper.unmount()
+  })
+
+  // A structured pending response closes the refund draft even when the
+  // advisory message does not name the channel's pending status.
+  it('refreshes a pending refund and offers only the query action', async () => {
+    mockRefundOrder.mockResolvedValueOnce({ data: { success: false, status: 'pending' } })
+    const wrapper = mountView()
+    await flushPromises()
+    await findRefundAction(wrapper)!.trigger('click')
+    await flushPromises()
+    mockGetOrders.mockResolvedValueOnce({
+      data: { items: [{ ...order, status: 'REFUND_PENDING' }], total: 1 },
+    })
+    await wrapper.get('#refund-form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('#refund-form').exists()).toBe(false)
+    expect(findRefundAction(wrapper)).toBeUndefined()
+    expect(wrapper.text()).toContain('payment.admin.queryRefundStatus')
+    expect(mockShowWarning).toHaveBeenCalledWith('payment.admin.refundPending')
+  })
+
+  // Missing Stripe references open a verification form for the original
+  // order. A rejected ID stays editable until Stripe verifies the replacement.
+  it('verifies a supplied Stripe refund reference before closing the form', async () => {
+    mockGetOrders.mockResolvedValue({
+      data: { items: [{ ...order, status: 'REFUNDING', payment_type: 'stripe' }], total: 1 },
+    })
+    mockQueryRefund
+      .mockRejectedValueOnce({ reason: 'REFUND_REFERENCE_REQUIRED' })
+      .mockRejectedValueOnce({ reason: 'REFUND_REFERENCE_UNVERIFIED' })
+      .mockResolvedValueOnce({
+        data: { success: false, status: 'failed', warning: 'Refund failed' },
+      })
+    const wrapper = mountView()
+    await flushPromises()
+    const query = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'payment.admin.queryRefundStatus')
+    expect(query).toBeDefined()
+    await query!.trigger('click')
+    await flushPromises()
+    expect(mockQueryRefund).toHaveBeenNthCalledWith(1, order.id, undefined)
+    await wrapper.get('#stripe-refund-reference').setValue('re_unrelated')
+    await wrapper.get('#refund-reference-form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('#refund-reference-form').exists()).toBe(true)
+    expect(mockQueryRefund).toHaveBeenNthCalledWith(2, order.id, 're_unrelated')
+    await wrapper.get('#stripe-refund-reference').setValue('re_verified')
+    await wrapper.get('#refund-reference-form').trigger('submit')
+    await flushPromises()
+    expect(mockQueryRefund).toHaveBeenNthCalledWith(3, order.id, 're_verified')
+    expect(wrapper.find('#refund-reference-form').exists()).toBe(false)
+    expect(mockShowError).toHaveBeenLastCalledWith('Refund failed')
   })
 
   // The refund API requires force consent after the initial submission. The dialog must
