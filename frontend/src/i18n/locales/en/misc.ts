@@ -761,8 +761,16 @@ export default {
       INVALID_STATUS: 'The current order status does not allow this operation.',
       BALANCE_NOT_ENOUGH: 'Refund amount exceeds balance.',
       REFUND_AMOUNT_EXCEEDED: 'Refund amount exceeds the recharge amount.',
+      REFUND_TRADE_REFERENCE_MISSING:
+        'This order is missing its payment reference. Check the provider payment record.',
+      SUBSCRIPTION_REFUND_FULL_ONLY: 'Subscription orders can only be refunded in full.',
       REFUND_RECOVERY_REQUIRED:
-        'The refund result is unconfirmed. Verify it with the payment provider before taking further action. Do not submit another refund.',
+        'The refund result is unconfirmed. Query the refund status in the order or verify it with the payment provider.',
+      REFUND_REFERENCE_REQUIRED: 'Enter the refund ID shown in the Stripe Dashboard.',
+      REFUND_REFERENCE_UNVERIFIED:
+        'Stripe could not verify this ID for the prepared refund. Check it and try again.',
+      REFUND_REFERENCE_UNAVAILABLE:
+        'This Stripe refund ID cannot be associated with the current order.',
       REFUND_QUERY_UNSUPPORTED:
         'This payment provider does not support refund status queries. Verify the refund in the provider console.',
       REFUND_FAILED: 'Refund failed.',
@@ -864,12 +872,23 @@ export default {
       refundSuccess: 'Refund successful',
       refundPending: 'Refund pending gateway confirmation',
       queryRefundStatus: 'Query refund status',
+      verifyStripeRefund: 'Verify Stripe refund',
+      verifyStripeRefundHint:
+        'Copy the refund ID for order #{order} from the Stripe Dashboard. The verified result determines how the local order is updated.',
+      stripeRefundReference: 'Stripe refund ID',
       refundInfo: 'Refund Info',
       refundEnabled: 'Refund Enabled',
       allowUserRefund: 'Allow User Refund',
       alreadyRefunded: 'Already Refunded',
       deductBalance: 'Deduct Balance',
       deductBalanceHint: 'Subtract recharged amount from user balance',
+      revokeRefundSubscription: 'Revoke subscription',
+      revokeRefundSubscriptionHint:
+        'Submitting pauses the subscription immediately. A successful refund revokes it.',
+      keepRefundSubscription: 'Refund the payment and keep the subscription.',
+      forceSubscriptionRefund: 'Confirm refund without revoking a subscription',
+      subscriptionRefundForceHint:
+        'This order has no active or queued subscription to revoke. Confirm to issue the full refund.',
       userBalance: 'User Balance',
       orderAmount: 'Order Amount',
       insufficientBalance: 'Insufficient balance — user balance will be reduced to 0',
