@@ -3,6 +3,7 @@ package dto
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -132,6 +133,28 @@ func TestUsageCleanupTaskFromService_RequestTypeMapping(t *testing.T) {
 	require.NotNil(t, dtoTask)
 	require.NotNil(t, dtoTask.Filters.RequestType)
 	require.Equal(t, "stream", *dtoTask.Filters.RequestType)
+}
+
+// TestUsageCleanupTaskFromService_PreservesTeamID converts a cleanup task carrying
+// an optional team filter into its HTTP DTO representation. It requires the
+// mapped task filters to retain the team identifier pointer so cleanup task cards
+// can display team-scoped deletion tasks accurately.
+func TestUsageCleanupTaskFromService_PreservesTeamID(t *testing.T) {
+	t.Parallel()
+
+	teamID := int64(42)
+	task := &usage.UsageCleanupTask{
+		ID:     2,
+		Status: usage.UsageCleanupStatusPending,
+		Filters: usage.UsageCleanupFilters{
+			TeamID: &teamID,
+		},
+	}
+
+	dtoTask := CleanupFromUsage(task)
+	require.NotNil(t, dtoTask)
+	require.NotNil(t, dtoTask.Filters.TeamID)
+	require.Equal(t, teamID, *dtoTask.Filters.TeamID)
 }
 
 // TestRequestTypeStringPtrNil calls the request-type display wrapper with
@@ -377,6 +400,72 @@ func TestUsageLogFromService_PreservesHistoricalMissingImageSize(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"image_size":null`)
 	require.NotContains(t, string(body), `"image_size":"2K"`)
+}
+
+// TestExportFromUsage_ScopesUserAndAdminFiltersWithoutLeakingFilePath maps both
+// user-scoped and administrator-scoped export tasks into HTTP DTOs. It verifies
+// that user responses omit internal actor pinning and administrator selectors,
+// administrator responses preserve them, and neither exposes FilePath.
+func TestExportFromUsage_ScopesUserAndAdminFiltersWithoutLeakingFilePath(t *testing.T) {
+	t.Parallel()
+
+	require.Nil(t, ExportFromUsage(nil))
+
+	start := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+	uid := int64(42)
+	providerID := int64(7)
+	keyID := int64(9)
+	reqType := int16(usage.RequestTypeStream)
+	fileName := "usage_export.csv"
+	filePath := "user/task_11.csv"
+
+	userTask := &usage.UsageExportTask{
+		ID:            11,
+		Scope:         usage.UsageExportScopeUser,
+		Status:        usage.UsageExportStatusSucceeded,
+		CreatedBy:     uid,
+		TotalRows:     120,
+		ExportedRows:  120,
+		FileName:      &fileName,
+		FilePath:      &filePath,
+		FileSizeBytes: 8192,
+		Filters: usage.UsageExportFilters{
+			StartTime:       start,
+			EndTime:         end,
+			Timezone:        "Asia/Shanghai",
+			Locale:          usage.UsageExportLocaleZH,
+			BalanceUnitName: "USD",
+			RequestSource:   "system",
+			UserID:          &uid,
+			APIKeyID:        &keyID,
+			ProviderID:      &providerID,
+			RequestType:     &reqType,
+		},
+	}
+
+	userDTO := ExportFromUsage(userTask)
+	require.NotNil(t, userDTO)
+	require.Nil(t, userDTO.Filters.UserID)
+	require.Nil(t, userDTO.Filters.ProviderID)
+	require.Empty(t, userDTO.Filters.RequestSource)
+	require.Equal(t, &keyID, userDTO.Filters.APIKeyID)
+	require.Equal(t, requestTypeStringPtr(&reqType), userDTO.Filters.RequestType)
+	userJSON, err := json.Marshal(userDTO)
+	require.NoError(t, err)
+	require.NotContains(t, string(userJSON), "file_path")
+	require.NotContains(t, string(userJSON), `"user_id"`)
+
+	adminTask := *userTask
+	adminTask.Scope = usage.UsageExportScopeAdmin
+	adminDTO := ExportFromUsage(&adminTask)
+	require.NotNil(t, adminDTO)
+	require.Equal(t, &uid, adminDTO.Filters.UserID)
+	require.Equal(t, &providerID, adminDTO.Filters.ProviderID)
+	require.Equal(t, "system", adminDTO.Filters.RequestSource)
+	adminJSON, err := json.Marshal(adminDTO)
+	require.NoError(t, err)
+	require.NotContains(t, string(adminJSON), "file_path")
 }
 
 // f64Ptr returns independent pointer storage for a floating-point mapper
