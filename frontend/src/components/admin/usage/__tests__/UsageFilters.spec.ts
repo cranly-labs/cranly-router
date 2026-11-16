@@ -53,7 +53,7 @@ const messages: Record<string, string> = {
   'common.refresh': 'Refresh',
   'common.reset': 'Reset',
   'admin.usage.cleanup.button': 'Cleanup',
-  'usage.exportExcel': 'Export',
+  'usage.exportCsv': 'Export',
 }
 
 // Existing autocomplete labels stay deterministic; unlisted keys resolve through
@@ -63,7 +63,8 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => messages[key] ?? catalogI18n.global.t(key),
+      t: (key: string, params?: Record<string, unknown>) =>
+        messages[key] ?? catalogI18n.global.t(key, params ?? {}),
     }),
   }
 })
@@ -432,5 +433,147 @@ describe('UsageFilters — 未设置的条件', () => {
     const typeList = lists.find((list) => list.props('options')?.[0]?.label === 'All Types')
     typeList!.vm.$emit('update:modelValue', 'sync')
     expect(filters.request_type).toBe('sync')
+  })
+
+  // Passing activeExportCount to UsageFilters renders a live badge on the export button
+  // without disabling clicks. Calling getFilterSummaryLabels resolves human-readable chips
+  // including zero-valued balance billing and false-valued legacy compaction.
+  it('renders active export badge count and summarizes active filter labels', async () => {
+    catalogI18n.global.locale.value = 'en'
+    const filters: Record<string, any> = {
+      user_id: 42,
+      billing_type: 0,
+      native_compaction_v2: false,
+      model: 'gpt-5.4',
+      start_date: '2026-05-01',
+      end_date: '2026-05-28',
+    }
+    const wrapper = mount(UsageFilters, {
+      props: {
+        modelValue: filters,
+        activeExportCount: 2,
+        startDate: '2026-05-01',
+        endDate: '2026-05-28',
+        showActions: true,
+        modelOptions: ['gpt-5.4'],
+      },
+      global: {
+        stubs: {
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+    ;(wrapper.vm as any).setUserLabel('owner@example.com')
+
+    const exportBtn = wrapper.get('[data-testid="admin-usage-export-btn"]')
+    expect(exportBtn.attributes('disabled')).toBeUndefined()
+    expect(exportBtn.text()).toBe('Export (2)')
+    await exportBtn.trigger('click')
+    expect(wrapper.emitted('export')).toHaveLength(1)
+
+    expect((wrapper.vm as any).getFilterSummaryLabels()).toEqual([
+      { key: 'user_id', label: 'User', value: 'owner@example.com' },
+      { key: 'model', label: 'Model', value: 'gpt-5.4' },
+      { key: 'billing_type', label: 'Billing Type', value: 'Balance' },
+      { key: 'native_compaction_v2', label: 'Compaction', value: 'Legacy Compaction' },
+    ])
+  })
+})
+
+describe('UsageFilters — cleanup inline mode', () => {
+  beforeEach(() => {
+    catalogI18n.global.locale.value = 'en'
+    mockTeamsList.mockResolvedValue([{ id: 7, name: 'Core Team' }])
+    mockGroupsList.mockResolvedValue({
+      items: [{ id: 12, name: 'Claude Group', display_brand: 'anthropic' }],
+    })
+  })
+
+  // Mounting UsageFilters with mode="cleanup" and variant="inline" embeds only the
+  // nine backend-supported cleanup fields without a FilterDropdown trigger. It enables
+  // creatable model entry, hydrates pre-resolved labels from seedLabels, omits
+  // unsupported predicates from summaries, and formats persisted cleanup task filters.
+  it('renders nine inline cleanup fields, omits unsupported predicates, and hydrates seedLabels', async () => {
+    const filters: Record<string, any> = {
+      request_id: 'req-ignored',
+      team_id: 7,
+      request_source: 'system',
+      user_id: 42,
+      api_key_id: 88,
+      provider_id: 19,
+      billing_mode: 'token',
+      native_compaction_v2: true,
+      stream: true,
+      start_date: '2026-11-01',
+      end_date: '2026-11-10',
+    }
+    const wrapper = mount(UsageFilters, {
+      props: {
+        modelValue: filters,
+        mode: 'cleanup',
+        variant: 'inline',
+        showActions: false,
+        startDate: '2026-11-01',
+        endDate: '2026-11-10',
+        modelOptions: ['gpt-5'],
+        seedLabels: [
+          { key: 'user_id', label: 'User', value: 'alice@example.com' },
+          { key: 'api_key_id', label: 'API Key', value: 'Prod Key' },
+          { key: 'provider_id', label: 'Provider', value: 'Anthropic Main' },
+        ],
+      },
+      global: {
+        stubs: {
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'FilterDropdown' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'RequestIdFilterField' }).exists()).toBe(false)
+
+    const fields = wrapper.findAllComponents({ name: 'FilterField' })
+    expect(fields).toHaveLength(9)
+    const fieldLabels = fields.map((field) => field.props('label'))
+    expect(fieldLabels).not.toContain('Billing Mode')
+    expect(fieldLabels).not.toContain('Compaction')
+
+    const modelList = filterOptionsList(wrapper).find((list) =>
+      list.props('options')?.some((opt: { value: unknown }) => opt.value === 'gpt-5'),
+    )
+    expect(modelList?.props('creatable')).toBe(true)
+
+    expect((wrapper.vm as any).getFilterSummaryLabels()).toEqual([
+      { key: 'team_id', label: 'Team', value: 'Core Team' },
+      { key: 'request_source', label: 'Request source', value: 'System request' },
+      { key: 'user_id', label: 'User', value: 'alice@example.com' },
+      { key: 'api_key_id', label: 'API Key', value: 'Prod Key' },
+      { key: 'provider_id', label: 'Provider', value: 'Anthropic Main' },
+      { key: 'request_type', label: 'Type', value: 'Stream' },
+    ])
+
+    expect(
+      (wrapper.vm as any).formatCleanupTaskFilters({
+        start_time: '2026-11-01T00:00:00Z',
+        end_time: '2026-11-10T23:59:59Z',
+        team_id: 7,
+        group_id: 12,
+        request_source: 'group_probe',
+        model: 'claude-retired',
+        stream: false,
+        billing_type: 1,
+      }),
+    ).toEqual([
+      { key: 'team_id', label: 'Team', value: 'Core Team' },
+      { key: 'request_source', label: 'Request source', value: 'Group probe' },
+      { key: 'model', label: 'Model', value: 'claude-retired' },
+      { key: 'group_id', label: 'Group', value: 'Claude Group' },
+      { key: 'request_type', label: 'Type', value: 'Sync' },
+      { key: 'billing_type', label: 'Billing Type', value: 'Subscription' },
+    ])
+
+    wrapper.unmount()
   })
 })

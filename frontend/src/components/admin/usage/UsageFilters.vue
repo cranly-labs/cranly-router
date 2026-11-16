@@ -1,16 +1,28 @@
 <template>
-  <div :class="flat ? 'p-4' : 'card p-6'">
-    <div class="space-y-4">
-      <div class="flex items-center justify-between gap-2">
+  <div :class="variant === 'inline' ? '' : flat ? 'p-4' : 'card p-6'">
+    <div :class="variant === 'inline' ? '' : 'space-y-4'">
+      <div :class="variant === 'inline' ? '' : 'flex items-center justify-between gap-2'">
         <!-- Unselected predicates may be undefined; passing null matches the option lists' unfiltered entry while retaining the query object values. -->
-        <FilterDropdown :active-count="activeFilterCount" keep-mounted @reset="resetPanelFilters">
-          <!-- Request-ID filtering removes date bounds from queries; the user ranking uses its own supported filter dimensions. -->
+        <component
+          :is="variant === 'inline' ? 'div' : FilterDropdown"
+          v-bind="
+            variant === 'inline'
+              ? { class: 'grid grid-cols-1 items-start gap-x-2 gap-y-0.5 sm:grid-cols-2' }
+              : { activeCount: activeFilterCount, keepMounted: true }
+          "
+          @reset="resetPanelFilters"
+        >
+          <!-- Request-ID filtering removes date bounds from queries; ranking and cleanup modes hide unsupported fields. -->
           <RequestIdFilterField
-            v-if="mode !== 'ranking'"
+            v-if="mode === 'usage' || mode === 'errors'"
             v-model="filters.request_id"
             @search="emitChange"
           />
-          <FilterField v-if="mode === 'usage'" :label="t('admin.usage.teamFilter')" icon="users">
+          <FilterField
+            v-if="mode === 'usage' || mode === 'cleanup'"
+            :label="t('admin.usage.teamFilter')"
+            icon="users"
+          >
             <FilterOptions
               :model-value="filters.team_id ?? null"
               :options="teamOptions"
@@ -20,7 +32,11 @@
             />
           </FilterField>
 
-          <FilterField v-if="mode === 'usage'" :label="t('admin.usage.requestSource')" icon="send">
+          <FilterField
+            v-if="mode === 'usage' || mode === 'cleanup'"
+            :label="t('admin.usage.requestSource')"
+            icon="send"
+          >
             <FilterOptions
               :model-value="filters.request_source ?? null"
               :options="requestSourceOptions"
@@ -76,6 +92,7 @@
               :model-value="filters.model ?? null"
               :options="modelOptions"
               searchable
+              :creatable="mode === 'cleanup'"
               @update:model-value="filters.model = $event"
               @change="emitChange"
             >
@@ -142,7 +159,7 @@
 
           <!-- Native compaction selection applies to usage records and the ranking query. -->
           <FilterField
-            v-if="mode !== 'errors'"
+            v-if="mode === 'usage' || mode === 'ranking'"
             :label="t('usage.compactionFilter')"
             icon="minimize"
           >
@@ -207,9 +224,12 @@
               </template>
             </FilterOptions>
           </FilterField>
-        </FilterDropdown>
+        </component>
 
-        <div v-if="showActions" class="flex flex-wrap items-center justify-end gap-2">
+        <div
+          v-if="showActions && variant !== 'inline'"
+          class="flex flex-wrap items-center justify-end gap-2"
+        >
           <button
             type="button"
             @click="$emit('refresh')"
@@ -229,11 +249,24 @@
             </button>
             <button
               type="button"
+              data-testid="admin-usage-export-btn"
               @click="$emit('export')"
-              :disabled="exporting"
               class="btn btn-primary whitespace-nowrap px-3 sm:px-4"
             >
-              {{ t('usage.exportExcel') }}
+              <Icon
+                v-if="activeExportCount > 0"
+                name="loader"
+                size="sm"
+                class="animate-spin"
+                :animate-on-hover="false"
+              />
+              <span>
+                {{
+                  activeExportCount > 0
+                    ? t('usage.exportPanel.activeCountLabel', { count: activeExportCount })
+                    : t('usage.exportCsv')
+                }}
+              </span>
             </button>
           </template>
         </div>
@@ -267,12 +300,14 @@ import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
 import { SEARCH_DEBOUNCE_MS } from '@/constants/ui'
-import type { SimpleApiKey, SimpleUser } from '@/api/admin/usage'
+import type { SimpleApiKey, SimpleUser, UsageCleanupFilters } from '@/api/admin/usage'
+import type { UsageExportFilterLabel } from '@/types/ui'
 
 // UsageFilters.vue edits shared administrator usage filters and provides user, API-key, and
 // provider searches. The modelValue object remains parent-owned and is mutated through its
-// ref; change events ask the page to reload. Usage, error, and ranking modes expose
-// different filter subsets.
+// ref; change events ask the page to reload. Usage, error, ranking, and cleanup modes expose
+// different filter subsets, while the inline variant renders the sections directly in a
+// modal grid without wrapping them in FilterDropdown.
 //
 // The three searches use remote FilterOptions lists: this component turns typed text into
 // debounced requests and keeps the returned candidates, while each list keeps its own
@@ -294,14 +329,21 @@ interface Props {
   // modelValue is the parent-owned query object mutated through filters; callers handle
   // change events to reload its current values.
   modelValue: ModelValue
-  exporting: boolean // export operation busy flag
+  exporting?: boolean // legacy export busy flag retained for embedded callers
+  activeExportCount?: number // active pending or running background export task count
   startDate: string // beginning calendar date
   endDate: string // ending calendar date
   showActions?: boolean // action button visibility flag
   modelOptions?: string[] // parent-provided model name choices
-  // mode selects usage filters by default; errors substitutes error predicates and ranking
-  // hides billing mode and destructive/export actions.
-  mode?: 'usage' | 'errors' | 'ranking'
+  // mode selects usage filters by default; errors substitutes error predicates, ranking
+  // hides billing mode, and cleanup restricts fields to batch deletion predicates.
+  mode?: 'usage' | 'errors' | 'ranking' | 'cleanup'
+  // variant chooses the dropdown toolbar layout by default; inline embeds collapsible
+  // fields directly inside a host container such as UsageCleanupDialog.
+  variant?: 'toolbar' | 'inline'
+  // seedLabels pre-populates display labels for remote or async filters copied from a
+  // parent page when opening an inline draft.
+  seedLabels?: UsageExportFilterLabel[]
   // flat removes the component card surface when the parent already supplies the shared
   // filter section container.
   flat?: boolean
@@ -310,8 +352,11 @@ interface Props {
 // props supplies usage-mode defaults and parent-owned values used to render and edit the
 // filter panel.
 const props = withDefaults(defineProps<Props>(), {
+  exporting: false,
+  activeExportCount: 0,
   showActions: true,
   mode: 'usage',
+  variant: 'toolbar',
   flat: false,
 })
 // emit publishes model changes and reload, reset, export, or cleanup actions for the owning
@@ -371,15 +416,20 @@ const modelOptions = computed<SelectOption[]>(() => [
 // after mounting; group choices also carry the display brand drawn as their row icon.
 const groupOptions = ref<SelectOption[]>([{ value: null, label: t('admin.usage.allGroups') }])
 const teamOptions = ref<SelectOption[]>([{ value: null, label: t('admin.usage.allTeams') }])
-// activeFilterCount counts nonempty predicates outside dates, excluding request ID when the
-// ranking mode hides that field.
+// activeFilterCount counts nonempty predicates outside dates, excluding fields hidden by
+// the current mode.
 const activeFilterCount = computed(
   () =>
     Object.entries(filters.value).filter(
       ([key, value]) =>
         !['start_date', 'end_date'].includes(key) &&
-        !(key === 'request_id' && props.mode === 'ranking') &&
-        !(key === 'request_source' && props.mode !== 'usage') &&
+        !(key === 'request_id' && (props.mode === 'ranking' || props.mode === 'cleanup')) &&
+        !(key === 'request_source' && props.mode !== 'usage' && props.mode !== 'cleanup') &&
+        !(key === 'billing_mode' && props.mode !== 'usage') &&
+        !(
+          key === 'native_compaction_v2' &&
+          (props.mode === 'errors' || props.mode === 'cleanup')
+        ) &&
         value !== null &&
         value !== undefined &&
         String(value) !== '',
@@ -651,6 +701,7 @@ const clearApiKey = () => {
 // resetPanelFilters clears every shared predicate except the beginning and ending dates and
 // emits one change after the shared object has been updated.
 const resetPanelFilters = () => {
+  seedFallbackLabels.value = {}
   for (const key of Object.keys(filters.value)) {
     if (key !== 'start_date' && key !== 'end_date') filters.value[key] = undefined
   }
@@ -712,13 +763,71 @@ watch(
   { immediate: true },
 )
 
+// SeededOptionLabel pairs an initial numeric filter identifier with a pre-resolved
+// display label supplied by a host page while async catalogs load.
+interface SeededOptionLabel {
+  matchValue: number // matched numeric filter identifier
+  label: string // pre-resolved display label
+}
+
+// seedFallbackLabels retains pre-resolved team and group display labels keyed by their
+// matched identifier while async option catalogs finish loading.
+const seedFallbackLabels = ref<{
+  team_id?: SeededOptionLabel // pre-resolved team display fallback
+  group_id?: SeededOptionLabel // pre-resolved group display fallback
+}>({})
+
+// Synchronize pre-resolved labels supplied by a parent page for remote or async filters
+// when opening or syncing an inline draft, without overriding later in-dialog selections.
+watch(
+  () => props.seedLabels,
+  (labels) => {
+    seedFallbackLabels.value = {}
+    if (!labels?.length) return
+    const current = filters.value
+    for (const item of labels) {
+      if (item.key === 'user_id' && typeof current.user_id === 'number' && current.user_id > 0) {
+        setUserLabelValue(item.value)
+      } else if (
+        item.key === 'api_key_id' &&
+        typeof current.api_key_id === 'number' &&
+        current.api_key_id > 0
+      ) {
+        apiKeyLabel.value = item.value
+      } else if (
+        item.key === 'provider_id' &&
+        typeof current.provider_id === 'number' &&
+        current.provider_id > 0
+      ) {
+        providerLabel.value = item.value
+      } else if (
+        item.key === 'team_id' &&
+        typeof current.team_id === 'number' &&
+        current.team_id > 0
+      ) {
+        seedFallbackLabels.value.team_id = { matchValue: current.team_id, label: item.value }
+      } else if (
+        item.key === 'group_id' &&
+        typeof current.group_id === 'number' &&
+        current.group_id > 0
+      ) {
+        seedFallbackLabels.value.group_id = { matchValue: current.group_id, label: item.value }
+      }
+    }
+  },
+  { immediate: true },
+)
+
 // Clear each selection label when a parent update or panel reset removes its predicate, so
 // the next selection is not named by the previous one. Candidates stay because they still
 // match the search text shown in their lists.
 watch(
   () => filters.value.user_id,
   (userId) => {
-    if (!userId && userLabel.value) setUserLabelValue('')
+    if (!userId) {
+      if (userLabel.value) setUserLabelValue('')
+      apiKeyResults.value = []
+    }
   },
 )
 
@@ -766,7 +875,193 @@ const setUserLabel = (email: string) => setUserLabelValue(email)
 // validation.
 const getUserLabelRevision = () => userLabelRevision
 
-defineExpose({ getUserLabelRevision, setUserLabel })
+// findOptionLabel resolves the display label for a selected option value or falls back to
+// fallbackText when the option has not been loaded into the current list.
+const findOptionLabel = (
+  options: SelectOption[],
+  value: SelectOption['value'],
+  fallbackText: string,
+): string => options.find((item) => item.value === value)?.label ?? fallbackText
+
+// SharedPredicateSource names the filter fields supported by both live usage cleanup
+// drafts and persisted cleanup task snapshots.
+interface SharedPredicateSource {
+  request_source?: string // optional customer or internal request source
+  team_id?: number // optional team identifier
+  user_id?: number // optional user identifier
+  api_key_id?: number // optional API-key identifier
+  model?: string | null // optional model name
+  provider_id?: number // optional provider identifier
+  group_id?: number // optional group identifier
+  request_type?: string | null // optional canonical request type
+  stream?: boolean | null // optional legacy stream flag
+  billing_type?: number | null // optional billing category
+}
+
+// summarizeSharedPredicates builds display chips for cleanup-compatible usage filters
+// using loaded team, group, request-source, request-type, and billing-type catalogs. When
+// includeSessionLabels is true, active search labels and seeded labels replace raw numeric
+// identifier fallbacks.
+const summarizeSharedPredicates = (
+  source: SharedPredicateSource,
+  includeSessionLabels: boolean,
+): UsageExportFilterLabel[] => {
+  const chips: UsageExportFilterLabel[] = []
+
+  if (typeof source.team_id === 'number' && source.team_id > 0) {
+    const seedTeam =
+      includeSessionLabels && seedFallbackLabels.value.team_id?.matchValue === source.team_id
+        ? seedFallbackLabels.value.team_id.label
+        : `#${source.team_id}`
+    chips.push({
+      key: 'team_id',
+      label: t('admin.usage.teamFilter'),
+      value: findOptionLabel(teamOptions.value, source.team_id, seedTeam),
+    })
+  }
+  if (
+    typeof source.request_source === 'string' &&
+    source.request_source.trim() !== '' &&
+    source.request_source.trim() !== 'all'
+  ) {
+    chips.push({
+      key: 'request_source',
+      label: t('admin.usage.requestSource'),
+      value: findOptionLabel(
+        requestSourceOptions.value,
+        source.request_source,
+        source.request_source,
+      ),
+    })
+  }
+  if (typeof source.user_id === 'number' && source.user_id > 0) {
+    chips.push({
+      key: 'user_id',
+      label: t('admin.usage.userFilter'),
+      value: (includeSessionLabels ? userLabel.value : '') || `#${source.user_id}`,
+    })
+  }
+  if (typeof source.api_key_id === 'number' && source.api_key_id > 0) {
+    chips.push({
+      key: 'api_key_id',
+      label: t('usage.apiKeyFilter'),
+      value: (includeSessionLabels ? apiKeyLabel.value : '') || `#${source.api_key_id}`,
+    })
+  }
+  if (typeof source.model === 'string' && source.model.trim() !== '') {
+    chips.push({
+      key: 'model',
+      label: t('usage.model'),
+      value: source.model.trim(),
+    })
+  }
+  if (typeof source.provider_id === 'number' && source.provider_id > 0) {
+    chips.push({
+      key: 'provider_id',
+      label: t('admin.usage.provider'),
+      value: (includeSessionLabels ? providerLabel.value : '') || `#${source.provider_id}`,
+    })
+  }
+  if (typeof source.group_id === 'number' && source.group_id > 0) {
+    const seedGroup =
+      includeSessionLabels && seedFallbackLabels.value.group_id?.matchValue === source.group_id
+        ? seedFallbackLabels.value.group_id.label
+        : `#${source.group_id}`
+    chips.push({
+      key: 'group_id',
+      label: t('admin.usage.group'),
+      value: findOptionLabel(groupOptions.value, source.group_id, seedGroup),
+    })
+  }
+  if (typeof source.request_type === 'string' && source.request_type.trim() !== '') {
+    chips.push({
+      key: 'request_type',
+      label: t('usage.type'),
+      value: findOptionLabel(requestTypeOptions.value, source.request_type, source.request_type),
+    })
+  } else if (typeof source.stream === 'boolean') {
+    chips.push({
+      key: 'request_type',
+      label: t('usage.type'),
+      value: source.stream ? t('usage.stream') : t('usage.sync'),
+    })
+  }
+  if (typeof source.billing_type === 'number' && !Number.isNaN(source.billing_type)) {
+    chips.push({
+      key: 'billing_type',
+      label: t('admin.usage.billingType'),
+      value: findOptionLabel(
+        billingTypeOptions.value,
+        source.billing_type,
+        String(source.billing_type),
+      ),
+    })
+  }
+
+  return chips
+}
+
+// getFilterSummaryLabels builds human-readable chips for active usage filters so
+// UsageExportDialog and UsageCleanupDialog display resolved names instead of bare numeric
+// identifiers. Zero-valued balance billing and legacy boolean stream values remain included
+// as explicit predicates, while cleanup mode omits unsupported request-ID, billing-mode,
+// and compaction fields.
+const getFilterSummaryLabels = (): UsageExportFilterLabel[] => {
+  const chips: UsageExportFilterLabel[] = []
+  const current = filters.value
+
+  if (
+    props.mode !== 'cleanup' &&
+    typeof current.request_id === 'string' &&
+    current.request_id.trim() !== ''
+  ) {
+    chips.push({
+      key: 'request_id',
+      label: t('admin.usage.requestId'),
+      value: current.request_id.trim(),
+    })
+  }
+
+  chips.push(...summarizeSharedPredicates(current, true))
+
+  if (
+    props.mode !== 'cleanup' &&
+    typeof current.billing_mode === 'string' &&
+    current.billing_mode.trim() !== ''
+  ) {
+    chips.push({
+      key: 'billing_mode',
+      label: t('admin.usage.billingMode'),
+      value: findOptionLabel(billingModeOptions.value, current.billing_mode, current.billing_mode),
+    })
+  }
+  if (props.mode !== 'cleanup' && typeof current.native_compaction_v2 === 'boolean') {
+    chips.push({
+      key: 'native_compaction_v2',
+      label: t('usage.compactionFilter'),
+      value: findOptionLabel(
+        compactionOptions.value,
+        current.native_compaction_v2,
+        String(current.native_compaction_v2),
+      ),
+    })
+  }
+
+  return chips
+}
+
+// formatCleanupTaskFilters converts persisted cleanup task filter snapshots into localized
+// summary chips using the loaded team, group, source, type, and billing catalogs.
+const formatCleanupTaskFilters = (taskFilters: UsageCleanupFilters): UsageExportFilterLabel[] =>
+  summarizeSharedPredicates(taskFilters, false)
+
+defineExpose({
+  getUserLabelRevision,
+  setUserLabel,
+  getFilterSummaryLabels,
+  formatCleanupTaskFilters,
+  resetPanelFilters,
+})
 </script>
 
 <style scoped>
