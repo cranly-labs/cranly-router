@@ -6,12 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -26,8 +25,7 @@ import (
 // Transport acceptance publishes a versioned history snapshot. Stream or
 // conversion failures roll it back and return partial evidence when output and
 // usage were both observed. Completed non-streaming work and streams reporting
-// output commit history after conversion; Responses aliases register after
-// successful handling. The output observer records semantic timing before
+// output commit history after conversion. The output observer records semantic timing before
 // writes and marks disconnects, letting completion distinguish upstream
 // service from downstream delivery. The request owner releases provider and
 // user leases.
@@ -52,13 +50,12 @@ type streamClientWithDoer interface {
 
 // Target binds site metadata and provider callbacks needed by one Qoder attempt.
 type Target struct {
-	// Attributes resolves the mapped route for this attempt. Nil keeps the site
-	// capability snapshot used by payload construction.
-	Attributes func(context.Context, string, protocol.ProtocolID) (modelcatalog.Resolution, error) // route attribute resolver
-	ProviderID int64                                                                               // selected provider identifier
-	Site       Site                                                                                // selected credential site
-	UserType   string                                                                              // Qoder account classification
-	Metadata   RequestMetadata                                                                     // inbound session metadata
+	// Attributes resolves the mapped route against its captured account catalog.
+	// Nil retains execution defaults without inferring site-wide model capabilities.
+	Attributes func(context.Context, string, protocol.ProtocolID) (modelrules.Resolution, error) // route attribute resolver
+	ProviderID int64                                                                             // selected provider identifier
+	Site       Site                                                                              // selected credential site
+	Metadata   RequestMetadata                                                                   // inbound session metadata
 	// Session obtains credentials with the original request context. The callback
 	// is required and cancellation can stop the wait before inference starts.
 	Session func(context.Context) (*SessionContext, error) // credential session getter
@@ -75,8 +72,7 @@ type Target struct {
 // ExecuteOptions supplies shared conversation storage, timeout, and attempt
 // activity registration.
 type ExecuteOptions struct {
-	// Conversations is shared across attempts to resolve response aliases and
-	// history. Nil in NewExecutor allocates a store with the default TTL.
+	// Conversations is shared across attempts to match full-history fingerprints. Nil in NewExecutor allocates a store with the default TTL.
 	Conversations *QoderConversationStore // shared conversation store
 	// Timeout bounds the execution context created before protocol parsing.
 	// Credential waits still use the original request context, so preparation can
@@ -92,7 +88,7 @@ type ExecuteOptions struct {
 // conversation state.
 type Executor struct {
 	// conversations retains the store selected by NewExecutor. Concurrent requests
-	// coordinate history and aliases through that store's mutex and snapshot rules.
+	// coordinate fingerprint and usage observations through that store's mutex and snapshot rules.
 	conversations *QoderConversationStore // shared conversation store
 	timeout       time.Duration           // upstream execution duration
 	// enter retains the activity callback selected at construction. Execute invokes
@@ -131,18 +127,20 @@ func NewExecutor(options ExecuteOptions) *Executor {
 }
 
 // PrepareConversation builds a payload and a conversation plan for one selected
-// target. Target site and user type replace request values before session-key
-// selection. Responses requests with previous_response_id permit append-style
-// reuse; the caller publishes acceptance and completion after transport and
-// output outcomes are known.
-func (e *Executor) PrepareConversation(target *Target, wireProtocol protocol.ProtocolID, request QoderPayloadRequest) (map[string]any, string, *QoderConversationPlan) {
-	request.UserType = target.UserType
+// target. Target site replaces request metadata before session-key
+// selection. Clients send complete input history with each request. The caller publishes acceptance and completion
+// after transport and output outcomes are known.
+func (e *Executor) PrepareConversation(target *Target, wireProtocol protocol.ProtocolID, request QoderPayloadRequest) (map[string]any, string, *QoderConversationPlan, error) {
 	request.Site = target.Site
-	key, source := QoderConversationKey(target.Metadata, target.ProviderID, string(wireProtocol), request)
-	plan := e.conversations.PlanWithOptions(key, request.System, request.Tools, request.Messages, QoderConversationPlanOptions{AppendToExisting: wireProtocol == protocol.ProtocolOpenAIResponses && strings.TrimSpace(request.PreviousResponseID) != ""})
-	payload, model := BuildQoderPayloadWithOptions(request, plan.SessionID, plan.MessagesToSend, plan.IncludeSystem, plan.IncludeTools)
+	request, err := request.withEffectiveControls()
+	if err != nil {
+		return nil, "", nil, err
+	}
+	key, source := QoderConversationKey(target.Metadata, target.ProviderID, request)
+	plan := e.conversations.Plan(key, request.System, request.Tools, request.Messages)
+	payload, model := buildQoderPayload(request, plan.SessionID, plan.MessagesToSend, plan.IncludeSystem, plan.IncludeTools)
 	plan.Log(target.Metadata, target.ProviderID, string(wireProtocol), request.Model, source, request, payload)
-	return payload, model, plan
+	return payload, model, plan, nil
 }
 
 // Execute serves one Qoder attempt and returns observed service and usage
@@ -156,8 +154,7 @@ func (e *Executor) PrepareConversation(target *Target, wireProtocol protocol.Pro
 // it back and return partial evidence when the converter observed both output
 // and usage. Completed non-streaming work stays served when the sink fails.
 // History commits for non-streaming completion or when a stream converter
-// reports output; Responses aliases register after successful handling,
-// including empty streams. The execution owner closes the response through
+// reports output; Responses IDs identify the current result. The execution owner closes the response through
 // stream reading, while the request owner releases provider and user leases.
 // @project-doc docs/interfaces/qoder_upstream.md#qoder_execution_boundary
 func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, executionErr error) {
@@ -181,6 +178,8 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 		}
 		if executionErr != nil {
 			switch {
+			case IsRequestError(executionErr):
+				result.FailureClass = "invalid_request"
 			case errors.Is(executionErr, context.Canceled):
 				result.FailureClass = "cancelled"
 			case errors.Is(executionErr, context.DeadlineExceeded):
@@ -222,6 +221,11 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 		return upstream.AttemptResult{}, errors.New("unsupported qoder client protocol")
 	}
 	if err != nil {
+		// Parser failures precede session acquisition and network dispatch. Preserve
+		// specific validation reasons and classify malformed client input the same way.
+		if !IsRequestError(err) {
+			err = &RequestError{Code: "invalid_request", Message: err.Error()}
+		}
 		return upstream.AttemptResult{}, err
 	}
 	responseModel := input.ResponseModel
@@ -229,14 +233,19 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 		responseModel = request.Model
 	}
 	if target.Attributes != nil {
-		modelKey := ResolveQoderModelForSite(target.Site, request.Model).Key
-		attributes, resolveErr := target.Attributes(ctx, modelKey, input.Protocol)
+		attributes, resolveErr := target.Attributes(ctx, request.Model, input.Protocol)
 		if resolveErr != nil {
 			return upstream.AttemptResult{}, resolveErr
 		}
 		request.Capabilities = &attributes
+		if attributes.Target.Model != "" {
+			request.Model = attributes.Target.Model
+		}
 	}
-	payload, model, plan := e.PrepareConversation(target, input.Protocol, request)
+	payload, model, plan, err := e.PrepareConversation(target, input.Protocol, request)
+	if err != nil {
+		return upstream.AttemptResult{}, err
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return upstream.AttemptResult{}, fmt.Errorf("marshal qoder payload: %w", err)
@@ -352,12 +361,6 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 	// records native usage with that history for later session diagnostics.
 	if commitComplete {
 		plan.Commit(nativeUsage)
-	}
-	// Responses IDs resolve to the provider-scoped conversation selected above.
-	// Register the returned ID after output handling so later previous_response_id
-	// requests can find that session.
-	if input.Protocol == protocol.ProtocolOpenAIResponses && request.ResponseID != "" {
-		plan.AddAlias(QoderProviderScopedConversationKey(target.ProviderID, QoderConversationExplicitSessionKey(target.Metadata, request.ResponseID)))
 	}
 	result.Duration = time.Since(start)
 	return result, nil

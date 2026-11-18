@@ -40,6 +40,8 @@ var supplementFields = map[string]string{
 	"cache_read_input_token_cost":       "cache_read", "cache_read_input_token_cost_priority": "priority_cache_read",
 	"cache_creation_input_token_cost": "cache_write", "cache_creation_input_token_cost_priority": "priority_cache_write",
 	"cache_creation_input_token_cost_above_1hr": "cache_write_1h",
+	"cache_creation_input_token_cost_30m":       "cache_write_30m",
+	"cache_creation_input_token_cost_12h":       "cache_write_12h",
 	"input_cost_per_image_token":                "image_input", "output_cost_per_image_token": "image_output", "output_cost_per_image": "image",
 	"image_prices": "image_prices", "video_prices": "video_prices",
 	"fast_multiplier": "fast_multiplier", "flex_multiplier": "flex_multiplier",
@@ -57,13 +59,13 @@ type AttributeSnapshot struct {
 	LastError   string               `json:"last_error,omitempty"` // latest candidate failure message
 }
 
-// CapabilityView captures the retained catalog under the read lock for
+// Publication captures the retained catalog under the read lock for
 // subsequent metadata lookups. Updates publish different catalog data, and a
-// capture before publication behaves as an empty modelcatalog.View.
-func (s *Service) CapabilityView() modelcatalog.View {
+// capture before publication behaves as an empty modelrules.View.
+func (s *Service) Publication() modelcatalog.Publication {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.modelCatalog.View()
+	return s.modelCatalog.Publication()
 }
 
 // AttributesSnapshot copies all prepared catalog entries and captures their
@@ -116,7 +118,7 @@ func (s *Service) ModelAttributes(model string) modelcatalog.Attributes {
 // Both paths are validated before return, and price diagnostics record orphan
 // cache tiers or one-sided context surcharges for administrative inspection.
 func (s *Service) buildModelsCatalog(body []byte) (*modelcatalog.Catalog, map[string]*CatalogModelPricing, pricing.OperationPrices, error) {
-	catalog, err := modelcatalog.Parse(body)
+	catalog, err := modelcatalog.ParseV2(body)
 	if err != nil {
 		return nil, nil, pricing.OperationPrices{}, err
 	}
@@ -621,17 +623,4 @@ func (s *Service) AttributeIndex() (modelcatalog.Index, AttributeSnapshot) {
 		version = s.modelCatalog.Version
 	}
 	return s.attributeIndex, AttributeSnapshot{Version: version, LastUpdated: s.lastUpdated, LastError: s.lastCatalogError}
-}
-
-// OpenCodeProtocols copies the selected mode's protocol suggestions from the
-// current publication, returning nil before any catalog is published. The read
-// lock keeps the suggestions paired with one validated catalog; callers may
-// edit the returned map before saving overrides.
-func (s *Service) OpenCodeProtocols(mode string) map[string]string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.modelCatalog == nil {
-		return nil
-	}
-	return s.modelCatalog.OpenCodeProtocols(mode)
 }

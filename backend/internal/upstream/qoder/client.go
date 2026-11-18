@@ -112,6 +112,12 @@ type RequestDoer func(req *http.Request) (*http.Response, error)
 // authentication.
 type qoderJSONAuthMode uint8
 
+// RequestError describes a rejected client parameter before any upstream exchange.
+type RequestError struct {
+	Code    string // stable validation identifier
+	Message string // caller-facing diagnostic text
+}
+
 // APIError holds effective HTTP and vendor details used for retry decisions.
 type APIError struct {
 	StatusCode int // effective HTTP status
@@ -199,6 +205,8 @@ type QoderSSEWrapper struct {
 type qoderErrorBody struct {
 	Code                qoderErrorCode  `json:"code"`                // vendor error code
 	Message             string          `json:"message"`             // wire message value
+	Type                string          `json:"type"`                // vendor rejection classification
+	Error               json.RawMessage `json:"error"`               // nested OpenAPI error object
 	Data                json.RawMessage `json:"data"`                // nested event/error JSON
 	AgentLimitResetTime int64           `json:"agentLimitResetTime"` // Unix milliseconds
 }
@@ -298,6 +306,15 @@ type QoderSSEUsage struct {
 	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"` // completion usage breakdown
 }
 
+// Error returns the validation diagnostic for protocol-specific error presentation.
+func (e *RequestError) Error() string { return e.Message }
+
+// IsRequestError identifies local validation failures through wrapping layers.
+func IsRequestError(err error) bool {
+	_, ok := errors.AsType[*RequestError](err)
+	return ok
+}
+
 // MayRefreshAttempt permits refresh for wrapped API errors with HTTP 401 or 403.
 // Agent-limit and entitlement failures return false, so retry policy does not
 // spend refresh tokens on quota or model-access rejection.
@@ -327,6 +344,9 @@ func MaySwitchCompatibleAttempt(err error) bool {
 // failures for failover. The unknown argument controls errors lacking APIError,
 // keeping Chat and compatible protocol retry decisions separate.
 func maySwitchAttempt(err error, unknown bool) bool {
+	if IsRequestError(err) {
+		return false
+	}
 	var failure *APIError
 	if !errors.As(err, &failure) {
 		return unknown
@@ -396,6 +416,9 @@ func (c *Client) StreamRequestContextWithDoer(ctx context.Context, session *Sess
 	}
 
 	c.setHeaders(req, session, path, encodedBody)
+	for name, value := range desktopRequestHeaders() {
+		req.Header.Set(name, value)
+	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 
@@ -577,12 +600,14 @@ func (c *Client) jsonRequestContextWithDoer(
 		return fmt.Errorf("qoder: gateway request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// Gateway metadata responses have a bounded read budget. Larger content is
-	// truncated here and JSON parsing then reports an incomplete representation
-	// when applicable.
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	// Read one byte beyond the metadata limit so an oversized response cannot
+	// publish a valid-looking truncated prefix as a complete model or quota observation.
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 	if err != nil {
 		return fmt.Errorf("qoder: read gateway response: %w", err)
+	}
+	if len(responseBody) > 4<<20 {
+		return errors.New("qoder: gateway metadata response exceeds size limit")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return ParseAPIErrorBody(resp.StatusCode, string(responseBody))
@@ -611,6 +636,18 @@ func ensureLeadingSlash(path string) string {
 		return path
 	}
 	return "/" + path
+}
+
+// desktopRequestHeaders returns independent app workload metadata for inference
+// and model discovery. Legacy credential and quota exchanges keep their own
+// headers; callers may edit this map without changing another request's profile.
+func desktopRequestHeaders() map[string]string {
+	return map[string]string{
+		"Cosy-ClientType":       DesktopClientType,
+		"Cosy-Business-Product": DesktopProduct,
+		"Cosy-Business-Type":    "agent",
+		"Cosy-Scene":            DesktopProduct,
+	}
 }
 
 // unwrapQoderJSONResponse resolves plain, encoded, and enveloped Gateway
@@ -815,6 +852,8 @@ func applyQoderErrorPayload(apiErr *APIError, payload []byte) {
 	}
 	if strings.TrimSpace(body.Message) != "" {
 		apiErr.Message = body.Message
+	} else if body.Type != "" && (apiErr.Message == "" || strings.HasPrefix(apiErr.Message, "Qoder upstream returned HTTP ")) {
+		apiErr.Message = body.Type
 	}
 	if body.AgentLimitResetTime > 0 {
 		apiErr.AgentLimitResetTime = body.AgentLimitResetTime
@@ -824,6 +863,9 @@ func applyQoderErrorPayload(apiErr *APIError, payload []byte) {
 	// observations can replace the enclosing values.
 	if len(body.Data) > 0 {
 		applyQoderErrorPayload(apiErr, body.Data)
+	}
+	if len(body.Error) > 0 {
+		applyQoderErrorPayload(apiErr, body.Error)
 	}
 	if strings.TrimSpace(body.Message) != "" && json.Valid([]byte(body.Message)) {
 		applyQoderErrorPayload(apiErr, []byte(body.Message))

@@ -6,12 +6,13 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	acct "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/provider/qodermodel"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
@@ -552,10 +553,10 @@ func TestProviderIsModelSupported(t *testing.T) {
 			expected:       true,
 		},
 		{
-			name:           "qoder mapping absent does not restrict public alias",
+			name:           "qoder mapping absent accepts an observed public alias",
 			platform:       capability.PlatformQoder,
 			credentials:    nil,
-			requestedModel: "claude-opus-4-6",
+			requestedModel: "qwen3.8-max",
 			expected:       true,
 		},
 		{
@@ -626,7 +627,7 @@ func TestProviderIsModelSupported(t *testing.T) {
 				},
 				"model_whitelist": []any{},
 			},
-			requestedModel: "glm-5",
+			requestedModel: "glm-5.3",
 			expected:       true,
 		},
 		{
@@ -663,7 +664,7 @@ func TestProviderIsModelSupported(t *testing.T) {
 				"model_whitelist": []any{"claude-opus-4-6"},
 			},
 			requestedModel: "ultimate",
-			expected:       true,
+			expected:       false,
 		},
 	}
 
@@ -673,6 +674,7 @@ func TestProviderIsModelSupported(t *testing.T) {
 				Platform:    tt.platform,
 				Credentials: tt.credentials,
 			}
+			attachQoderModelPolicyFixture(provider)
 			result := provider.IsModelSupported(tt.requestedModel, ModelDefaults(), ModelRules(provider))
 			if result != tt.expected {
 				t.Errorf("IsModelSupported(%q) = %v, want %v", tt.requestedModel, result, tt.expected)
@@ -744,6 +746,7 @@ func TestProviderGetConfiguredRequestModels(t *testing.T) {
 				Platform:    tt.platform,
 				Credentials: tt.credentials,
 			}
+			attachQoderModelPolicyFixture(provider)
 			result := provider.GetConfiguredRequestModels(ModelDefaults())
 			if tt.includeDefaults {
 				for _, model := range append(DefaultProviderModels(provider), tt.expected...) {
@@ -881,10 +884,10 @@ func TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases(t *test
 }
 
 // TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides supplies
-// custom targets for known Antigravity aliases. Mapping reads must retain those
-// targets and avoid adding extra entries to the supplied set.
+// saved Gemini aliases for an Antigravity provider. Mapping reads retain the
+// configured entries, and the forwarding model resolves to the saved target.
 func TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides(t *testing.T) {
-	raw := map[string]any{"gemini-pro-agent": "custom-model", "gemini-3.1-pro-high": "another-model"}
+	raw := map[string]any{"gemini-pro-agent": "custom-model", "gemini-3.1-pro-high": "gemini-pro-agent"}
 	provider := &acct.Record{Platform: capability.PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}
 	mapping := acct.ResolveModelMapping(provider, ModelDefaults())
 	if len(mapping) != len(raw) {
@@ -895,12 +898,12 @@ func TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides(t *tes
 			t.Fatalf("显式映射被改写: %s", source)
 		}
 	}
+	require.Equal(t, "gemini-pro-agent", MapAntigravityModel(provider, "gemini-3.1-pro-high"))
 }
 
 // TestProviderGetModelMapping_AntigravityGemini31ProAliasesRespectWildcard
-// supplies an identity rule together with a Gemini wildcard. Exact default
-// aliases must remain absent so the configured wildcard retains its selection
-// role.
+// supplies an identity rule together with a Gemini wildcard. The configured
+// wildcard can match Gemini 3.1 aliases without exact entries in the saved map.
 func TestProviderGetModelMapping_AntigravityGemini31ProAliasesRespectWildcard(t *testing.T) {
 	t.Parallel()
 
@@ -908,8 +911,8 @@ func TestProviderGetModelMapping_AntigravityGemini31ProAliasesRespectWildcard(t 
 		Platform: capability.PlatformAntigravity,
 		Credentials: map[string]any{
 			"model_mapping": map[string]any{
-				antigravity.AntigravityGemini31ProAgentModel: antigravity.AntigravityGemini31ProAgentModel,
-				"gemini-3.1-*": "custom-wildcard",
+				"gemini-pro-agent": "gemini-pro-agent",
+				"gemini-3.1-*":     "custom-wildcard",
 			},
 		},
 	}
@@ -1075,8 +1078,8 @@ func TestProviderGetModelMapping_GoogleOnePreservesExplicitMapping(t *testing.T)
 }
 
 // TestProviderGetModelMapping_AntigravityRespectsWildcardOverride supplies one
-// Gemini wildcard target. Default exact aliases must remain absent, and a
-// matching concrete request must resolve through the supplied wildcard.
+// Gemini wildcard target. The wildcard must handle concrete Gemini names when
+// the saved mapping has no exact rule for those names.
 func TestProviderGetModelMapping_AntigravityRespectsWildcardOverride(t *testing.T) {
 	provider := &acct.Record{
 		Platform: capability.PlatformAntigravity,
@@ -1382,7 +1385,7 @@ func TestProviderIsModelSupported_QoderMappingWhitelistSemantics(t *testing.T) {
 				"model_whitelist": []any{"claude-opus-4-6"},
 			},
 			requestedModel: "ultimate",
-			expected:       true,
+			expected:       false,
 		},
 		{
 			name: "legacy raw self mapping is not treated as a whitelist",
@@ -1403,6 +1406,7 @@ func TestProviderIsModelSupported_QoderMappingWhitelistSemantics(t *testing.T) {
 				Credentials: tt.credentials,
 			}
 
+			attachQoderModelPolicyFixture(provider)
 			require.Equal(t, tt.expected, provider.IsModelSupported(tt.requestedModel, ModelDefaults(), ModelRules(provider)))
 		})
 	}
@@ -1421,6 +1425,7 @@ func TestProviderGetConfiguredRequestModels_QoderMappingWhitelistSemantics(t *te
 			},
 		},
 	}
+	attachQoderModelPolicyFixture(mappingOnly)
 	models := mappingOnly.GetConfiguredRequestModels(ModelDefaults())
 	require.Contains(t, models, "claude-opus-4-6")
 	require.Contains(t, models, "auto")
@@ -1446,27 +1451,23 @@ func TestProviderGetConfiguredRequestModels_QoderMappingWhitelistSemantics(t *te
 	require.Equal(t, []string{"claude-opus-4-6", "glm-5.2"}, whitelistOnly.GetConfiguredRequestModels(ModelDefaults()))
 }
 
-// TestProviderIsModelSupported_QoderSiteCompatibility compares global and CN
-// eligibility under a wildcard scope. Site restrictions must survive explicit
-// aliases, while mapping into a supported site route can admit that alias.
+// TestProviderIsModelSupported_QoderSiteCompatibility checks account catalogs
+// under wildcard configuration. Missing observations and absent automatic routes
+// stay unavailable, while explicitly configured custom routing remains possible.
 func TestProviderIsModelSupported_QoderSiteCompatibility(t *testing.T) {
-	global := &acct.Record{Platform: capability.PlatformQoder, Credentials: map[string]any{"site": "global", "model_whitelist": []string{"*"}}}
-	cn := &acct.Record{Platform: capability.PlatformQoder, Credentials: map[string]any{"site": "cn", "model_whitelist": []string{"*"}}}
-
-	require.True(t, global.IsModelSupported("claude-opus-4-6", ModelDefaults(), ModelRules(global)))
-	require.False(t, cn.IsModelSupported("claude-opus-4-6", ModelDefaults(), ModelRules(cn)))
-	require.False(t, global.IsModelSupported("qwen3.6-flash", ModelDefaults(), ModelRules(global)))
-	require.True(t, cn.IsModelSupported("qwen3.6-flash", ModelDefaults(), ModelRules(cn)))
-	require.False(t, global.IsModelSupported("q36fmodel", ModelDefaults(), ModelRules(global)))
-	require.True(t, cn.IsModelSupported("q36fmodel", ModelDefaults(), ModelRules(cn)))
-	require.True(t, global.IsModelSupported("mmodel", ModelDefaults(), ModelRules(global)))
-	require.True(t, cn.IsModelSupported("mmodel", ModelDefaults(), ModelRules(cn)))
-	require.True(t, global.IsModelSupported("unknown-raw-key", ModelDefaults(), ModelRules(global)))
-
-	cn.Credentials["model_mapping"] = map[string]any{"claude-opus-4-6": "ultimate"}
-	require.False(t, cn.IsModelSupported("claude-opus-4-6", ModelDefaults(), ModelRules(cn)), "显式映射不能绕过站点的上游模型限制")
-	cn.Credentials["model_mapping"] = map[string]any{"claude-opus-4-6": "q36fmodel"}
-	require.True(t, cn.IsModelSupported("claude-opus-4-6", ModelDefaults(), ModelRules(cn)), "别名可以映射到该站点支持的模型")
+	global := &acct.Record{Platform: capability.PlatformQoder, Credentials: map[string]any{"site": "global"}}
+	cn := &acct.Record{Platform: capability.PlatformQoder, Credentials: map[string]any{"site": "cn"}}
+	attachQoderModelPolicyFixture(global)
+	attachQoderModelPolicyFixture(cn)
+	require.True(t, global.IsModelSupported("ultimate", ModelDefaults(), ModelRules(global)))
+	require.False(t, cn.IsModelSupported("ultimate", ModelDefaults(), ModelRules(cn)))
+	require.False(t, global.IsModelSupported("claude-opus-4-6", ModelDefaults(), ModelRules(global)))
+	require.True(t, cn.IsModelSupported("qwen3.8-max", ModelDefaults(), ModelRules(cn)))
+	require.False(t, global.IsModelSupported("unknown-raw-key", ModelDefaults(), ModelRules(global)))
+	cn.Credentials["model_mapping"] = map[string]any{"custom": "future-route"}
+	require.True(t, cn.IsModelSupported("custom", ModelDefaults(), ModelRules(cn)))
+	cn.Extra = nil
+	require.False(t, cn.IsModelSupported("qwen3.8-max", ModelDefaults(), ModelRules(cn)))
 }
 
 // TestUnrestrictedModels checks unknown models across all ordinary platforms
@@ -1476,11 +1477,12 @@ func TestUnrestrictedModels(t *testing.T) {
 	for _, platform := range []string{"anthropic", "openai", "gemini", "antigravity", "qoder", "grok", "kimi", "zhipu", "deepseek"} {
 		t.Run(platform, func(t *testing.T) {
 			value := &acct.Record{Platform: platform, Type: "apikey", Credentials: map[string]any{}}
+			attachQoderModelPolicyFixture(value)
 			for _, explicit := range []bool{false, true} {
 				if explicit {
 					value.Credentials["model_whitelist"] = []any{}
 				}
-				require.True(t, value.IsModelSupported("unknown-new-model", ModelDefaults(), ModelRules(value)))
+				require.Equal(t, platform != "qoder", value.IsModelSupported("unknown-new-model", ModelDefaults(), ModelRules(value)))
 				require.True(t, value.HasUnrestrictedModelScope(ModelDefaults()))
 			}
 			value.Credentials["model_mapping"] = map[string]any{"alias": "unknown-new-model"}
@@ -1520,4 +1522,19 @@ func newOpenAIOAuthProviderForModelTest() *acct.Record {
 		Platform: capability.PlatformOpenAI,
 		Type:     capability.ProviderTypeOAuth,
 	}
+}
+
+// attachQoderModelPolicyFixture supplies a current account observation for policy
+// tests. It leaves other platforms untouched and keeps CN-only eligibility
+// separate from the international tier used by explicit mapping cases.
+func attachQoderModelPolicyFixture(value *acct.Record) {
+	if value.Platform != capability.PlatformQoder {
+		return
+	}
+	value.Type = capability.ProviderTypeCosy
+	models := []qodermodel.Model{{Key: "auto", Alias: "auto", Enabled: true}, {Key: "qmodel_38max", Alias: "qwen3.8-max", Enabled: true}, {Key: "gmodel", Alias: "glm-5.3", Enabled: true}}
+	if value.GetCredential("site") != "cn" {
+		models = append(models, qodermodel.Model{Key: "ultimate", Alias: "ultimate", Enabled: true})
+	}
+	value.Extra = map[string]any{acct.QoderCatalogExtraKey: &acct.QoderCatalogSnapshot{Identity: acct.QoderCatalogIdentity(value), Version: "fixture", FetchedAt: time.Now(), Models: models}}
 }

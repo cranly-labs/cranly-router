@@ -121,3 +121,28 @@ func TestQoderDoesNotReportSynthesizedModel(t *testing.T) {
 		}
 	}
 }
+
+// TestStatelessResponsesRequests rejects storage and continuation before dispatch.
+// Both output modes accept omitted storage and explicit false for independent
+// requests whose complete conversation is present in the submitted input.
+func TestStatelessResponsesRequests(t *testing.T) {
+	executor := NewExecutor(ExecuteOptions{})
+	for _, stream := range []bool{true, false} {
+		target := &Target{ProviderID: 1, Session: func(context.Context) (*SessionContext, error) { return &SessionContext{}, nil }, Client: func() (StreamClient, error) { return modelTestClient{}, nil }}
+		for _, field := range []string{"", `,"store":false`, `,"store":true`, `,"previous_response_id":"resp_test"`, `,"conversation":"conv_test"`} {
+			body := []byte(`{"model":"auto","input":"hello"` + field + "}")
+			sink := &modelTestSink{}
+			result, err := executor.Execute(t.Context(), upstream.AttemptInput{Protocol: protocol.ProtocolOpenAIResponses, Target: target, Body: body, Stream: stream}, sink)
+			if field == "" || field == `,"store":false` {
+				require.NoError(t, err)
+				require.NotEmpty(t, result.RequestID)
+				require.Contains(t, sink.String(), `"store":false`)
+				require.Empty(t, executor.conversations.Items)
+			} else {
+				var invalid *RequestError
+				require.ErrorAs(t, err, &invalid)
+				require.False(t, result.Served)
+			}
+		}
+	}
+}

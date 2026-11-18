@@ -644,3 +644,65 @@ func legacyExtractOpenAIUsageFromJSONBytes(body []byte) (ForwardUsage, bool) {
 		CacheReadInputTokens: response.Usage.InputTokenDetails.CachedTokens,
 	}, true
 }
+
+// TestResponsesCacheWriteLifetimesSurviveSparseCompletion observes both TTL
+// counters before a sparse terminal frame. It checks that HTTP streaming and
+// WebSocket use the same aggregate and drop contradictory detail on a later update.
+func TestResponsesCacheWriteLifetimesSurviveSparseCompletion(t *testing.T) {
+	progress := []byte(`{"type":"response.in_progress","response":{"usage":{"input_tokens":12000,"output_tokens":0,"input_tokens_details":{"cached_tokens":4000,"cache_write_tokens":7000,"cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}}}}}`)
+	terminal := []byte(`{"type":"response.completed","response":{"usage":{"output_tokens":22}}}`)
+	inconsistent := []byte(`{"type":"response.completed","response":{"usage":{"input_tokens":12000,"output_tokens":22,"input_tokens_details":{"cached_tokens":4000,"cache_write_tokens":6500,"cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}}}}}`)
+	observeHTTP := func(body []byte, usage *ForwardUsage) {
+		ParseSSEUsageBytesWithType(body, "", usage)
+	}
+	for name, observe := range map[string]func([]byte, *ForwardUsage){
+		"http": observeHTTP, "websocket": ParseWSResponseUsageFromCompletedEvent,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var usage ForwardUsage
+			observe(progress, &usage)
+			observe(terminal, &usage)
+			require.Equal(t, 12000, usage.InputTokens)
+			require.Equal(t, 22, usage.OutputTokens)
+			require.Equal(t, 4000, usage.CacheReadInputTokens)
+			require.Equal(t, 7000, usage.CacheCreationInputTokens)
+			require.Equal(t, &CacheWriteTokensDetails{Tokens30m: 3000, Tokens12h: 4000}, usage.CacheWriteDetails)
+
+			observe(inconsistent, &usage)
+			require.Equal(t, 6500, usage.CacheCreationInputTokens)
+			require.Nil(t, usage.CacheWriteDetails)
+		})
+	}
+}
+
+// TestResponsesZeroTerminalKeepsWholeUsagePolicy checks full zero observations
+// after classified writes. The raw reader resets its usage, while the
+// placeholder-compatible HTTP and WebSocket readers retain the entire prior
+// snapshot, including ordinary input and output.
+func TestResponsesZeroTerminalKeepsWholeUsagePolicy(t *testing.T) {
+	progress := []byte(`{"type":"response.in_progress","response":{"usage":{"input_tokens":12000,"output_tokens":10,"input_tokens_details":{"cached_tokens":4000,"cache_write_tokens":7000,"cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}}}}}`)
+	terminal := []byte(`{"type":"response.completed","response":{"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`)
+	observeHTTP := func(body []byte, usage *ForwardUsage) {
+		ParseSSEUsageBytesWithType(body, "", usage)
+	}
+	for _, scenario := range []struct {
+		name    string                      // usage reader name
+		observe func([]byte, *ForwardUsage) // reader's wire entry point
+		retains bool                        // complete zero placeholder behavior
+	}{
+		{name: "unconditional SSE", observe: ParseSSEUsageBytes},
+		{name: "live SSE", observe: observeHTTP, retains: true},
+		{name: "websocket", observe: ParseWSResponseUsageFromCompletedEvent, retains: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var usage ForwardUsage
+			scenario.observe(progress, &usage)
+			expected := ForwardUsage{}
+			if scenario.retains {
+				expected = usage
+			}
+			scenario.observe(terminal, &usage)
+			require.Equal(t, expected, usage)
+		})
+	}
+}

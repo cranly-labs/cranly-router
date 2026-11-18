@@ -27,8 +27,8 @@ import (
 // complete accepted state, including version and expiry, before restoring or
 // deleting it; a competing commit therefore makes an older rollback stale.
 // Commits retain a longer compatible history and the highest observed token
-// counts. Response aliases resolve to canonical keys, while request parsing can
-// append previous_response_id input or recognize a matching suffix.
+// counts. Clients supply every conversation turn, so no input text or
+// tool output needs to survive in the store after request completion.
 
 // RequestMetadata carries caller isolation and inbound headers used for
 // session-key selection.
@@ -41,19 +41,15 @@ type RequestMetadata struct {
 	Headers http.Header // inbound request headers
 }
 
-// QoderConversationStore owns versioned conversation snapshots and aliases
-// protected by Mu.
+// QoderConversationStore holds versioned fingerprints and usage observations under Mu.
 type QoderConversationStore struct {
-	// Mu protects Ttl, Items, and Aliases during concurrent store use. Plans prune,
+	// Mu protects Ttl and Items during concurrent store use. Plans prune,
 	// resolve, publish, and roll back under this mutex. Treat stored state pointers
 	// and their fingerprint slices as immutable after publication; commits replace
 	// them and copy fingerprints for retained snapshots.
 	Mu    sync.Mutex                         // conversation map mutex
 	Ttl   time.Duration                      // stored state lifetime
 	Items map[string]*QoderConversationState // canonical conversation states
-	// Aliases maps external response or session IDs to canonical conversation keys.
-	// OpenAI Responses uses this map to resolve previous_response_id.
-	Aliases map[string]string // external identifier targets
 }
 
 // QoderConversationState is a published session-history and usage snapshot
@@ -143,16 +139,7 @@ type QoderConversationDiagnostics struct {
 	OutboundPayloadBytes int    // complete payload bytes
 }
 
-// QoderConversationPlanOptions controls continuation input handling during
-// saved-session reuse.
-type QoderConversationPlanOptions struct {
-	// AppendToExisting permits continuation input to inherit omitted system/tools
-	// and extend saved history. Execute enables it for Responses requests carrying
-	// previous_response_id.
-	AppendToExisting bool // continuation append mode
-}
-
-// NewQoderConversationStore allocates conversation state and alias maps with the
+// NewQoderConversationStore allocates the conversation fingerprint map with the
 // supplied TTL. Nonpositive TTL selects QoderConversationTTL; expiration is
 // checked when planning rather than by a background cleanup goroutine.
 func NewQoderConversationStore(ttl time.Duration) *QoderConversationStore {
@@ -160,23 +147,22 @@ func NewQoderConversationStore(ttl time.Duration) *QoderConversationStore {
 		ttl = QoderConversationTTL
 	}
 	return &QoderConversationStore{
-		Ttl:     ttl,
-		Items:   make(map[string]*QoderConversationState),
-		Aliases: make(map[string]string),
+		Ttl:   ttl,
+		Items: make(map[string]*QoderConversationState),
 	}
 }
 
-// PlanWithOptions selects a session and captures a snapshot for one request's
-// later commits. Nil store or blank key disables reuse and creates a random
-// session. Otherwise planning prunes expired state, resolves aliases, and
-// compares system, tool, and message fingerprints under Mu.
+// Plan selects a session and captures an immutable snapshot for later commits.
+// A nil store or blank key disables reuse and creates a random session.
+// Otherwise planning prunes expired state, resolves aliases, and compares
+// system, tool, and message fingerprints while holding the conversation mutex.
 //
-// A normal prefix match reuses the session while retaining the full supplied
-// messages. AppendToExisting permits missing system/tools to inherit saved
-// fingerprints and unmatched nonempty input to append, unless that input is
-// already a saved suffix. Mismatches produce full-replay plans and keep the
-// previous snapshot for rollback.
-func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any, messages []QoderMessage, options QoderConversationPlanOptions) *QoderConversationPlan {
+// Matching prefixes retain session identity while sending the complete supplied
+// history. Missing conversation input is restored before planning, so fingerprints
+// never stand in for omitted instructions, tools, or messages. Mismatches select
+// a new full-replay session and preserve the previous snapshot for rollback;
+// acceptance and completion retain their existing version checks.
+func (s *QoderConversationStore) Plan(key, system string, tools []any, messages []QoderMessage) *QoderConversationPlan {
 	systemFingerprint := QoderSystemFingerprint(system)
 	toolsFingerprint := QoderFingerprintAny(tools)
 	messageFingerprints := QoderMessageFingerprints(messages)
@@ -224,14 +210,7 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 	if s.Items == nil {
 		s.Items = make(map[string]*QoderConversationState)
 	}
-	if s.Aliases == nil {
-		s.Aliases = make(map[string]string)
-	}
-	// Expired state and its aliases must disappear together before session lookup.
-	// Prune under Mu so a response alias cannot reuse a conversation removed in
-	// this plan.
 	s.PruneExpiredLocked(now)
-	key = s.ResolveAliasLocked(key)
 	storeItemCount := len(s.Items)
 	state := s.Items[key]
 	if state == nil {
@@ -241,64 +220,15 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 		delete(s.Items, key)
 		return fullPlan(true, "expired", state, storeItemCount)
 	}
-	effectiveSystemFingerprint := systemFingerprint
 	if state.SystemFingerprint != systemFingerprint {
-		if !options.AppendToExisting || strings.TrimSpace(system) != "" {
-			return fullPlan(true, "system_mismatch", state, storeItemCount)
-		}
-		effectiveSystemFingerprint = state.SystemFingerprint
-	}
-	effectiveToolsFingerprint := toolsFingerprint
-	if state.ToolsFingerprint != toolsFingerprint {
-		if !options.AppendToExisting || len(tools) != 0 {
-			return fullPlan(true, "tools_mismatch", state, storeItemCount)
-		}
-		effectiveToolsFingerprint = state.ToolsFingerprint
-	}
-	if state.SystemFingerprint != effectiveSystemFingerprint {
 		return fullPlan(true, "system_mismatch", state, storeItemCount)
 	}
-	if state.ToolsFingerprint != effectiveToolsFingerprint {
+	if state.ToolsFingerprint != toolsFingerprint {
 		return fullPlan(true, "tools_mismatch", state, storeItemCount)
 	}
 	prefixLen, ok := QoderConversationPrefixLen(state.MessageFingerprints, messageFingerprints)
 	if !ok {
-		if !options.AppendToExisting || len(messageFingerprints) == 0 {
-			return fullPlan(true, "prefix_mismatch", state, storeItemCount)
-		}
-		// previous_response_id can carry only new input. Recognize a saved suffix
-		// before appending so reconnect replay does not duplicate the continuation
-		// fingerprints.
-		committedFingerprints := append([]string(nil), state.MessageFingerprints...)
-		matchStatus := "reused_previous_response"
-		if QoderConversationHasSuffix(state.MessageFingerprints, messageFingerprints) {
-			matchStatus = "reused_previous_response_suffix"
-		} else {
-			committedFingerprints = append(committedFingerprints, messageFingerprints...)
-		}
-		return &QoderConversationPlan{
-			Store:                 s,
-			Key:                   key,
-			SessionID:             state.SessionID,
-			MessagesToSend:        messages,
-			IncludeSystem:         strings.TrimSpace(system) != "",
-			IncludeTools:          len(tools) > 0,
-			Reused:                true,
-			SystemFingerprint:     effectiveSystemFingerprint,
-			ToolsFingerprint:      effectiveToolsFingerprint,
-			MessageFingerprints:   committedFingerprints,
-			CommittedFingerprints: committedFingerprints,
-			HasPreviousUsage:      state.HasUsage,
-			PreviousUsageInput:    state.LastUsageInput,
-			PreviousUsageOutput:   state.LastUsageOutput,
-			MatchStatus:           matchStatus,
-			PreviousMessageCount:  len(state.MessageFingerprints),
-			PrefixMessageCount:    len(state.MessageFingerprints),
-			StoreItemCount:        storeItemCount,
-			PreviousFirstHash:     FirstQoderFingerprint(state.MessageFingerprints),
-			CurrentFirstHash:      currentFirstHash,
-			PreviousState:         CloneQoderConversationState(state),
-		}
+		return fullPlan(true, "prefix_mismatch", state, storeItemCount)
 	}
 	// Prefix matching chooses compatible session identity. Retain the entire
 	// submitted history and its system/tools flags here because this branch does
@@ -311,8 +241,8 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 		IncludeSystem:         true,
 		IncludeTools:          true,
 		Reused:                true,
-		SystemFingerprint:     effectiveSystemFingerprint,
-		ToolsFingerprint:      effectiveToolsFingerprint,
+		SystemFingerprint:     systemFingerprint,
+		ToolsFingerprint:      toolsFingerprint,
 		MessageFingerprints:   messageFingerprints,
 		CommittedFingerprints: messageFingerprints,
 		HasPreviousUsage:      state.HasUsage,
@@ -328,23 +258,11 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 	}
 }
 
-// PruneExpiredLocked removes nil or expired states and then aliases lacking a
-// stored target. Nil stores are ignored. Callers hold Mu across this operation so planning observes
-// one state-and-alias view. Expiry uses now.After, leaving a state present at
-// its exact expiry instant.
-//
-// An empty Items map clears every alias. Alias retention checks direct targets
-// in Items, so a link to another alias is removed unless that intermediate key
-// also holds state. Subsequent response lookup can then start a new
-// conversation when its saved target has disappeared.
+// PruneExpiredLocked removes expired fingerprint and usage observations. Callers
+// hold Mu throughout the sweep so a concurrent request cannot extend a session
+// while its previous deadline is being examined.
 func (s *QoderConversationStore) PruneExpiredLocked(now time.Time) {
 	if s == nil {
-		return
-	}
-	if len(s.Items) == 0 {
-		for alias := range s.Aliases {
-			delete(s.Aliases, alias)
-		}
 		return
 	}
 	for key, state := range s.Items {
@@ -352,55 +270,6 @@ func (s *QoderConversationStore) PruneExpiredLocked(now time.Time) {
 			delete(s.Items, key)
 		}
 	}
-	for alias, target := range s.Aliases {
-		if _, ok := s.Items[target]; !ok {
-			delete(s.Aliases, alias)
-		}
-	}
-}
-
-// ResolveAliasLocked follows aliases until a canonical, missing, self, or
-// repeated link is reached. Callers hold Mu while consulting the map. Blank
-// input and nil store return the supplied key.
-//
-// Alias chains can refer through several response IDs to one conversation.
-// Tracking visited keys prevents a cycle from looping forever, and a missing
-// target leaves the last resolved key available for the caller's state lookup.
-// No alias entries are rewritten during resolution.
-func (s *QoderConversationStore) ResolveAliasLocked(key string) string {
-	if s == nil || strings.TrimSpace(key) == "" {
-		return key
-	}
-	seen := map[string]struct{}{}
-	for {
-		target := strings.TrimSpace(s.Aliases[key])
-		if target == "" || target == key {
-			return key
-		}
-		if _, ok := seen[key]; ok {
-			return key
-		}
-		seen[key] = struct{}{}
-		key = target
-	}
-}
-
-// AddAlias records a trimmed external ID against a resolved canonical
-// conversation key. Blank, equal, or nil-store inputs are ignored; alias
-// resolution and publication occur together under Mu so the saved target uses
-// one map view.
-func (s *QoderConversationStore) AddAlias(alias, canonical string) {
-	alias = strings.TrimSpace(alias)
-	canonical = strings.TrimSpace(canonical)
-	if s == nil || alias == "" || canonical == "" || alias == canonical {
-		return
-	}
-	s.Mu.Lock()
-	defer s.Mu.Unlock()
-	if s.Aliases == nil {
-		s.Aliases = make(map[string]string)
-	}
-	s.Aliases[alias] = s.ResolveAliasLocked(canonical)
 }
 
 // Commit publishes a nonnil plan's completion fingerprints and optional first
@@ -409,16 +278,6 @@ func (s *QoderConversationStore) AddAlias(alias, canonical string) {
 // plan panics before that delegation.
 func (p *QoderConversationPlan) Commit(usages ...upstream.TokenUsage) {
 	p.CommitFingerprints(p.CommittedFingerprints, usages...)
-}
-
-// AddAlias records an external response identifier for this plan's conversation
-// key. Nil or disabled plans are ignored; the store trims and resolves the
-// canonical target while holding its mutex.
-func (p *QoderConversationPlan) AddAlias(alias string) {
-	if p == nil || p.Store == nil || strings.TrimSpace(p.Key) == "" {
-		return
-	}
-	p.Store.AddAlias(alias, p.Key)
 }
 
 // CommitAccepted publishes the fingerprints appropriate to transport acceptance
@@ -680,7 +539,7 @@ func (p *QoderConversationPlan) Log(metadata RequestMetadata, providerID int64, 
 		zap.Int64("api_key_id", metadata.APIKeyID),
 		zap.String("request_id", p.Diagnostics.RequestID),
 		zap.Bool("reused", p.Reused),
-		zap.Bool("used_full_replay", !p.Reused),
+		zap.Bool("used_full_replay", p.IncludeSystem && p.IncludeTools && len(p.MessagesToSend) >= p.Diagnostics.OriginalMessages),
 		zap.Bool("include_system", p.IncludeSystem),
 		zap.Bool("include_tools", p.IncludeTools),
 		zap.Int("store_item_count", p.StoreItemCount),
@@ -783,7 +642,7 @@ func (p *QoderConversationPlan) LogUsage(metadata RequestMetadata, providerID in
 		zap.Int64("api_key_id", metadata.APIKeyID),
 		zap.String("request_id", diag.RequestID),
 		zap.Bool("reused", p.Reused),
-		zap.Bool("used_full_replay", !p.Reused),
+		zap.Bool("used_full_replay", p.IncludeSystem && p.IncludeTools && len(p.MessagesToSend) >= diag.OriginalMessages),
 		zap.Bool("include_system", p.IncludeSystem),
 		zap.Bool("include_tools", p.IncludeTools),
 		zap.Int("original_messages", diag.OriginalMessages),
@@ -805,17 +664,15 @@ func (p *QoderConversationPlan) LogUsage(metadata RequestMetadata, providerID in
 }
 
 // QoderConversationKey selects a provider-scoped key and names the source used
-// for reuse. Explicit body sessions win unless generated from the current
-// response; prompt-cache keys, Anthropic metadata session IDs, headers, and
-// Claude Code stable prefixes follow. A generated response session is considered
-// after those stable sources.
+// for reuse. Explicit body sessions win, followed by prompt-cache keys, Anthropic
+// metadata session IDs, headers and Claude Code stable prefixes.
 //
 // API-key isolation is applied to every client-supplied session source, and
 // provider scoping keeps the same caller session separate across accounts. A
-// request lacking all stable sources receives a random request key. The protocol
-// argument is currently unused in this selection.
-func QoderConversationKey(metadata RequestMetadata, providerID int64, protocol string, request QoderPayloadRequest) (string, string) {
-	if value := strings.TrimSpace(request.ExplicitSession); value != "" && !request.AutoResponseSession {
+// request lacking a stable source leaves the lookup key empty. The planner
+// creates a fresh upstream session without retaining unreachable fingerprints.
+func QoderConversationKey(metadata RequestMetadata, providerID int64, request QoderPayloadRequest) (string, string) {
+	if value := strings.TrimSpace(request.ExplicitSession); value != "" {
 		return QoderProviderScopedConversationKey(providerID, QoderConversationExplicitSessionKey(metadata, value)), "body_session"
 	}
 	if value := strings.TrimSpace(request.PromptCacheKey); value != "" {
@@ -832,10 +689,7 @@ func QoderConversationKey(metadata RequestMetadata, providerID int64, protocol s
 			return QoderProviderScopedConversationKey(providerID, "claude_code_prefix:"+upstream.IsolateSessionID(metadata.APIKeyID, value)), "claude_code_prefix"
 		}
 	}
-	if value := strings.TrimSpace(request.ExplicitSession); value != "" {
-		return QoderProviderScopedConversationKey(providerID, QoderConversationExplicitSessionKey(metadata, value)), "body_session"
-	}
-	return QoderProviderScopedConversationKey(providerID, "request:"+uuid.NewString()), "request"
+	return "", "request"
 }
 
 // QoderProviderScopedConversationKey prefixes a trimmed key with a positive
@@ -887,22 +741,6 @@ func QoderConversationPrefixLen(previous, current []string) (int, bool) {
 		}
 	}
 	return len(previous), true
-}
-
-// QoderConversationHasSuffix reports whether full ends with the supplied
-// fingerprint sequence. An empty or longer suffix returns false, so append
-// planning can distinguish a repeated nonempty continuation from new input.
-func QoderConversationHasSuffix(full, suffix []string) bool {
-	if len(suffix) == 0 || len(suffix) > len(full) {
-		return false
-	}
-	offset := len(full) - len(suffix)
-	for i := range suffix {
-		if full[offset+i] != suffix[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // FirstQoderFingerprint returns the first ordered history hash for

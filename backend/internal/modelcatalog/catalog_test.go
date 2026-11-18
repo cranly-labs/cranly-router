@@ -264,7 +264,7 @@ func TestCatalogFiltersProviderOfferings(t *testing.T) {
 	attrs, found := catalog.LookupAttributes("openrouter/original", []string{"original"})
 	require.False(t, found)
 	require.Nil(t, attrs.Context)
-	resolved := catalog.View().Resolve(Target{Model: "openrouter/public-only"}, Attributes{})
+	resolved := catalog.Publication().LookupRoute("", "", "openrouter/public-only")
 	require.Nil(t, resolved.Attributes.Context)
 	require.True(t, catalog.RequiresExact("openrouter/original"))
 	page := NewIndex(catalog).Search(AttributeQuery{})
@@ -346,7 +346,7 @@ func TestCatalogRetainsRuntimeServiceRecords(t *testing.T) {
 			require.False(t, *entry.Attributes.Temperature)
 			require.NotNil(t, entry.Attributes.InputModalities)
 			require.Empty(t, *entry.Attributes.InputModalities)
-			result := catalog.View().Resolve(Target{CatalogProvider: provider, Model: "runtime-model"}, Attributes{})
+			result := catalog.Publication().LookupRoute(provider, provider, "runtime-model")
 			require.Equal(t, 32, *result.Attributes.Context)
 			require.Equal(t, []string{"low", "high"}, result.Attributes.Efforts())
 			author, found := catalog.Lookup([]string{"runtime-model"})
@@ -366,20 +366,14 @@ func TestCatalogRetainsRuntimeServiceRecords(t *testing.T) {
 func TestOfflineCatalogFiltering(t *testing.T) {
 	body, err := Offline()
 	require.NoError(t, err)
-	var source struct {
-		Models    map[string]json.RawMessage `json:"models"`    // public model metadata
-		Providers map[string]json.RawMessage `json:"providers"` // complete provider input
-	}
+	var source map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(body, &source))
-	catalog, err := Parse(body)
+	catalog, err := ParseV2(body)
 	require.NoError(t, err)
-	for id := range source.Models {
-		require.Contains(t, catalog.Entries, normalize(id))
-	}
 	page := NewIndex(catalog).Search(AttributeQuery{})
-	require.Less(t, len(page.Providers), len(source.Providers))
+	require.Less(t, len(page.Providers), len(source))
 	for _, provider := range []string{"openrouter", "302ai", "requesty"} {
-		require.Contains(t, source.Providers, provider)
+		require.Contains(t, source, provider)
 		require.True(t, catalog.Providers[provider])
 		require.NotContains(t, page.Providers, provider)
 		for _, entry := range page.Items {
@@ -398,7 +392,7 @@ func TestOfflineCatalogFiltering(t *testing.T) {
 		"stepfun-ai/step-3.5-flash", "stepfun-ai-step-plan/step-3.5-flash", "stepfun-step-plan/step-3.5-flash",
 		"xiaomi-token-plan-cn/mimo-v2.6-pro", "xiaomi-token-plan-ams/mimo-v2.6-pro", "xiaomi-token-plan-sgp/mimo-v2.6-pro",
 		"tencent-coding-plan/hunyuan-2.0-thinking", "tencent-tokenhub/hy3", "tencent-token-plan/hy3",
-		"bailing/Ling-1T", "longcat/LongCat-2.0", "nova/nova-2-lite-v1",
+		"longcat/LongCat-2.0", "nova/nova-2-lite-v1",
 		"arcee/trinity-large-thinking", "watsonx/ibm/granite-4-h-small",
 		"azure/phi-4", "azure-cognitive-services/phi-4", "github-copilot/mai-code-1.1-flash",
 		"inception/mercury-2", "morph/morph-v3-large", "sensenova/sensenova-6.8-flash-lite",
@@ -566,5 +560,31 @@ func TestCatalogProtectsQualifiedAliases(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, provider, entry.Provider)
 		require.Equal(t, 1.0, *entry.Cost.Input)
+	}
+}
+
+// TestUnknownServiceMetadataDoesNotInvalidatePrices supplies an unfamiliar SDK
+// declaration for one model. Pricing and public attributes remain readable,
+// while protocol selection receives no invented encoding for the service model.
+func TestUnknownServiceMetadataDoesNotInvalidatePrices(t *testing.T) {
+	catalog, err := Parse([]byte(`{"providers":{"openai":{"models":{"gpt-4":{"provider":"future-format","type":{"future":true},"cost":{"input":1},"limit":{"input":8192}}}}},"models":{"openai/gpt-4":{"name":"GPT-4"}}}`))
+	require.NoError(t, err)
+	entry, found := catalog.Lookup([]string{"openai/gpt-4"})
+	require.True(t, found)
+	require.Equal(t, new(8192), entry.Attributes.InputLimit)
+	require.Empty(t, catalog.Publication().Offering("openai", "gpt-4").SDK)
+}
+
+// TestNormalizeRemoteCatalogURL updates known official URLs and keeps
+// configured mirror or local-only locations. Explicit model-type filtering
+// survives the endpoint switch without touching credential-bearing URLs.
+func TestNormalizeRemoteCatalogURL(t *testing.T) {
+	for input, want := range map[string]string{
+		"https://models.dev/catalog.json?type=all": RemoteURL + "?type=all",
+		"https://models.dev/api.json?type=chat":    RemoteURL + "?type=chat",
+		"https://mirror.example/catalog.json":      "https://mirror.example/catalog.json",
+		"":                                         "",
+	} {
+		require.Equal(t, want, NormalizeRemoteURL(input))
 	}
 }

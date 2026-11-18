@@ -3,12 +3,17 @@ package qoder
 import (
 	"encoding/json"
 	"maps"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
+	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
+	"github.com/TokenFlux/TokenRouter/internal/provider/qodermodel"
 )
 
 // Payload fixtures compare protocol history with Qoder's scalar content,
@@ -47,7 +52,9 @@ func TestQoderHighestContextFlowsThroughAllProtocols(t *testing.T) {
 			request, err := tt.parse(tt.body)
 			require.NoError(t, err)
 			request.Site = SiteGlobal
-			payload, modelKey := BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+			request.Capabilities = observedPayloadModel(t, SiteGlobal, request.Model)
+			payload, modelKey, buildErr := BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+			require.NoError(t, buildErr)
 
 			require.Equal(t, "qmodel_38max", modelKey)
 			assertQoderContextCapabilityForTest(t, payload, 1000000, true)
@@ -55,33 +62,56 @@ func TestQoderHighestContextFlowsThroughAllProtocols(t *testing.T) {
 	}
 }
 
-// TestQoderContextCapabilityUsesSiteAndRouteFallback builds fixed, selectable,
-// unknown, hidden, and removed routes across sites. It checks each input limit
-// and whether runtime override fields are present.
-func TestQoderContextCapabilityUsesSiteAndRouteFallback(t *testing.T) {
-	tests := []struct {
-		name        string // fixture case label
-		site        Site   // selected credential site
-		model       string // model lookup input
-		wantTokens  int    // expected input tokens
-		wantRuntime bool   // expected runtime selection
-	}{
-		{name: "国际站固定 Auto", site: SiteGlobal, model: "auto", wantTokens: 180000},
-		{name: "国际站 Kimi K2.7", site: SiteGlobal, model: "kimi-k2.7-code", wantTokens: 256000, wantRuntime: true},
-		{name: "国际站 MiniMax M3", site: SiteGlobal, model: "minimax-m3", wantTokens: 1000000, wantRuntime: true},
-		{name: "国内站 Qwen3.6", site: SiteCN, model: "qwen3.6-flash", wantTokens: 1000000, wantRuntime: true},
-		{name: "国内站 MiniMax M2.7", site: SiteCN, model: "minimax-m2.7", wantTokens: 200000, wantRuntime: true},
-		{name: "未知 route", site: SiteGlobal, model: "custom-route", wantTokens: FallbackMaxInputTokens},
-		{name: "隐藏 route", site: SiteGlobal, model: "cmodel", wantTokens: FallbackMaxInputTokens},
-		{name: "已移除 route", site: SiteCN, model: "qmodel_preview", wantTokens: FallbackMaxInputTokens},
-	}
+// TestQoderDesktopPayloadUsesCanonicalContent reproduces the current desktop
+// request shape for Cantus. User text stays in content, chat prompts remain
+// strings, and observed display metadata replaces obsolete fixed model hints.
+func TestQoderDesktopPayloadUsesCanonicalContent(t *testing.T) {
+	request, err := ParseQoderChatCompletionsPayload([]byte(`{"model":"cmodel","messages":[{"role":"user","content":"hello"}]}`))
+	require.NoError(t, err)
+	request.Capabilities = observedPayloadModel(t, SiteGlobal, request.Model)
+	payload, model, buildErr := BuildQoderPayloadWithOptions(request, "fixture", request.Messages, true, true)
+	require.NoError(t, buildErr)
+	require.Equal(t, "cmodel", model)
+	config := qoderFixtureValue[map[string]any](t, payload["model_config"])
+	require.Equal(t, "Cantus", config["display_name"])
+	require.Equal(t, true, config["is_vl"])
+	require.Equal(t, "", payload["aliyun_user_type"])
+	chat := qoderFixtureValue[map[string]any](t, payload["chat_context"])
+	require.Equal(t, "hello", chat["text"])
+	require.Equal(t, "hello", qoderFixtureValue[map[string]any](t, chat["extra"])["originalContent"])
+	message := qoderFixtureValue[map[string]any](t, qoderFixtureValue[[]any](t, payload["messages"])[0])
+	require.NotContains(t, message, "contents")
+	require.NotContains(t, message, "response_meta")
+	require.Equal(t, "hello", qoderFixtureValue[map[string]any](t, qoderFixtureValue[[]any](t, message["content"])[0])["text"])
+	require.Equal(t, true, qoderFixtureValue[map[string]any](t, payload["parameters"])["enable_thinking"])
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			payload, _, err := BuildQoderPayloadFromChatCompletionsForSite([]byte(`{"model":"`+tt.model+`","messages":[{"role":"user","content":"hello"}]}`), "personal_standard", tt.site)
-			require.NoError(t, err)
-			assertQoderContextCapabilityForTest(t, payload, tt.wantTokens, tt.wantRuntime)
-		})
+// TestQoderPayloadCacheMarkerDoesNotMutateInput attaches an automatic cache
+// marker to outgoing text. The original text block remains unchanged for
+// conversation fingerprinting and subsequent attempt preparation.
+func TestQoderPayloadCacheMarkerDoesNotMutateInput(t *testing.T) {
+	block := map[string]any{"type": "text", "text": "hello"}
+	message := QoderPayloadMessageFromMessage(QoderMessage{Role: "user", Text: "hello", TextContent: []map[string]any{block}})
+	AddQoderEphemeralCacheControl([]any{message})
+	require.NotContains(t, block, "cache_control")
+	require.Contains(t, qoderFixtureValue[map[string]any](t, qoderFixtureValue[[]any](t, message["content"])[0]), "cache_control")
+}
+
+// TestQoderContextCapabilityUsesSiteAndRouteFallback compares observed selectable
+// routes with unknown and retired names. Only observed capabilities introduce
+// runtime context fields; a missing observation keeps the execution default.
+func TestQoderContextCapabilityUsesSiteAndRouteFallback(t *testing.T) {
+	for _, test := range []struct {
+		model      string // request model identifier
+		limit      int    // expected input tokens
+		selectable bool   // expected context override
+	}{{"auto", 1000000, true}, {"kimi-k2.8-preview", 1000000, true}, {"minimax-m3.1-flash", 1000000, true}, {"custom-route", 200000, false}, {"kimi-k2.7-code", 200000, false}} {
+		request, err := ParseQoderChatCompletionsPayload([]byte(`{"model":"` + test.model + `","messages":[{"role":"user","content":"hello"}]}`))
+		require.NoError(t, err)
+		request.Capabilities = observedPayloadModel(t, SiteGlobal, test.model)
+		payload, _, buildErr := BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+		require.NoError(t, buildErr)
+		assertQoderContextCapabilityForTest(t, payload, test.limit, test.selectable)
 	}
 }
 
@@ -89,20 +119,19 @@ func TestQoderContextCapabilityUsesSiteAndRouteFallback(t *testing.T) {
 // runtime-context route. It checks the mapped max effort and million-token limit
 // coexist in parameters and ideModelConfigOverride.
 func TestQoderContextCapabilityMergesWithThinkingOverride(t *testing.T) {
-	payload, _, err := BuildQoderPayloadFromChatCompletionsForSite([]byte(`{
-		"model":"deepseek-v4-pro",
-		"reasoning_effort":"high",
-		"messages":[{"role":"user","content":"hello"}]
-	}`), "personal_standard", SiteGlobal)
+	request, err := ParseQoderChatCompletionsPayload([]byte(`{"model":"deepseek-v4-pro","reasoning_effort":"high","messages":[{"role":"user","content":"hello"}]}`))
 	require.NoError(t, err)
+	request.Capabilities = observedPayloadModel(t, SiteGlobal, request.Model)
+	payload, _, buildErr := BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+	require.NoError(t, buildErr)
 	assertQoderContextCapabilityForTest(t, payload, 1000000, true)
 
 	parameters := requireQoderPayloadMapForTest(t, payload["parameters"], "parameters")
-	require.Equal(t, "max", parameters["reasoning_effort"])
+	require.Equal(t, "high", parameters["reasoning_effort"])
 	chatContext := requireQoderPayloadMapForTest(t, payload["chat_context"], "chat_context")
 	extra := requireQoderPayloadMapForTest(t, chatContext["extra"], "chat_context.extra")
 	runtimeOverride := requireQoderPayloadMapForTest(t, extra["ideModelConfigOverride"], "chat_context.extra.ideModelConfigOverride")
-	require.Equal(t, "max", runtimeOverride["reasoning_effort"])
+	require.Equal(t, "high", runtimeOverride["reasoning_effort"])
 	require.Equal(t, 1000000, runtimeOverride["max_input_tokens"])
 }
 
@@ -162,18 +191,18 @@ func TestBuildQoderPayloadFromChatCompletions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "auto", modelKey)
 	require.Equal(t, true, payload["stream"])
-	require.Equal(t, "personal_standard", payload["aliyun_user_type"])
+	require.Equal(t, "", payload["aliyun_user_type"])
 	parameters, _ := payload["parameters"].(map[string]any)
 	modelConfig, _ := payload["model_config"].(map[string]any)
 	chatContext, _ := payload["chat_context"].(map[string]any)
-	chatText, _ := chatContext["text"].(map[string]any)
+	chatText, _ := chatContext["text"].(string)
 	require.Equal(t, 123, parameters["max_tokens"])
 	require.Equal(t, "auto", modelConfig["key"])
-	require.Equal(t, 180000, modelConfig["max_input_tokens"])
-	require.Equal(t, "hello", chatText["text"])
+	require.Equal(t, 200000, modelConfig["max_input_tokens"])
+	require.Equal(t, "hello", chatText)
 	business, ok := payload["business"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "1.24.2", business["version"])
+	require.Equal(t, "1.1.86-hotfix.5.3", business["version"])
 
 	messagesRaw, ok := payload["messages"].([]any)
 	require.True(t, ok)
@@ -186,8 +215,8 @@ func TestBuildQoderPayloadFromChatCompletions(t *testing.T) {
 	secondMsg, ok := messages[1].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "user", secondMsg["role"])
-	require.Equal(t, "", secondMsg["content"])
-	userContents, ok := secondMsg["contents"].([]any)
+	require.NotContains(t, secondMsg, "contents")
+	userContents, ok := secondMsg["content"].([]any)
 	require.True(t, ok)
 	firstContent, ok := userContents[0].(map[string]any)
 	require.True(t, ok)
@@ -206,17 +235,22 @@ func TestBuildQoderPayloadFromChatCompletions(t *testing.T) {
 // version emitted for that site.
 func TestBuildQoderPayloadUsesCNModelAndClientVersion(t *testing.T) {
 	body := []byte(`{
-		"model":"qwen3.6-flash",
+		"model":"qwen3.8-flash",
 		"messages":[{"role":"user","content":"hello"}]
 	}`)
 
-	payload, modelKey, err := BuildQoderPayloadFromChatCompletionsForSite(body, "personal_standard", SiteCN)
+	request, err := ParseQoderChatCompletionsPayload(body)
+	require.NoError(t, err)
+	request.Site = SiteCN
+	request.Capabilities = observedPayloadModel(t, SiteCN, request.Model)
+	payload, modelKey, buildErr := BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+	require.NoError(t, buildErr)
 
 	require.NoError(t, err)
-	require.Equal(t, "q36fmodel", modelKey)
+	require.Equal(t, "qfmodel", modelKey)
 	business, ok := payload["business"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "1.24.2", business["version"])
+	require.Equal(t, "1.1.86-hotfix.5.3", business["version"])
 }
 
 // TestBuildQoderPayloadUserSystemReplacesBuiltInSystem supplies one user-defined
@@ -344,7 +378,7 @@ func TestBuildQoderPayloadFromChatCompletionsMergesParallelToolHistory(t *testin
 	require.Len(t, messages, 4)
 	assistant := qoderFixtureValue[map[string]any](t, messages[1])
 	require.Equal(t, "assistant", assistant["role"])
-	require.Empty(t, assistant["contents"], "DeepSeek reasoning_content must not be replayed as visible assistant text before tool_calls")
+	require.Empty(t, assistant["content"], "DeepSeek reasoning_content must not be replayed as visible assistant text before tool_calls")
 	toolCalls := qoderFixtureValue[[]any](t, assistant["tool_calls"])
 	require.Len(t, toolCalls, 2)
 	require.Equal(t, "call_a", qoderFixtureValue[map[string]any](t, toolCalls[0])["id"])
@@ -379,14 +413,15 @@ func TestBuildQoderPayloadAddsCacheControlToLastEligibleTextBlock(t *testing.T) 
 	payload, _, err := BuildQoderPayloadFromAnthropicMessages(body, "personal_standard")
 	require.NoError(t, err)
 	messages := qoderFixtureValue[[]any](t, payload["messages"])
-	firstContents := qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[0])["contents"])
+	firstContents := qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[0])["content"])
 	require.Equal(t, "ephemeral", qoderFixtureValue[map[string]any](t, qoderFixtureValue[map[string]any](t, firstContents[0])["cache_control"])["type"])
-	lastContents := qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[len(messages)-1])["contents"])
+	lastContents := qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[len(messages)-1])["content"])
 	lastText := qoderFixtureValue[map[string]any](t, lastContents[len(lastContents)-1])
 	require.Equal(t, "last", lastText["text"])
 	require.Equal(t, "ephemeral", qoderFixtureValue[map[string]any](t, lastText["cache_control"])["type"])
 	for _, rawMessage := range messages {
-		for _, rawBlock := range qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, rawMessage)["contents"]) {
+		blocks, _ := qoderFixtureValue[map[string]any](t, rawMessage)["content"].([]any)
+		for _, rawBlock := range blocks {
 			block := qoderFixtureValue[map[string]any](t, rawBlock)
 			if block["type"] != "text" {
 				require.NotContains(t, block, "cache_control")
@@ -410,16 +445,16 @@ func TestBuildQoderPayloadFromAnthropicMessages(t *testing.T) {
 
 	payload, modelKey, err := BuildQoderPayloadFromAnthropicMessages(body, "personal_standard")
 	require.NoError(t, err)
-	require.Equal(t, "ultimate", modelKey)
+	require.Equal(t, "claude-opus-4-6", modelKey)
 	require.Equal(t, 456, qoderFixtureValue[map[string]any](t, payload["parameters"])["max_tokens"])
-	require.Equal(t, "ultimate", qoderFixtureValue[map[string]any](t, payload["model_config"])["key"])
+	require.Equal(t, "claude-opus-4-6", qoderFixtureValue[map[string]any](t, payload["model_config"])["key"])
 
 	messages := qoderFixtureValue[[]any](t, payload["messages"])
 	require.Len(t, messages, 3)
 	require.Equal(t, "system", qoderFixtureValue[map[string]any](t, messages[0])["role"])
 	require.Equal(t, "system one\nsystem two", qoderFixtureValue[map[string]any](t, messages[0])["content"])
-	require.Equal(t, "", qoderFixtureValue[map[string]any](t, messages[1])["content"])
-	userContents := qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[1])["contents"])
+	require.NotContains(t, qoderFixtureValue[map[string]any](t, messages[1]), "contents")
+	userContents := qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[1])["content"])
 	require.Equal(t, "hello", qoderFixtureValue[map[string]any](t, userContents[0])["text"])
 	toolResult := qoderFixtureValue[map[string]any](t, messages[2])
 	require.Equal(t, "tool", toolResult["role"])
@@ -634,22 +669,14 @@ func TestQoderResponsesPayloadDropsUnansweredParallelFunctionCall(t *testing.T) 
 	require.Equal(t, "call_a", request.Messages[2].ToolCallID)
 }
 
-// TestQoderResponsesPayloadDropsOrphanFunctionCallOutput supplies user input and
-// an output lacking its owning call. It checks that normalized history retains
-// only the original user text.
-func TestQoderResponsesPayloadDropsOrphanFunctionCallOutput(t *testing.T) {
-	request, err := ParseQoderResponsesPayload([]byte(`{
-		"model":"deepseek-v4-pro",
-		"input":[
-			{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
-			{"type":"function_call_output","call_id":"ghost","output":"stale output"}
-		]
-	}`))
-
-	require.NoError(t, err)
-	require.Len(t, request.Messages, 1)
-	require.Equal(t, "user", request.Messages[0].Role)
-	require.Equal(t, "hello", request.Messages[0].Text)
+// TestQoderResponsesRejectsOrphanOutput requires an owning call in the current
+// request. Accepting an orphan would silently discard a client tool result
+// or send it without its corresponding assistant turn.
+func TestQoderResponsesRejectsOrphanOutput(t *testing.T) {
+	_, err := ParseQoderResponsesPayload([]byte(`{"model":"auto","input":[{"type":"function_call_output","call_id":"missing","output":"result"}]}`))
+	var invalid *RequestError
+	require.ErrorAs(t, err, &invalid)
+	require.Equal(t, "missing_tool_call", invalid.Code)
 }
 
 // TestQoderChatSystemTextPreservesDeveloperMessages supplies system, developer,
@@ -831,20 +858,20 @@ func TestQoderThinkingDirectiveFromBody(t *testing.T) {
 		effortPaths []string               // ordered effort selectors
 		want        QoderThinkingDirective // expected thinking directive
 	}{
-		{name: "missing stays disabled", body: `{}`, effortPaths: []string{"reasoning.effort"}},
-		{name: "minimal normalizes low", body: `{"reasoning":{"effort":"minimal"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "low"}},
-		{name: "low stays low", body: `{"reasoning_effort":"LOW"}`, effortPaths: []string{"reasoning_effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "low"}},
-		{name: "medium stays medium", body: `{"reasoning":{"effort":"medium"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "medium"}},
-		{name: "high stays high", body: `{"reasoning":{"effort":"high"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "high"}},
-		{name: "very high aliases map max", body: `{"reasoning":{"effort":"very_high"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "max"}},
-		{name: "positive budget maps max", body: `{"thinking":{"budget_tokens":1}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "max"}},
+		{name: "missing stays unspecified", body: `{}`, effortPaths: []string{"reasoning.effort"}},
+		{name: "minimal normalizes low", body: `{"reasoning":{"effort":"minimal"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "low"}},
+		{name: "low stays low", body: `{"reasoning_effort":"LOW"}`, effortPaths: []string{"reasoning_effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "low"}},
+		{name: "medium stays medium", body: `{"reasoning":{"effort":"medium"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "medium"}},
+		{name: "high stays high", body: `{"reasoning":{"effort":"high"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "high"}},
+		{name: "very high aliases map xhigh", body: `{"reasoning":{"effort":"very_high"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "xhigh"}},
+		{name: "positive budget maps max", body: `{"thinking":{"budget_tokens":1}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "max"}},
 		{name: "zero budget stays disabled", body: `{"thinking":{"budget_tokens":0}}`, effortPaths: []string{"reasoning.effort"}},
-		{name: "enabled without budget maps max", body: `{"thinking":{"type":"enabled"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "max"}},
-		{name: "adaptive without budget maps max", body: `{"thinking":{"type":"adaptive"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "max"}},
-		{name: "explicit effort beats budget", body: `{"reasoning":{"effort":"low"},"thinking":{"budget_tokens":32768}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "low"}},
-		{name: "disabled beats effort and budget", body: `{"reasoning":{"effort":"max"},"thinking":{"type":"disabled","budget_tokens":32768}}`, effortPaths: []string{"reasoning.effort"}},
-		{name: "none effort beats enabled", body: `{"reasoning":{"effort":"none"},"thinking":{"type":"enabled","budget_tokens":32768}}`, effortPaths: []string{"reasoning.effort"}},
-		{name: "invalid effort falls back to budget", body: `{"reasoning":{"effort":"banana"},"thinking":{"budget_tokens":8}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "max"}},
+		{name: "enabled uses model default", body: `{"thinking":{"type":"enabled"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true}},
+		{name: "adaptive uses model default", body: `{"thinking":{"type":"adaptive"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true}},
+		{name: "explicit effort beats budget", body: `{"reasoning":{"effort":"low"},"thinking":{"budget_tokens":32768}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "low"}},
+		{name: "disabled beats effort and budget", body: `{"reasoning":{"effort":"max"},"thinking":{"type":"disabled","budget_tokens":32768}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true}},
+		{name: "none effort beats enabled", body: `{"reasoning":{"effort":"none"},"thinking":{"type":"enabled","budget_tokens":32768}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true}},
+		{name: "invalid effort falls back to budget", body: `{"reasoning":{"effort":"banana"},"thinking":{"budget_tokens":8}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Specified: true, Enabled: true, Effort: "max"}},
 		{name: "invalid effort alone stays disabled", body: `{"reasoning":{"effort":"banana"}}`, effortPaths: []string{"reasoning.effort"}},
 	}
 
@@ -865,7 +892,7 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 		"messages":[{"role":"user","content":"hello"}]
 	}`))
 	require.NoError(t, err)
-	require.Equal(t, QoderThinkingDirective{Enabled: true, Effort: "medium"}, chat.Thinking)
+	require.Equal(t, QoderThinkingDirective{Specified: true, Enabled: true, Effort: "medium"}, chat.Thinking)
 
 	responses, err := ParseQoderResponsesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
@@ -873,7 +900,7 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 		"input":"hello"
 	}`))
 	require.NoError(t, err)
-	require.Equal(t, QoderThinkingDirective{Enabled: true, Effort: "max"}, responses.Thinking)
+	require.Equal(t, QoderThinkingDirective{Specified: true, Enabled: true, Effort: "xhigh"}, responses.Thinking)
 
 	// The fixture supplies both effort and budget. Check the effort first so native
 	// Messages control precedence remains observable after tool-definition bridge
@@ -886,7 +913,7 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 		"messages":[{"role":"user","content":"hello"}]
 	}`))
 	require.NoError(t, err)
-	require.Equal(t, QoderThinkingDirective{Enabled: true, Effort: "low"}, messages.Thinking)
+	require.Equal(t, QoderThinkingDirective{Specified: true, Enabled: true, Effort: "low"}, messages.Thinking)
 
 	// Unknown effort is handled by Qoder's control normalizer. This request
 	// verifies the shared tool converter does not reject it before that handling
@@ -915,69 +942,52 @@ func TestBuildQoderAnthropicThinkingPayloadDefaultsToGlobalSite(t *testing.T) {
 
 	payload, modelKey, err := BuildQoderPayloadFromAnthropicMessages(body, "personal_standard")
 	require.NoError(t, err)
-	require.Equal(t, "dmodel", modelKey)
-	assertQoderThinkingPayload(t, payload, true, "max", true)
+	require.Equal(t, "deepseek-v4-pro", modelKey)
+	assertQoderThinkingPayload(t, payload, false, "", false)
 }
 
-// TestBuildQoderThinkingPayloadBySiteAndModelCapability combines controls with
-// toggle, effort, unsupported, and unknown routes. It checks route-specific
-// switch and effort values for global and CN payloads.
+// TestBuildQoderThinkingPayloadBySiteAndModelCapability applies current model
+// metadata to Chat input on both sites. Defaults, disable intent, effort
+// promotion, and unsupported raw routes retain consistent mirrored fields.
 func TestBuildQoderThinkingPayloadBySiteAndModelCapability(t *testing.T) {
-	tests := []struct {
-		name           string         // fixture case label
-		site           Site           // selected credential site
-		model          string         // model lookup input
-		extra          map[string]any // additional request fields
-		wantEnabled    bool           // expected thinking switch
-		wantEffort     string         // expected effort text
-		wantEffortPath bool           // expected effort presence
-	}{
-		{name: "global qwen 38 public alias on", site: SiteGlobal, model: "qwen3.8-max", extra: map[string]any{"reasoning_effort": "low"}, wantEnabled: true},
-		{name: "global qwen 38 raw route on", site: SiteGlobal, model: "qmodel_38max", extra: map[string]any{"reasoning_effort": "max"}, wantEnabled: true},
-		{name: "global qwen 38 missing control off", site: SiteGlobal, model: "qwen3.8-max", wantEffort: "none", wantEffortPath: true},
-		{name: "global qwen 38 explicit disabled", site: SiteGlobal, model: "qwen3.8-max", extra: map[string]any{"thinking": map[string]any{"type": "disabled", "budget_tokens": 32768}}, wantEffort: "none", wantEffortPath: true},
-		{name: "global qwen 38 invalid effort off", site: SiteGlobal, model: "qwen3.8-max", extra: map[string]any{"reasoning_effort": "banana"}, wantEffort: "none", wantEffortPath: true},
-		{name: "global qwen 38 invalid effort with budget on", site: SiteGlobal, model: "qwen3.8-max", extra: map[string]any{"reasoning_effort": "banana", "thinking": map[string]any{"budget_tokens": 8}}, wantEnabled: true},
-		{name: "global qwen 37 max default off", site: SiteGlobal, model: "qwen3.7-max", wantEffort: "none", wantEffortPath: true},
-		{name: "global qwen 37 plus toggle on", site: SiteGlobal, model: "qwen3.7-plus", extra: map[string]any{"reasoning_effort": "max"}, wantEnabled: true},
-		{name: "global deepseek pro low to high", site: SiteGlobal, model: "deepseek-v4-pro", extra: map[string]any{"reasoning_effort": "low"}, wantEnabled: true, wantEffort: "high", wantEffortPath: true},
-		{name: "global deepseek flash budget to max", site: SiteGlobal, model: "deepseek-v4-flash", extra: map[string]any{"thinking": map[string]any{"budget_tokens": 1}}, wantEnabled: true, wantEffort: "max", wantEffortPath: true},
-		{name: "global glm high to max", site: SiteGlobal, model: "glm-5.2", extra: map[string]any{"reasoning_effort": "high"}, wantEnabled: true, wantEffort: "max", wantEffortPath: true},
-		{name: "global glm 53 low stays low", site: SiteGlobal, model: "glm-5.3", extra: map[string]any{"reasoning_effort": "low"}, wantEnabled: true, wantEffort: "low", wantEffortPath: true},
-		{name: "global glm 53 high stays high", site: SiteGlobal, model: "glm-5.3", extra: map[string]any{"reasoning_effort": "high"}, wantEnabled: true, wantEffort: "high", wantEffortPath: true},
-		{name: "cn qwen 38 public alias on", site: SiteCN, model: "qwen3.8-max", extra: map[string]any{"reasoning_effort": "low"}, wantEnabled: true},
-		{name: "cn qwen 38 raw route on", site: SiteCN, model: "qmodel_38max", extra: map[string]any{"reasoning_effort": "max"}, wantEnabled: true},
-		{name: "cn qwen 37 max default off", site: SiteCN, model: "qwen3.7-max", wantEffort: "none", wantEffortPath: true},
-		{name: "cn qwen 37 plus toggle on", site: SiteCN, model: "qwen3.7-plus", extra: map[string]any{"reasoning_effort": "max"}, wantEnabled: true},
-		{name: "cn deepseek pro low to high", site: SiteCN, model: "deepseek-v4-pro", extra: map[string]any{"reasoning_effort": "low"}, wantEnabled: true, wantEffort: "high", wantEffortPath: true},
-		{name: "cn deepseek flash budget to max", site: SiteCN, model: "deepseek-v4-flash", extra: map[string]any{"thinking": map[string]any{"budget_tokens": 1}}, wantEnabled: true, wantEffort: "max", wantEffortPath: true},
-		{name: "cn glm high to max", site: SiteCN, model: "glm-5.2", extra: map[string]any{"reasoning_effort": "high"}, wantEnabled: true, wantEffort: "max", wantEffortPath: true},
-		{name: "cn glm 53 medium maps high", site: SiteCN, model: "glm-5.3", extra: map[string]any{"reasoning_effort": "medium"}, wantEnabled: true, wantEffort: "high", wantEffortPath: true},
-		{name: "cn glm 53 max stays max", site: SiteCN, model: "gmodel", extra: map[string]any{"reasoning_effort": "max"}, wantEnabled: true, wantEffort: "max", wantEffortPath: true},
-		{name: "cn deepseek explicit disabled", site: SiteCN, model: "deepseek-v4-pro", extra: map[string]any{"thinking": map[string]any{"type": "disabled", "budget_tokens": 32768}}, wantEffort: "none", wantEffortPath: true},
-		{name: "cn auto ignored", site: SiteCN, model: "auto", extra: map[string]any{"reasoning_effort": "max"}},
-		{name: "cn qwen 36 ignored", site: SiteCN, model: "qwen3.6-flash", extra: map[string]any{"reasoning_effort": "max"}},
-		{name: "cn kimi ignored", site: SiteCN, model: "kimi-k2.7-code", extra: map[string]any{"reasoning_effort": "max"}},
-		{name: "cn minimax ignored", site: SiteCN, model: "minimax-m2.7", extra: map[string]any{"reasoning_effort": "max"}},
-		{name: "cn unknown route ignored", site: SiteCN, model: "custom-model", extra: map[string]any{"reasoning_effort": "max"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := map[string]any{
-				"model": tt.model,
-				"messages": []any{
-					map[string]any{"role": "user", "content": "hello"},
-				},
-			}
-			maps.Copy(body, tt.extra)
+	for _, site := range []Site{SiteGlobal, SiteCN} {
+		for _, test := range []struct {
+			model   string         // current public alias
+			extra   map[string]any // native reasoning controls
+			enabled bool           // expected thinking switch
+			effort  string         // expected encoded effort
+		}{{"qwen3.8-max", nil, true, "medium"}, {"qwen3.8-max", map[string]any{"reasoning_effort": "high"}, true, "xhigh"}, {"qwen4-max", map[string]any{"reasoning_effort": "low"}, true, "low"}, {"qwen4-max", map[string]any{"thinking": map[string]any{"type": "disabled"}}, false, "none"}, {"deepseek-v4-pro", map[string]any{"reasoning_effort": "low"}, true, "high"}, {"glm-5.3", map[string]any{"reasoning_effort": "medium"}, true, "high"}, {"minimax-m3.1-flash", nil, true, "xhigh"}} {
+			body := map[string]any{"model": test.model, "messages": []map[string]string{{"role": "user", "content": "hello"}}}
+			maps.Copy(body, test.extra)
 			raw, err := json.Marshal(body)
 			require.NoError(t, err)
-			payload, _, err := BuildQoderPayloadFromChatCompletionsForSite(raw, "personal_standard", tt.site)
+			request, err := ParseQoderChatCompletionsPayload(raw)
 			require.NoError(t, err)
-			assertQoderThinkingPayload(t, payload, tt.wantEnabled, tt.wantEffort, tt.wantEffortPath)
-		})
+			request.Site = site
+			request.Capabilities = observedPayloadModel(t, site, test.model)
+			payload, _, buildErr := BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+			require.NoError(t, buildErr)
+			assertQoderThinkingPayload(t, payload, test.enabled, test.effort, true)
+		}
 	}
+}
+
+// observedPayloadModel resolves sanitized desktop metadata for payload tests.
+// Unknown or retired names have no observation and therefore exercise the
+// execution fallback instead of reintroducing historical service-key aliases.
+func observedPayloadModel(t *testing.T, site Site, model string) *modelrules.Resolution {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/models_" + string(site) + ".json")
+	require.NoError(t, err)
+	models, err := ParseModelCatalog(raw)
+	require.NoError(t, err)
+	index := qodermodel.NewCatalog(string(site), models)
+	entry, found := index.Lookup(model)
+	if !found {
+		return nil
+	}
+	resolution := modelrules.View{}.Resolve(modelrules.Target{Platform: "qoder", Site: string(site), Model: entry.Key, ProviderModels: index}, modelcatalog.Attributes{})
+	return &resolution
 }
 
 // TestBuildQoderThinkingPayloadKeepsGlobalOnlyModelIsolated requests max effort
@@ -993,4 +1003,109 @@ func TestBuildQoderThinkingPayloadKeepsGlobalOnlyModelIsolated(t *testing.T) {
 	payload, _, err := BuildQoderPayloadFromChatCompletionsForSite(body, "personal_standard", SiteGlobal)
 	require.NoError(t, err)
 	assertQoderThinkingPayload(t, payload, false, "", false)
+}
+
+// TestEffectiveToolPolicyAcrossTextProtocols exercises each public request shape.
+// A mandatory choice must fail before an upstream request and optional tools
+// are removed from both the native payload and the session tool fingerprint.
+func TestEffectiveToolPolicyAcrossTextProtocols(t *testing.T) {
+	res := modelrules.View{}.Resolve(modelrules.Target{Platform: "qoder", Model: "route"}, modelcatalog.Attributes{ToolCall: new(false)})
+	executor := NewExecutor(ExecuteOptions{})
+	for _, tc := range []struct {
+		wire  protocol.ProtocolID
+		parse func([]byte) (QoderPayloadRequest, error)
+		body  string
+		named string
+	}{
+		{protocol.ProtocolOpenAIChatCompletions, ParseQoderChatCompletionsPayload, `{"model":"route","messages":[{"role":"user","content":"test"}],"tools":[{"type":"function","function":{"name":"demo"}}]}`, `{"type":"function","function":{"name":"demo"}}`},
+		{protocol.ProtocolOpenAIResponses, ParseQoderResponsesPayload, `{"model":"route","input":"test","tools":[{"type":"function","name":"demo"}]}`, `{"type":"function","name":"demo"}`},
+		{protocol.ProtocolAnthropicMessages, ParseQoderAnthropicMessagesPayload, `{"model":"route","max_tokens":16,"messages":[{"role":"user","content":"test"}],"tools":[{"name":"demo","input_schema":{"type":"object"}}]}`, `{"type":"tool","name":"demo"}`},
+	} {
+		t.Run(string(tc.wire), func(t *testing.T) {
+			for _, choice := range []string{"", tc.named, `"required"`, `"auto"`, `"none"`} {
+				nativeChoice := choice
+				if tc.wire == protocol.ProtocolAnthropicMessages && choice != tc.named && choice != "" {
+					if choice == `"required"` {
+						nativeChoice = `{"type":"any"}`
+					} else {
+						nativeChoice = `{"type":` + choice + `}`
+					}
+				}
+				var body map[string]any
+				require.NoError(t, json.Unmarshal([]byte(tc.body), &body))
+				if nativeChoice != "" {
+					body["tool_choice"] = json.RawMessage(nativeChoice)
+				}
+				raw, err := json.Marshal(body)
+				require.NoError(t, err)
+				req, err := tc.parse(raw)
+				require.NoError(t, err)
+				req.Capabilities = &res
+				req.ExplicitSession = "fixture"
+				payload, _, plan, err := executor.PrepareConversation(&Target{ProviderID: 1}, tc.wire, req)
+				if choice == tc.named || choice == `"required"` {
+					var invalid *RequestError
+					require.ErrorAs(t, err, &invalid)
+					require.Equal(t, "unsupported_tool_choice", invalid.Code)
+					require.Nil(t, plan)
+				} else {
+					require.NoError(t, err)
+					require.Empty(t, payload["tools"])
+					require.NotContains(t, qoderFixtureValue[map[string]any](t, payload["parameters"]), "tool_choice")
+					require.Equal(t, QoderFingerprintAny([]any{}), plan.ToolsFingerprint)
+				}
+			}
+		})
+	}
+}
+
+// TestConditionalToolsUseNativeEffort verifies conditional tool policy after
+// effort projection. A missing intermediate level must use its supported higher
+// level both for the wire parameters and for deciding whether tools are allowed.
+func TestConditionalToolsUseNativeEffort(t *testing.T) {
+	model := qodermodel.Model{Key: "route", Reasoning: new(true), DefaultThinking: true, DefaultEffort: "low", Efforts: []string{"low", "high"}}
+	index := qodermodel.NewCatalog("fixture", []qodermodel.Model{model})
+	res := modelrules.View{}.Resolve(modelrules.Target{Model: model.Key, ProviderModels: index}, modelcatalog.Attributes{ToolCall: new(true), Conditions: new(modelcatalog.ParameterConditions{"tool_call": {Efforts: []string{"high"}}})})
+	request := QoderPayloadRequest{Model: model.Key, Capabilities: &res, Tools: []any{map[string]any{"type": "function", "function": map[string]any{"name": "demo"}}}}
+	disabled, _, err := BuildQoderPayloadWithOptions(request, "", nil, true, true)
+	require.NoError(t, err)
+	require.Empty(t, disabled["tools"])
+	request.Thinking = QoderThinkingDirective{Specified: true, Enabled: true, Effort: "medium"}
+	enabled, _, err := BuildQoderPayloadWithOptions(request, "", nil, true, true)
+	require.NoError(t, err)
+	require.Len(t, enabled["tools"], 1)
+	require.Equal(t, "high", qoderFixtureValue[map[string]any](t, enabled["parameters"])["reasoning_effort"])
+}
+
+// TestAllowedFunctionSubsetPreservesRequiredIntent checks flat and nested tool
+// selectors. Native requests should contain only the named functions, and an
+// explicit required subset must be rejected when the group disables tool calls.
+func TestAllowedFunctionSubsetPreservesRequiredIntent(t *testing.T) {
+	for _, tc := range []struct {
+		parse func([]byte) (QoderPayloadRequest, error)
+		body  string
+	}{
+		{ParseQoderChatCompletionsPayload, `{
+			"model":"x", "messages":[{"role":"user","content":"test"}],
+			"tools":[{"type":"function","function":{"name":"first"}},{"type":"function","function":{"name":"second"}}],
+			"tool_choice":{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[{"type":"function","function":{"name":"second"}}]}}
+		}`},
+		{ParseQoderResponsesPayload, `{
+			"model":"x", "input":"test",
+			"tools":[{"type":"function","name":"first"},{"type":"function","name":"second"}],
+			"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"second"}]}
+		}`},
+	} {
+		request, err := tc.parse([]byte(tc.body))
+		require.NoError(t, err)
+		out, _, err := BuildQoderPayloadWithOptions(request, "", nil, true, true)
+		require.NoError(t, err)
+		tools := QoderAnySlice(out["tools"])
+		require.Len(t, tools, 1)
+		require.Equal(t, "second", QoderDeclaredToolName(tools[0]))
+		require.Equal(t, "required", qoderFixtureValue[map[string]any](t, out["parameters"])["tool_choice"])
+		request.Capabilities = &modelrules.Resolution{Attributes: modelcatalog.Attributes{ToolCall: new(false)}}
+		_, _, err = BuildQoderPayloadWithOptions(request, "", nil, true, true)
+		require.True(t, IsRequestError(err))
+	}
 }
