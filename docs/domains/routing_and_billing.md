@@ -87,6 +87,8 @@ OpenAI 兼容的 Messages 请求，在还没向客户端提交响应时，如果
 
 分组通过 `openai_fast_policy` 选择：跟随请求、强制 Fast、强制 Ultra Fast，或关闭两种加速。全局规则优先级最高；分组级关闭后，Key 无法重新开启；分组级强制开启时，Key 仍可以关闭。详细的优先级和旧布尔字段的兼容见 [Fast 与 Ultra Fast 策略](../interfaces/openai_upstream.md#openai_fast_policy)。
 
+OpenAI 的计费档位依次为 Flex、Standard、Fast 和 Ultrafast。上游明确报告更低的档位时，结算采用该档位。Codex OAuth 返回的 `default` 可能只是回显，继续沿用转发档位。
+
 关联的价格配置还可以开启 `free_openai_fast`。最终使用 OpenAI 提供商、计费档位是 `priority` 或 `fast` 时，网关发往上游的仍是 Fast 档位，用户价格用同一分组、价格配置、长上下文和高峰规则按 Standard 重新计算。Usage Log 的 `total_cost`、提供商统计和提供商额度保留 Fast 成本；`actual_cost`、余额和订阅分配、API Key 配额使用 Standard 价格。缺少 Standard 价格时，按现有的缺价零成本记录流程处理，上游请求保持 Fast。其他平台、普通档位和不可信的认证上下文都忽略这个字段。
 
 分组还可以设置 `max_reasoning_effort` 和 `max_reasoning_effort_over_limit`。策略只处理客户端明确传入的 `reasoning.effort`、`reasoning_effort` 或 Messages 的 `output_config.effort`；客户端没传时，桥接器补出的默认值不算客户端请求。先按分组的模型范围映射（精确、前缀或后缀）得到有效档位，再按 `minimal < low < medium < high < xhigh < max` 比较：`downgrade`（默认）改写为上限值，`deny` 返回本地 403 权限错误并标记为业务限制。
@@ -210,6 +212,8 @@ Token 计费还支持单独的 `max_reasoning_effort_multiplier`，只在最终�
 价格配置的这个字段由 `268_channel_max_reasoning_effort_multiplier.sql` 持久化，提供商统计规则不接受这个字段。
 
 ### 缓存写入分档
+
+GPT 缓存写入使用 `cache_write_30m_price` 和 `cache_write_12h_price`。两个可空字段可以单独覆盖当前层的统一写入价。未手填的分档先沿用当前层的统一写入价，否则继承现有的价卡和目录解析顺序。明确的零价免费。用户结算和提供商统计都使用响应报告且与聚合数一致的分档，写入总数仍只计入输入上下文一次。用量记录的历史行保留 NULL，新行保存上游确实报告的两档计数，包括零值。
 
 缓存写入可以分成 `cache_write_price`（5 分钟）和 `cache_write_1h_price`（1 小时）两档。1h 列为 NULL 时，两档都用旧的那一列，历史价格配置和提供商统计规则的结算结果不变。这个字段适用于价格配置默认价、token 区间和提供商统计价，填写 0 表示免费；用量里缺少分档数据时，按旧的聚合 token 数计算。对应的迁移是 `261_channel_cache_write_1h_pricing.sql`。
 

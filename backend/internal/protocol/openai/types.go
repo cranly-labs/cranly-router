@@ -167,6 +167,9 @@ type ResponsesTool struct {
 // ResponsesResponse represents the typed buffered response and lifecycle
 // snapshot consumed by converters.
 type ResponsesResponse struct {
+	// Store reports the storage policy when the adapter knows it. Nil omits
+	// the field for responses whose upstream storage behavior is unspecified.
+	Store  *bool  `json:"store,omitempty"`
 	ID     string `json:"id"`     // upstream response object identity
 	Object string `json:"object"` // response object kind label
 	// CreatedAt remains present even when zero. The Responses event fixtures
@@ -288,8 +291,9 @@ type ResponsesUsage struct {
 // ResponsesInputTokensDetails represents cached, audio, and cache-write input
 // token observations.
 type ResponsesInputTokensDetails struct {
-	CachedTokens int `json:"cached_tokens,omitempty"` // cache-read input token count
-	AudioTokens  int `json:"audio_tokens,omitempty"`  // audio input token count
+	CacheWriteDetails *CacheWriteTokensDetails `json:"cache_write_tokens_details,omitempty"` // upstream TTL write counters
+	CachedTokens      int                      `json:"cached_tokens,omitempty"`              // cache-read input token count
+	AudioTokens       int                      `json:"audio_tokens,omitempty"`               // audio input token count
 	// cache-creation input token count
 	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
 	CacheWriteTokens    int `json:"cache_write_tokens,omitempty"` // cache-write input token count

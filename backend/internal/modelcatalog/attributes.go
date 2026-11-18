@@ -6,6 +6,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
@@ -162,7 +163,23 @@ func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) e
 	if !exists {
 		entry = Entry{Model: model, Provider: supplement.Provider, Source: "local_supplement"}
 	}
-	c.Entries[key] = fillAttributeSupplement(entry, *supplement.Attributes)
+	entry = fillAttributeSupplement(entry, *supplement.Attributes)
+	c.Entries[key] = entry
+	// A verified supplement can restore a public author identity missing from
+	// v2 provider offerings. Restrict it to an explicit author-qualified key so
+	// a relay's qualified price and capability entry cannot become public metadata.
+	lab, _, qualified := strings.Cut(key, "/")
+	if qualified && supplement.Provider == lab && catalogProviderOrigin(lab).lab == lab {
+		if _, published := c.publicEntries[key]; !published {
+			if c.publicEntries == nil {
+				c.publicEntries = map[string]Entry{}
+			}
+			c.publicEntries[key] = Entry{
+				Model: key, Provider: lab, Canonical: key,
+				Source: "local_supplement", Attributes: entry.Attributes, AttributeSources: entry.AttributeSources,
+			}
+		}
+	}
 	return nil
 }
 
@@ -179,14 +196,14 @@ func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) e
 // the presence of the catalog Media pointer.
 func fillAttributeSupplement(entry Entry, attributes Attributes) Entry {
 	known := map[string]struct{}{}
-	for _, field := range entry.Attributes.fieldNames() {
+	for _, field := range entry.Attributes.FieldNames() {
 		known[field] = struct{}{}
 	}
 	entry.AttributeSources = maps.Clone(entry.AttributeSources)
 	if entry.AttributeSources == nil {
 		entry.AttributeSources = map[string]string{}
 	}
-	for _, field := range attributes.fieldNames() {
+	for _, field := range attributes.FieldNames() {
 		if _, found := known[field]; !found {
 			entry.AttributeSources[field] = "local_supplement"
 		}
@@ -245,9 +262,9 @@ func Common(values []Attributes) (Attributes, bool) {
 	different := false
 	for _, value := range values[1:] {
 		different = different || !reflect.DeepEqual(value, first)
-		result.Context = minimum(result.Context, value.Context)
-		result.InputLimit = minimum(result.InputLimit, value.InputLimit)
-		result.OutputLimit = minimum(result.OutputLimit, value.OutputLimit)
+		result.Context = MinimumLimit(result.Context, value.Context)
+		result.InputLimit = MinimumLimit(result.InputLimit, value.InputLimit)
+		result.OutputLimit = MinimumLimit(result.OutputLimit, value.OutputLimit)
 		result.Reasoning = commonBool(result.Reasoning, value.Reasoning)
 		result.ToolCall = commonBool(result.ToolCall, value.ToolCall)
 		result.StructuredOutput = commonBool(result.StructuredOutput, value.StructuredOutput)
@@ -273,8 +290,8 @@ func Common(values []Attributes) (Attributes, bool) {
 		if !reflect.DeepEqual(result.Interleaved, value.Interleaved) {
 			result.Interleaved = nil
 		}
-		result.InputModalities = intersection(result.InputModalities, value.InputModalities)
-		result.OutputModalities = intersection(result.OutputModalities, value.OutputModalities)
+		result.InputModalities = IntersectStrings(result.InputModalities, value.InputModalities)
+		result.OutputModalities = IntersectStrings(result.OutputModalities, value.OutputModalities)
 		if result.DisplayName == nil || value.DisplayName == nil || *result.DisplayName != *value.DisplayName {
 			result.DisplayName = nil
 		}
@@ -282,10 +299,10 @@ func Common(values []Attributes) (Attributes, bool) {
 	return result.Clone(), different
 }
 
-// minimum selects the smaller known limit, borrowing the selected input
+// MinimumLimit selects the smaller known limit, borrowing the selected input
 // pointer. Nil means unknown; callers that expose mutable results copy the
 // pointer before returning it to consumers.
-func minimum(a, b *int) *int {
+func MinimumLimit(a, b *int) *int {
 	if a == nil {
 		return b
 	}
@@ -309,10 +326,10 @@ func commonBool(a, b *bool) *bool {
 	return a
 }
 
-// intersection returns shared choices in the left input's order using a new
+// IntersectStrings returns shared choices in the left input's order using a new
 // slice. An unknown input returns nil; known inputs with no shared choice
 // produce an explicitly empty list.
-func intersection(a, b *[]string) *[]string {
+func IntersectStrings(a, b *[]string) *[]string {
 	if a == nil || b == nil {
 		return nil
 	}

@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -24,11 +23,9 @@ import (
 //
 // Active responses are converted to provider display values with normalized
 // progress and second-or-millisecond expiry handling. Failure display can
-// decode the provider's last snapshot while retaining the current error
-// classification and reauthorization hint. The JSON snapshot round trip
-// allocates display data for this result, allowing its snapshot marker and
-// missing timestamp repair without mutating the stored snapshot
-// representation.
+// load the current account's last snapshot while retaining the current error
+// classification and reauthorization hint. The provider core checks the saved
+// account identity and returns a private copy for display enrichment.
 
 // QoderUsage binds sessions and transport; the provider core owns usage
 // caching and conditional health writes.
@@ -130,6 +127,15 @@ func (s *QoderUsage) fetchQoderQuotaUsageWithProvider(ctx context.Context, provi
 	if err != nil {
 		return nil, err
 	}
+	mode, err := qoder.ParseRefreshMode(provider.GetCredential("refresh_mode"))
+	if err != nil {
+		return nil, err
+	}
+	if mode == qoder.RefreshModeDeviceToken && strings.TrimSpace(provider.GetCredential("pat")) == "" {
+		client := qoder.NewOAuthClientForProfile(profile, nil)
+		client.Doer = QoderRequestDoer(provider, s.Transport, s.Profiles)
+		return client.GetUsagePresentation(ctx, session.Identity.SecurityOauthToken)
+	}
 	logicalPath := qoder.QuotaUsagePath
 	// CN quota queries use cached organization identity as orgId; Global queries
 	// retain the plain quota path, so site-specific routing does not leak that
@@ -225,6 +231,7 @@ func qoderQuotaInfoFromResponse(resp *qoder.QuotaUsageResponse, updatedAt time.T
 		expiresAt = &t
 	}
 	quota := &providercore.QoderQuotaInfo{
+		DisplayMode:          resp.DisplayMode,
 		UserID:               strings.TrimSpace(resp.UserID),
 		UserType:             strings.TrimSpace(resp.UserType),
 		UsageType:            strings.TrimSpace(resp.UsageType),
@@ -236,6 +243,24 @@ func qoderQuotaInfoFromResponse(resp *qoder.QuotaUsageResponse, updatedAt time.T
 		IsPlanQuotaProrated:  resp.IsPlanQuotaProrated,
 		LastUpdatedAt:        &updatedAt,
 		SnapshotFromProvider: fromSnapshot,
+	}
+	if resp.Enterprise != nil {
+		quota.Enterprise = &providercore.QoderEnterpriseUsage{OpenMode: resp.Enterprise.OpenMode, DetailURL: resp.Enterprise.DetailURL, FallbackURL: resp.Enterprise.FallbackURL}
+	}
+	for _, item := range resp.Dedicated {
+		progress := providercore.QoderQuotaProgress{Total: item.Total, Used: item.Used, Remaining: item.Remaining, Percentage: qoder.NormalizeQuotaPercentage(item.Percentage), Unit: item.Unit, Available: item.Available}
+		packageInfo := providercore.QoderDedicatedQuota{QoderQuotaProgress: progress, ID: item.ID, Name: item.Name, Description: item.Description, Status: item.Status}
+		if item.ExpiresAt > 0 {
+			expiry := time.Unix(int64(item.ExpiresAt), 0)
+			if item.ExpiresAt >= 1_000_000_000_000 {
+				expiry = time.UnixMilli(int64(item.ExpiresAt))
+			}
+			packageInfo.ExpiresAt = &expiry
+		}
+		for _, label := range item.Labels {
+			packageInfo.Labels = append(packageInfo.Labels, providercore.QoderQuotaLabel{Dimension: label.Dimension, Value: label.Value})
+		}
+		quota.Dedicated = append(quota.Dedicated, packageInfo)
 	}
 	quota.UserQuota = qoderQuotaProgressFromRaw(resp.UserQuota, true)
 	// A present zero-valued bucket is authoritative. Prefer each canonical object
@@ -271,13 +296,14 @@ func firstNonNilQoderQuotaProgress(values ...*qoder.QuotaProgress) *qoder.QuotaP
 // other typed statuses map to the network category.
 //
 // Remaining errors use the existing diagnostic string hints for those same
-// categories. A decodable provider snapshot is attached with its source marker,
+// categories. A matching account snapshot is attached with its source marker,
 // so the caller can show stale quota alongside the current failure. Snapshot
 // decode failures leave only the failure display and do not alter stored Extra.
 func buildQoderDegradedUsageAt(err error, provider *providercore.Record, now time.Time) *providercore.UsageInfo {
 	info := &providercore.UsageInfo{
-		UpdatedAt: &now,
-		Error:     fmt.Sprintf("usage API error: %v", err),
+		UpdatedAt:  &now,
+		QoderQuota: provider.SavedQoderQuota(),
+		Error:      fmt.Sprintf("usage API error: %v", err),
 	}
 	// Prefer typed status information over string hints so wrapped authentication
 	// and rate-limit failures retain their category beside a stale snapshot
@@ -292,10 +318,6 @@ func buildQoderDegradedUsageAt(err error, provider *providercore.Record, now tim
 				info.ErrorCode = providercore.ErrorCodeRateLimited
 			default:
 				info.ErrorCode = providercore.ErrorCodeNetworkError
-			}
-			if snapshot := qoderQuotaSnapshotFromExtra(provider); snapshot != nil {
-				snapshot.SnapshotFromProvider = true
-				info.QoderQuota = snapshot
 			}
 			return info
 		}
@@ -312,50 +334,5 @@ func buildQoderDegradedUsageAt(err error, provider *providercore.Record, now tim
 			info.ErrorCode = providercore.ErrorCodeNetworkError
 		}
 	}
-	if snapshot := qoderQuotaSnapshotFromExtra(provider); snapshot != nil {
-		snapshot.SnapshotFromProvider = true
-		info.QoderQuota = snapshot
-	}
 	return info
-}
-
-// qoderQuotaSnapshotFromExtra decodes the stored snapshot into a new display
-// object.
-// Absent provider data, missing snapshot or JSON encoding/decoding errors return
-// nil. A missing last-update field can be filled from the separate RFC3339
-// timestamp key; invalid legacy timing remains absent. The returned snapshot can
-// be marked or enriched without editing its stored JSON-shaped source.
-//
-// Present values that encode as JSON null or an empty object yield a zero-valued
-// snapshot. A separate valid timestamp can still populate that display object.
-func qoderQuotaSnapshotFromExtra(provider *providercore.Record) *providercore.QoderQuotaInfo {
-	if provider == nil || provider.Extra == nil {
-		return nil
-	}
-	raw, ok := provider.Extra[providercore.QoderUsageQuotaSnapshotExtraKey]
-	if !ok || raw == nil {
-		return nil
-	}
-	// Round-trip the accepted stored representation into a private display object.
-	// Unsupported JSON values or incompatible shapes discard this snapshot
-	// while preserving the query error.
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil
-	}
-	var quota providercore.QoderQuotaInfo
-	if err := json.Unmarshal(data, &quota); err != nil {
-		return nil
-	}
-	// Older snapshots can keep timing in the separate Extra key. Repair only
-	// a missing display timestamp so the snapshot's own observed time keeps
-	// precedence.
-	if quota.LastUpdatedAt == nil {
-		if updatedRaw, ok := provider.Extra[providercore.QoderUsageQuotaUpdatedAtExtraKey].(string); ok {
-			if parsed, err := time.Parse(time.RFC3339, updatedRaw); err == nil {
-				quota.LastUpdatedAt = &parsed
-			}
-		}
-	}
-	return &quota
 }

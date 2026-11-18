@@ -74,13 +74,13 @@ TypeSafe 品牌键为 `typesafe`，`jev`、`jev-latest` 和 `typesafe/jev-latest
 
 `modelcatalog` 解析 models.dev 的统一目录，负责供应商身份索引、属性和内容版本。`modelcatalog/provider.Service` 在应用生命周期内下载、缓存，并原子发布统一目录和它的价格数据；`billing/pricing` 把目录报价归一化为 `CatalogModelPricing` 计费模型，并解释本地补充和计费规则。app 的目录装配只创建一个运行实例，计费和属性的使用方共用它。目录维护的步骤封装在运行时里，对外提供生命周期、查询、快照和强制更新。价格和属性一起更新；候选目录失败时继续使用上一有效版本。成功发布时生成排序后的型号、属性检索和价格分类索引。普通查询复用内存目录，单型号按身份索引查询；管理列表先筛选分页，再复制返回条目。本地补充文件有变化时，目录版本同时包含它的内容指纹。代理失败的策略和 URL 校验，由现有的出站规则执行。
 
-生产环境只使用 models.dev 的加载流程，远程入口是 `https://models.dev/catalog.json?type=all`，按 `model_catalog.check_interval_minutes` 检查（默认每 10 分钟），使用 ETag 条件请求和本地的内容摘要；管理员可以强制更新。程序内嵌了一份经过解析验证的压缩离线快照和官方价格补充，并附上 models.dev 的 MIT 许可。官方补充随二进制一起升级和回退，不依赖外部的资源目录。首次启动和网络故障时，可以使用磁盘上或内嵌的离线目录；缓存文件是 `models_dev_catalog.json`，完整解析成功后，通过临时文件替换。管理员接口返回版本、最近一次成功更新的时间和最近一次更新的错误。本地文件在合并之前，把旧的 `litellm_provider` 归一化为 `provider`，同时有新字段时（包括空值和 `null`）以新字段为准；内部的来源分类是 `catalog`，不会覆盖实际的数据出处。远程返回 304 时，本地层照常校验。
+模型目录的默认远程入口是 `https://models.dev/experimental/v2.0/api.json`，按 `model_catalog.check_interval_minutes` 检查（默认每 10 分钟），使用 ETag 条件请求和本地的内容摘要；管理员可以强制更新。程序内嵌了一份经过解析验证的压缩离线快照和官方价格补充，并附上 models.dev 的 MIT 许可。官方补充随二进制一起升级和回退，不依赖外部的资源目录。首次启动和网络故障时，可以使用磁盘上或内嵌的离线目录；缓存文件是 `models_dev_catalog_v2.json`，完整解析成功后，通过临时文件替换。管理员接口返回版本、最近一次成功更新的时间和最近一次更新的错误。本地文件在合并之前，把旧的 `litellm_provider` 归一化为 `provider`，同时有新字段时（包括空值和 `null`）以新字段为准；内部的来源分类是 `catalog`，不会覆盖实际的数据出处。远程返回 304 时，本地层照常校验。
 
 OpenCode 的服务模型索引保留 `opencode` 和 `opencode-go` 的编码及 canonical 属性身份，供同步、路由和属性解析使用。缺少 canonical 声明时，只接受完整型号匹配到唯一公共作者模型的关系。属性解析读取当前生效目录中的这个关系，计费身份和渠道价格筛选保持独立，详见 [OpenCode 上游](opencode_upstream.md#opencode_routing)。
 
 模型编码规则由已核验的 canonical 作者、完整型号及上游协议选择。服务身份继续决定 OAuth、站点和账户策略，模型别名不改变实际提供商平台。请求中未给出思考参数时的默认值与字段清理使用同一模型身份。
 
-目录解析保留全部 `models` 公共资料，并逐条筛选 `providers` 中的服务记录。原厂识别独立于网关平台、协议和已配置的提供商，未接入的视频、语音、图片等模型也可进入目录。`modelcatalog/origins.go` 维护[厂商归属](#model_catalog_origins)，明确的 `canonical_model_id` 优先于公共资料匹配、端点和型号家族规则。
+v2 目录按提供商和完整型号解析服务记录，通过 `canonical_id` 与原厂服务条目索引公共属性。只有未在 v2 发布且现有业务有依赖的属性，通过已核验的本地补充提供。原厂识别独立于网关平台、协议和已配置的提供商，未接入的视频、语音、图片等模型也可进入目录。`modelcatalog/origins.go` 维护[厂商归属](#model_catalog_origins)，明确的 v2 `canonical_id` 优先于公共资料匹配、端点和型号家族规则。
 
 运行时另外保留 `amazon-bedrock`、`google-vertex`、`google-vertex-anthropic`、`ollama-cloud`、`kimi-code-plan-cn`、`kimi-code-plan-global`、`zhipuai-coding-plan` 和 `zai-coding-plan` 的完整属性与价格。这些服务继续出现在默认目录中，其原厂身份仍由同一套归属规则判断。其他未识别为原厂的记录从默认属性、价格、模型搜索和自动补全中排除。例如 Azure 上的 Microsoft Phi 和 Copilot 上的 MAI 属于原厂记录，其托管的 OpenAI、Anthropic 型号按其他作者识别。
 
@@ -106,7 +106,7 @@ GPT-5.6 系列按完整型号查询目录。`gpt-5.6-sol/terra/luna` 与裸的 `
 
 models.dev 的目录、属性和本地补充在同一个版本里发布，只读快照使用同样的完整身份规则。原厂的裸名和明确的供应商记录，按来源索引查询；手动填写的零价和本地新增的条目保持有效；未知型号不会按目录的遍历顺序选价格。
 
-目录从 `https://models.dev/catalog.json?type=all` 读取，包括 Jev 所属的 decision 类型。Jev 1.13、1.14 及 latest/preview 的图片输入和附件能力由目录或已核验的补充文件提供，输出仍为 text 类型的结构化决策。TypeSafe 直连型号的缺失属性由模型补充文件填写，第三方渠道报价按上述筛选规则排除。特殊模型可以进入属性目录和查价索引，网关可请求性仍由提供商配置及协议判断。
+v2 默认包含 Jev 所属的 decision 等模型类型。Jev 1.13、1.14 及 latest/preview 的图片输入和附件能力由目录或已核验的补充文件提供，输出仍为 text 类型的结构化决策。TypeSafe 直连型号的缺失属性由模型补充文件填写，第三方渠道报价按上述筛选规则排除。特殊模型可以进入属性目录和查价索引，网关可请求性仍由提供商配置及协议判断。
 
 <a id="model_catalog_origins"></a>
 ## 原厂归属
@@ -137,11 +137,15 @@ models.dev 的目录、属性和本地补充在同一个版本里发布，只读
 
 NVIDIA、Vispark、Clarifai、Cloudflare 等混合目录通过作者命名空间和公共资料识别自研条目。Inception、Morph、Agnes、Abliteration、LucidQuery 等厂商的自研或自行训练的模型同样保留。路由器、第三方模型套餐、仅更换服务别名的条目不因提供商有自己的品牌就成为原厂模型。Liquid Inference 交易平台与 Liquid AI 的公共作者同名，二者在归属表中分开处理，Liquid AI 公共模型资料照常保留。
 
-`catalog.json?type=all` 包含上游实际导出的各类模型；模型类型、缺少 token 价格或上下文为零都不构成原厂过滤条件。仅存在于上游源码、或被其生成器标为 `v2_only` 的条目，不一定进入此接口。目录不会凭型号名称补造其属性、报价或网关能力。
+v2 目录包含上游实际发布的各类模型。模型类型、缺少 token 价格或上下文为零都不构成原厂过滤条件。独立的作者资料只有在服务记录或核验补充提供时才能查询。目录不会凭型号名称补造其属性、报价或网关能力。
 
 ## 目录价格换算
 
-目录报价以美元每百万 token 提供，内部换算为美元每 token。`cost.tiers` 里明确的上下文阈值，优先于兼容的 `context_over_200k`；多个阶梯各自保留绝对的输入、输出和缓存价，按 `(min,max]` 的区间展示和结算。价格配置手动设置的区间继续优先；关闭内置长上下文规则时，不应用目录的阶梯。Fast 报价保留明确的零价，展示和结算使用同一份换算结果。
+目录以美元每百万 token 提供文本和图像 token 价，按张报价与 token 价独立。v2 的 `context.gt` 和 `context.gte` 转换成同一种内部区间边界。Fast、Flex 和 Ultrafast 使用目录服务档位金额或倍率，价格配置中的显式倍率优先。独立日期倍率与所选服务档位叠加。手填金额的计费桶沿用自定义报价，其他桶按当天目录规则计价。OpenAI 日期规则按美国太平洋时间取计价日期，其他已支持日期规则使用 UTC。v2 数值倍率作用于全部 token 桶，对象倍率仅作用于其指定的桶。无法从现有计价输入确定的区域和组合条件，沿用目录基础报价和相应的手动规则。
+
+GPT 的 `cost.text.input.cache.write` 保留 30m 与 12h 的绝对价格。Claude 的 5m 与 1h 报价沿用对应字段。Azure 旧 Cognitive Services 限定名和 Vertex Claude 限定名根据 v2 的同服务记录解析。各限定名保持独立定价身份。
+
+上述 token 价格进入计费前换算为美元每 token。v2 的价格覆盖项按上下文边界合并。各阶梯保留绝对的输入、输出和缓存价，按 `(min,max]` 的区间展示和结算。价格配置手动设置的区间继续优先；关闭内置长上下文规则时，不应用目录的阶梯。Fast 报价保留明确的零价，展示和结算使用同一份换算结果。
 
 xAI 达到上下文阈值就切换价格。转换层把这类目录阶梯的内部分界点减一，例如原始阈值 200,000 对应基础档的最大值 199,999；结算、模型广场和管理员默认价格页，使用转换后的区间。原始的目录阈值保持不变，其他供应商仍然要超过阈值才切换档位。
 
@@ -149,11 +153,13 @@ xAI 达到上下文阈值就切换价格。转换层把这类目录阶梯的内�
 
 默认目录的图片输出价，也会保留"是否明确给出"这个信息：目录或本地补充给出零价时，按免费结算；只有这个价格桶缺失时，才回退到文本输出价。
 
-原厂 Google 的 Gemini 生图记录里，`cost.output` 表示图片输出 token 的费率，换算为 `output_cost_per_image_token`；文本和思考的输出价，由媒体补充文件填入，来源标为 `local_supplement`。目录里已有的图片费率，优先于补充文件；管理员可以通过关联的价格配置，设置用户侧的这两项单价。这种解释只用于原厂 Gemini 生图记录，Deep Research 和中继报价不适用。models.dev 缺少完整的文本输入、输出价时，token 保持未定价，独立的媒体价格仍然可以查询；明确的零价不算缺失。价格依据见 [Google 官方定价](https://ai.google.dev/gemini-api/docs/pricing)。
+v2 的文本、图像输入和图像输出各有单独报价。Gemini 生图按对应模态计价，补充文件填充目录缺失的价格维度。目录里已有的图片费率，优先于补充文件；管理员可以通过关联的价格配置，设置用户侧的这两项单价。这种解释只用于原厂 Gemini 生图记录，Deep Research 和中继报价不适用。文本输出模型缺少完整的文本输入、输出价时，该模型的 token 报价保持未定价，独立的媒体价格仍然可以查询。明确的零价保持有效。 [Google 官方定价](https://ai.google.dev/gemini-api/docs/pricing)
+
+如果 OpenAI 的 `gpt-image-1-mini` 条目同时声明文本输出却只有图像输出价，按 OpenAI 的模型说明保留图像输出，使用目录中的图像 token 费率。 [OpenAI 模型说明](https://developers.openai.com/api/docs/models/gpt-image-1-mini)
 
 `source` 和 `price_sources` 区分 models.dev、本地补充和规则补充。补充只填缺失的字段，目录里明确的零价同样优先；自定义补充优先于内嵌补充，媒体尺寸表等复合字段整体选择一个来源，不会因为条目同名而覆盖目录的现价。补充按"提供方加原始模型 ID"，同步到同一个原厂记录的裸名和限定名：先应用精确的键，再填补其他等价名称的空缺；日期版本和中继记录不共享补充。
 
-官方补充的维护源是 `backend/internal/modelcatalog/model_supplements.json`，通过 `go:embed` 编进二进制；`model_catalog.supplement_file` 默认为空，只读取手动配置的自定义补充。自定义文件删除后，恢复内嵌的值；文件损坏时，保留上一次有效的目录。官方补充按完整型号保存目录缺失的已核实价格和属性，并记录 `source_url` 和 `verified_at`。价格字段放在模型条目内，展示属性放在同一条目的 `attributes` 对象中。内嵌和自定义补充共用该格式，目录已有值优先，其次是自定义补充，最后是内嵌补充。补充属性按字段合并，false 和空模态数组都有明确含义。旧的顶层模态字段继续用于价格兼容解析，展示层读取 `attributes`。型号专属的 Fast/Flex、Max、缓存写入和峰谷数值，不写在 Go 代码里；需要时，通过 `fast_multiplier`、`flex_multiplier`、`max_reasoning_effort_multiplier`、`cache_write_multiplier`、`cache_write_1h_multiplier` 和 `time_pricing` 明确声明。没有规则时，不会根据型号生成加价或折扣。Fast 的缓存写入价格，对所有来源按同一规则缩放 5m 和 1h 两种 TTL 的费用，来源标签和收费无关。
+官方补充的维护源是 `backend/internal/modelcatalog/model_supplements.json`，通过 `go:embed` 编进二进制；`model_catalog.supplement_file` 默认为空，只读取手动配置的自定义补充。自定义文件删除后，恢复内嵌的值；文件损坏时，保留上一次有效的目录。官方补充按完整型号保存目录缺失的已核实价格和属性，并记录 `source_url` 和 `verified_at`。价格字段放在模型条目内，展示属性放在同一条目的 `attributes` 对象中。内嵌和自定义补充共用该格式，目录已有值优先，其次是自定义补充，最后是内嵌补充。补充属性按字段合并，false 和空模态数组都有明确含义。旧的顶层模态字段继续用于价格兼容解析，展示层读取 `attributes`。型号专属的 Fast/Flex、Max、缓存写入和峰谷数值，不写在 Go 代码里；需要时，通过 `fast_multiplier`、`flex_multiplier`、`max_reasoning_effort_multiplier`、`cache_write_multiplier`、`cache_write_1h_multiplier` 和 `time_pricing` 明确声明。没有规则时，不会根据型号生成加价或折扣。Fast 的缓存写入价格遵循目录或价卡的服务档位规则，支持 5m、1h、30m 和 12h。
 
 `image_prices` 按 1K、2K、4K 保存美元每张，`video_prices` 按分辨率标签保存美元每秒，支持 `768p`、`2k` 等自定义档位；缺失的维度保持缺价，不套用通用的尺寸倍率。旧的 `output_cost_per_image` 仍然表示不分尺寸的单张价格。操作价格在保留节点 `_billing_defaults` 里，自定义的值按字段叠加到内嵌的默认值上，保留明确的零价，不会进入模型列表；它们和价格、属性一起校验、发布和复制。历史账单和任务的资金快照不会重算。
 
@@ -169,7 +175,7 @@ xAI 达到上下文阈值就切换价格。转换层把这类目录阶梯的内�
 
 用户售价由分组关联的价格配置覆盖目录，手动填写的零价优先。图片模式的报价、普通图片的结算、创作台和批量图片的预占，都使用逐尺寸查价：配置过的尺寸用价卡，没配置的尺寸查目录。按次模式只使用自己的标签、上下文区间和默认价，不借用目录的图片价；没配置尺寸、也没有明确的默认价时，报价里省略这个尺寸，任务的单价查询和普通结算返回缺价。按次价卡带有上下文区间时，实际请求仍按已知的总输入量匹配；报价和固定的单张预占没有上下文数据，只有命中明确的标签，或者所有上下文价都和明确的默认价一致时，才能给出固定价格。手动填写的零价不受影响。系统没有全局的默认价卡，也不读取 `pricing.override_file`。
 
-合成长上下文档时，普通档和 priority/Fast 档的缓存创建、缓存读取价格，都按输入侧的倍率调整；缓存创建的标准、5 分钟和 1 小时三种价格，使用相同的倍率规则。展示会补齐手动区间之前、之后和中间有基础价的范围；缺价的范围不会显示成零价，也不会被其他区间的价格代替。只有所有正的上下文范围都有价格、并且普通价和 Fast 价一致时，才压平为单一价格。
+合成长上下文档时，普通档和 priority/Fast 档的缓存创建、缓存读取价格，都按输入侧的倍率调整；统一写入价与各 TTL 写入价使用相同的输入侧倍率规则。展示会补齐手动区间之前、之后和中间有基础价的范围；缺价的范围不会显示成零价，也不会被其他区间的价格代替。只有所有正的上下文范围都有价格、并且普通价和 Fast 价一致时，才压平为单一价格。
 
 返回的零价区间仍然保留范围标签和切换入口；JSON 里省略了零金额字段，不代表这个区间缺价。区间价格已经应用了分组倍率。计费模型、价卡、服务层级、最终 effort、用量、时刻和资金倍率都相同时，实际提供商的平台不会成为另一个售价维度。以上游模型作为计费来源时，先按提供商映射确定计费模型；不同路线无法给出一致的报价时，标记为歧义，不会猜一个统一的低价。
 
@@ -213,7 +219,9 @@ token 报价的单价对应价格配置分时规则的 1x 时段和非 `max` 档
 
 属性配置保存在 `model_attribute_configs`，包括名称、描述、启用状态和有序的规则；分组关联表用 `group_id` 唯一约束，保证每个分组最多关联一份配置，一份配置可以供多个分组使用。规则和关联在同一个事务里保存，名称或分组冲突时整体回滚。属性配置和价格配置相互独立，停用、删除或解除关联后，恢复默认属性。
 
-`modelcatalog.View.Resolve` 为每条路线合并属性，顺序是实际服务的完整型号条目、本地缺项补充、平台修正、管理员覆盖、转换器能够编码的格式。`Resolution` 同时返回字段来源和执行规则，协议适配器使用其中的采样条件、推理选项、预算和媒体参数。价格继续由计费解析器查询。模型属性查询读取内存里的目录，不发网络请求。
+`modelcatalog` 提供目录条目和通用属性操作，`provider/modelrules` 按平台维护硬编码型号、认证变体、协议和媒体限制。预览、导出、探测与网关执行共用同一套规则。
+
+`modelrules.View.Resolve` 为每条路线合并属性，顺序是实际服务的目录数据及本地补充、提供商声明的字段、分组配置显式覆盖的字段。省略字段继承下层值，显式 false 和空数组保留。转换器再检查这组属性能否编码；提供商约束与配置冲突时，预览同时展示配置值和可执行值。`Resolution` 同时返回字段来源和执行规则，协议适配器使用其中的采样条件、推理选项、预算和媒体参数。价格继续由计费解析器查询。模型属性查询读取内存里的目录，不发网络请求。
 
 服务身份由平台、认证类型、`provider_mode`、站点和已识别的官方地址确定。Bedrock 按出站区域 ID 查询 `amazon-bedrock`，Anthropic Vertex 按转换后的日期 ID 查询 `google-vertex-anthropic`，Gemini Vertex 使用 `google-vertex`。Kimi 区分国内、国际、PayG 和 Coding，GLM 区分 `zhipuai`、`zai` 及各自的 Coding 服务。自定义中继使用完整型号查询与可靠的公共资料。供应商前缀、日期与档位后缀参与身份匹配；已识别的 Google 资源路径在查询时规范化，出站 ID 保持实际路由结果。
 
@@ -240,14 +248,14 @@ OpenCode 导出显示名、附件、推理、温度、工具调用、模态和�
 ### 平台执行规则
 
 - OpenAI 使用目录的 effort 集合。GPT-5.2/5.4 的采样参数在 effort 为 none 时可用；GPT-6 的 Chat 工具能力依型号与 effort 设置条件。Codex OAuth 禁用采样与输出参数字段，模型的输出容量仍保留。Spark 的当前接入为文本输入。GPT-5.6 Sol/Terra/Luna 的 OAuth Compact 将 max 编码成 xhigh，规则在最终型号确定后执行。
-- Claude thinking 的预算、开关和档位来自服务条目。温度按 thinking 状态处理，adaptive、手动 budget 与 Sonnet 5.5 的 between_tools 分别表达。Bedrock 已登记型号的缓存 TTL、tool search 与 adaptive 编码在 `modelcatalog/bedrock.go`，新增型号需同时修改固定清单和报文测试。
+- Claude thinking 的预算、开关和档位来自服务条目。温度按 thinking 状态处理，adaptive、手动 budget 与 Sonnet 5.5 的 between_tools 分别表达。Bedrock 已登记型号的缓存 TTL、tool search 与 adaptive 编码在 `provider/modelrules/bedrock.go`，新增型号需同时修改固定清单和报文测试。
 - Grok 4.7 读取 xhigh，Build 0.1 等会推理但没有可调选项的型号显示空集合。Composer 的 reasoning 参数清理和 4.20 系列的 logprobs 规则单独执行。GLM-5.2/5.3 使用叠加管理员覆盖后的档位集合，已允许的档位按请求值发送，兼容别名在最终集合内转换。Messages 的字段编码在读取这份能力后执行。DeepSeek 的 temperature 与 top_p 分别按 thinking 状态处理。
-- Qoder 的站点路由表在 `modelcatalog/qoder.go`，输入上限写入 `input_limit`。`mmodel` 按站点选择公共身份，动态档位的公共属性保持未知，未知 raw route 使用 200000 输入执行默认值。当前转换器支持文本与工具交互，模态为 text。
+- Qoder 的路由与能力来自账号模型快照。`provider/qodermodel` 将原始路由和别名索引到同一项，提供已确认的目录身份、已观察的属性和原生报文限制，提供商和快照版本参与缓存隔离；同一个路由键可以在不同账号上拥有不同名称和限制。动态档位不绑定固定厂商身份，所有属性来源均未提供输入上限时，编码器在出站报文中使用 200000。转换器仍只声明文本与工具交互能力。
 - Antigravity 的 Messages Claude 路线限制输出 64000，其他 Messages 转换限制 65000，Chat 转换限制 64000，并取目录更小值。Gemini 直通入口使用其本身的能力。已登记 Opus 4.6/4.7/4.8 adaptive 请求使用 24576 预算；指定 Gemini 私有路由的采样、stop 与 toolConfig 处理单独保存。
 - Gemini 转换按最终模型的控制集合发送互斥的 thinkingLevel 或 thinkingBudget。客户端控制来自转换前的请求，预算会按目录与当前转换的输出空间处理。已知不允许关闭 thinking 的型号不会被显示为可关闭。
-- 媒体尺寸、参考图数量与细分参数在 `modelcatalog/media.go`。创作台与批量图片按最终路线检查这些值。Responses 的图片工具在请求构造末尾读取工具型号的属性，HTTP 与 WebSocket 共用处理。OAuth 图片接口的构造器不发送 input_fidelity，该路线将此参数标为不可用。Ollama Cloud 的输出参数 clamp 使用解析后的输出上限；提供商配置为非正数时关闭 clamp。
+- 媒体尺寸、参考图数量与细分参数在 `provider/modelrules/media.go`。创作台与批量图片按最终路线检查这些值。Responses 的图片工具在请求构造末尾读取工具型号的属性，HTTP 与 WebSocket 共用处理。OAuth 图片接口的构造器不发送 input_fidelity，该路线将此参数标为不可用。Ollama Cloud 的输出参数 clamp 使用解析后的输出上限；提供商配置为非正数时关闭 clamp。
 
-规则依据包括 [OpenAI 模型指南](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4)、[部署检查](https://developers.openai.com/api/docs/guides/deployment-checklist)、[Claude 协议](https://platform.claude.com/docs/en/claude_api_primer)、[Grok 推理](https://docs.x.ai/developers/model-capabilities/text/reasoning)、[GLM-5.3](https://docs.z.ai/guides/llm/glm-5.3)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)、[Gemini GenerateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)和 [Kimi Coding 型号](https://www.kimi.com/code/docs/en/kimi-code/models)。Qoder 的实现以当前 1.24.2 适配表为准。
+规则依据包括 [OpenAI 模型指南](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4)、[部署检查](https://developers.openai.com/api/docs/guides/deployment-checklist)、[Claude 协议](https://platform.claude.com/docs/en/claude_api_primer)、[Grok 推理](https://docs.x.ai/developers/model-capabilities/text/reasoning)、[GLM-5.3](https://docs.z.ai/guides/llm/glm-5.3)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)、[Gemini GenerateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)和 [Kimi Coding 型号](https://www.kimi.com/code/docs/en/kimi-code/models)。Qoder 的实现以账号实时目录及当前客户端协议为准，见 [Qoder 原生上游](qoder_upstream.md)。
 
 <a id="group_availability_probe"></a>
 ## 容量与可用性

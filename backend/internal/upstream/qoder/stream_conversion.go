@@ -1066,6 +1066,7 @@ func BuildQoderResponsesResponseWithID(model, responseID string, events []SSEEve
 	if strings.TrimSpace(responseID) != "" {
 		responsesResp.ID = strings.TrimSpace(responseID)
 	}
+	responsesResp.Store = new(false)
 	responsesResp.Model = model
 	return json.Marshal(responsesResp)
 }
@@ -1128,6 +1129,7 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 		return writeEventFrame(protocolopenai.ResponsesStreamEvent{
 			Type: "response.created",
 			Response: &protocolopenai.ResponsesResponse{
+				Store:  new(false),
 				ID:     responseID,
 				Object: "response",
 				Model:  model,
@@ -1460,14 +1462,16 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 		if usageMapper != nil {
 			finalUsage = usageMapper(finalUsage)
 		}
+		completed := completedOutputList()
 		return writeEvent(protocolopenai.ResponsesStreamEvent{
 			Type: "response.completed",
 			Response: &protocolopenai.ResponsesResponse{
+				Store:  new(false),
 				ID:     responseID,
 				Object: "response",
 				Model:  model,
 				Status: "completed",
-				Output: completedOutputList(),
+				Output: completed,
 				Usage:  QoderResponsesUsage(finalUsage),
 			},
 		})
@@ -2420,16 +2424,6 @@ func OpenAIUsageChunk(id, model string, usage upstream.TokenUsage, totalTokens i
 	}
 }
 
-// ResolveQoderModelForSite resolves a known public alias within the site or
-// retains a trimmed raw model. All returned routes use system source;
-// unregistered names remain available for configured upstream routing.
-func ResolveQoderModelForSite(site Site, model string) QoderModelInfo {
-	if info, ok := LookupQoderModelAliasForSite(site, strings.TrimSpace(model)); ok {
-		return info
-	}
-	return QoderModelInfo{Key: strings.TrimSpace(model), Source: "system"}
-}
-
 // LatestQoderUserText returns the last nonblank user text while retaining its
 // spelling. Roles match user exactly, and an empty history or one lacking
 // usable user text produces empty output.
@@ -2612,32 +2606,6 @@ func GjsonString(body []byte, path string) string {
 // false.
 func GjsonBool(body []byte, path string) bool {
 	return gjson.GetBytes(body, path).Bool()
-}
-
-// LookupQoderModelAlias resolves normalized public aliases across global then CN
-// tables. The first match wins and unmatched input reports false; callers decide
-// whether to retain a raw route.
-func LookupQoderModelAlias(model string) (QoderModelInfo, bool) {
-	for _, site := range []Site{SiteGlobal, SiteCN} {
-		if info, ok := LookupQoderModelAliasForSite(site, model); ok {
-			return info, true
-		}
-	}
-	return QoderModelInfo{}, false
-}
-
-// LookupQoderModelAliasForSite resolves a normalized public alias within the
-// selected route map. It returns system source even for an unmatched key, with
-// the boolean determining whether lookup succeeded.
-func LookupQoderModelAliasForSite(site Site, model string) (QoderModelInfo, bool) {
-	key, ok := AliasForSite(site, NormalizeQoderAliasModel(model))
-	return QoderModelInfo{Key: key, Source: "system"}, ok
-}
-
-// NormalizeQoderAliasModel trims and lowercases a client model name for alias
-// lookup.
-func NormalizeQoderAliasModel(model string) string {
-	return strings.ToLower(strings.TrimSpace(model))
 }
 
 // FirstNonEmptyQoder selects the first candidate containing non-whitespace

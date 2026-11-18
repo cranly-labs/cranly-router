@@ -1,9 +1,12 @@
-package modelcatalog
+package modelrules
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
 // Route metadata changes with authentication, endpoint, site, and protocol
@@ -15,44 +18,44 @@ import (
 // variants and one unknown model. Each route must return its asserted controls,
 // limits, and encoding flags from the retained catalog and platform rules.
 func TestViewResolvePlatformCapabilities(t *testing.T) {
-	body, err := Offline()
+	body, err := modelcatalog.Offline()
 	require.NoError(t, err)
-	catalog, err := Parse(body)
+	catalog, err := modelcatalog.Parse(body)
 	require.NoError(t, err)
-	view := catalog.View()
+	view := NewView(catalog.Publication())
 	tests := []struct {
 		name   string                       // named service capability scenario
 		target Target                       // input model route fields
 		check  func(*testing.T, Resolution) // scenario specific attribute assertions
 	}{
 		{"openai max", Target{Platform: "openai", ProviderType: "apikey", Model: "gpt-5.6-sol"}, func(t *testing.T, result Resolution) {
-			require.Equal(t, valuePointer(true), result.Attributes.EffortSupport("max"))
+			require.Equal(t, new(true), result.Attributes.EffortSupport("max"))
 		}},
 		{"compact", Target{Platform: "openai", ProviderType: "oauth", Model: "gpt-5.6-sol", Endpoint: "compact"}, func(t *testing.T, result Resolution) {
-			require.Equal(t, valuePointer(false), result.Attributes.EffortSupport("max"))
+			require.Equal(t, new(false), result.Attributes.EffortSupport("max"))
 			require.Equal(t, "xhigh", result.Rules.EffortAliases["max"])
 		}},
 		{"spark", Target{Platform: "openai", ProviderType: "oauth", Model: "gpt-5.3-codex-spark"}, func(t *testing.T, result Resolution) {
 			require.Equal(t, []string{"text"}, *result.Attributes.InputModalities)
-			require.Equal(t, valuePointer(false), result.Rules.ImageGenerationTool)
+			require.Equal(t, new(false), result.Rules.ImageGenerationTool)
 			require.Equal(t, 32000, *result.Attributes.OutputLimit)
 		}},
 		{"astra chat", Target{Platform: "openai", Model: "gpt-6-astra", UpstreamProtocol: "openai_chat_completions"}, func(t *testing.T, result Resolution) {
-			require.Equal(t, valuePointer(false), result.Attributes.ToolCall)
+			require.Equal(t, new(false), result.Attributes.ToolCall)
 		}},
 		{"astra responses", Target{Platform: "openai", Model: "gpt-6-astra", UpstreamProtocol: "openai_responses"}, func(t *testing.T, result Resolution) {
-			require.Equal(t, valuePointer(true), result.Attributes.ToolCall)
+			require.Equal(t, new(true), result.Attributes.ToolCall)
 		}},
 		{"grok 4.7", Target{Platform: "grok", Model: "grok-4.7"}, func(t *testing.T, result Resolution) {
-			require.Equal(t, valuePointer(true), result.Attributes.EffortSupport("xhigh"))
+			require.Equal(t, new(true), result.Attributes.EffortSupport("xhigh"))
 		}},
 		{"grok build", Target{Platform: "grok", Model: "grok-build-0.1"}, func(t *testing.T, result Resolution) {
-			require.Equal(t, valuePointer(true), result.Attributes.Reasoning)
+			require.Equal(t, new(true), result.Attributes.Reasoning)
 			require.NotNil(t, result.Attributes.ReasoningOptions)
 			require.Empty(t, *result.Attributes.ReasoningOptions)
 		}},
 		{"glm toggle", Target{Platform: "zhipu", Model: "glm-4.5"}, func(t *testing.T, result Resolution) {
-			require.Equal(t, valuePointer(false), result.Attributes.EffortSupport("max"))
+			require.Equal(t, new(false), result.Attributes.EffortSupport("max"))
 			require.True(t, result.Attributes.HasReasoningOption("toggle"))
 		}},
 		{"glm53", Target{Platform: "zhipu", Model: "glm-5.3"}, func(t *testing.T, result Resolution) {
@@ -90,7 +93,7 @@ func TestViewResolvePlatformCapabilities(t *testing.T) {
 		}},
 		{"jev", Target{Platform: "jev", Model: "jev-latest"}, func(t *testing.T, result Resolution) {
 			require.Equal(t, []string{"text", "image"}, *result.Attributes.InputModalities)
-			require.Equal(t, valuePointer(true), result.Attributes.Attachment)
+			require.Equal(t, new(true), result.Attributes.Attachment)
 			require.Equal(t, 64000, *result.Attributes.Context)
 		}},
 		{"unknown", Target{Platform: "openai", Model: "gpt-99-my-alias"}, func(t *testing.T, result Resolution) {
@@ -99,7 +102,7 @@ func TestViewResolvePlatformCapabilities(t *testing.T) {
 		}},
 	}
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) { test.check(t, view.Resolve(test.target, Attributes{})) })
+		t.Run(test.name, func(t *testing.T) { test.check(t, view.Resolve(test.target, modelcatalog.Attributes{})) })
 	}
 }
 
@@ -108,54 +111,21 @@ func TestViewResolvePlatformCapabilities(t *testing.T) {
 // reusable, configured output limits retain their source, and later default
 // resolutions retain the catalog value.
 func TestViewResolveConditionsAndOverride(t *testing.T) {
-	body, err := Offline()
+	body, err := modelcatalog.Offline()
 	require.NoError(t, err)
-	catalog, err := Parse(body)
+	catalog, err := modelcatalog.Parse(body)
 	require.NoError(t, err)
 	target := Target{Platform: "openai", Model: "gpt-5.4"}
-	result := catalog.View().Resolve(target, Attributes{})
-	require.Equal(t, valuePointer(true), result.ForRequest(RequestState{Effort: valuePointer("none")}).Attributes.Temperature)
-	require.Equal(t, valuePointer(false), result.ForRequest(RequestState{Effort: valuePointer("high")}).Attributes.Temperature)
-	require.Equal(t, valuePointer(true), result.Attributes.Temperature)
-	emptyConditions := ParameterConditions{}
-	result = catalog.View().Resolve(target, Attributes{Temperature: valuePointer(true), Conditions: &emptyConditions, OutputLimit: valuePointer(12000)})
-	require.Equal(t, valuePointer(true), result.ForRequest(RequestState{Effort: valuePointer("high")}).Attributes.Temperature)
+	result := NewView(catalog.Publication()).Resolve(target, modelcatalog.Attributes{})
+	require.Equal(t, new(true), result.ForRequest(RequestState{Effort: new("none")}).Attributes.Temperature)
+	require.Equal(t, new(false), result.ForRequest(RequestState{Effort: new("high")}).Attributes.Temperature)
+	require.Equal(t, new(true), result.Attributes.Temperature)
+	emptyConditions := modelcatalog.ParameterConditions{}
+	result = NewView(catalog.Publication()).Resolve(target, modelcatalog.Attributes{Temperature: new(true), Conditions: &emptyConditions, OutputLimit: new(12000)})
+	require.Equal(t, new(true), result.ForRequest(RequestState{Effort: new("high")}).Attributes.Temperature)
 	require.Equal(t, 12000, *result.Attributes.OutputLimit)
 	require.Equal(t, "config", result.Sources["output_limit"])
-	require.Equal(t, 128000, *catalog.View().Resolve(target, Attributes{}).Attributes.OutputLimit)
-}
-
-// TestViewResolveQoderRoutes resolves public aliases through their site route
-// keys and compares a shared key across sites. Input limits, reasoning controls,
-// and text modalities must follow the route, while unknown keys retain default
-// input limits and unknown catalog metadata.
-func TestViewResolveQoderRoutes(t *testing.T) {
-	body, err := Offline()
-	require.NoError(t, err)
-	catalog, err := Parse(body)
-	require.NoError(t, err)
-	for _, site := range []string{"global", "cn"} {
-		for model, key := range QoderAliases(site) {
-			t.Run(site+"/"+model, func(t *testing.T) {
-				result := catalog.View().Resolve(Target{Platform: "qoder", Site: site, Model: key}, Attributes{})
-				limit, selectable := QoderInputLimit(site, key)
-				require.Equal(t, limit, *result.Attributes.InputLimit)
-				require.Equal(t, selectable, result.Rules.RuntimeContext)
-				require.Equal(t, []string{"text"}, *result.Attributes.InputModalities)
-				require.Equal(t, "adapter", result.Sources["input_modalities"])
-				require.Equal(t, QoderReasoningOptions(site, key), *result.Attributes.ReasoningOptions)
-			})
-		}
-	}
-	global := catalog.View().Resolve(Target{Platform: "qoder", Site: "global", Model: "mmodel"}, Attributes{})
-	cn := catalog.View().Resolve(Target{Platform: "qoder", Site: "cn", Model: "mmodel"}, Attributes{})
-	require.Equal(t, 1000000, *global.Attributes.InputLimit)
-	require.Equal(t, 200000, *cn.Attributes.InputLimit)
-	require.NotEqual(t, global.Attributes.Context, cn.Attributes.Context)
-	unknown := catalog.View().Resolve(Target{Platform: "qoder", Model: "future-route"}, Attributes{})
-	require.Equal(t, 200000, *unknown.Attributes.InputLimit)
-	require.Nil(t, unknown.Attributes.Context)
-	require.Nil(t, unknown.Attributes.ReasoningOptions)
+	require.Equal(t, 128000, *NewView(catalog.Publication()).Resolve(target, modelcatalog.Attributes{}).Attributes.OutputLimit)
 }
 
 // TestViewServiceIdentityAndPublicSupplements uses Google resource paths and
@@ -163,23 +133,23 @@ func TestViewResolveQoderRoutes(t *testing.T) {
 // spellings must remain intact, while a returned context mutation leaves
 // subsequent context lookups unchanged.
 func TestViewServiceIdentityAndPublicSupplements(t *testing.T) {
-	catalog, err := Parse([]byte(`{"providers":{"google":{"models":{"gemini-sample":{"limit":{"context":100},"reasoning_options":[]}}},"google-vertex":{"models":{"gemini-sample":{"limit":{"context":50}}}},"relay":{"models":{"typesafe/jev-latest":{"limit":{"context":2},"structured_output":false}}}},"models":{"typesafe/jev-latest":{"limit":{"context":64},"structured_output":true}}}`))
+	catalog, err := modelcatalog.Parse([]byte(`{"providers":{"google":{"models":{"gemini-sample":{"limit":{"context":100},"reasoning_options":[]}}},"google-vertex":{"models":{"gemini-sample":{"limit":{"context":50}}}},"relay":{"models":{"typesafe/jev-latest":{"limit":{"context":2},"structured_output":false}}}},"models":{"typesafe/jev-latest":{"limit":{"context":64},"structured_output":true}}}`))
 	require.NoError(t, err)
 	require.NoError(t, catalog.ApplyAttributeSupplement("typesafe/jev-latest", []byte(`{"provider":"typesafe","attributes":{"output_limit":10,"context":999}}`)))
-	view := catalog.View()
+	view := NewView(catalog.Publication())
 	for _, id := range []string{"gemini-sample", "models/gemini-sample", "publishers/google/models/gemini-sample", "projects/test/locations/global/publishers/google/models/gemini-sample"} {
-		resolved := view.Resolve(Target{Platform: "gemini", ProviderType: "service_account", Model: id}, Attributes{})
+		resolved := view.Resolve(Target{Platform: "gemini", ProviderType: "service_account", Model: id}, modelcatalog.Attributes{})
 		require.Equal(t, 50, *resolved.Attributes.Context)
 		require.Equal(t, id, resolved.Target.Model)
 	}
-	public := view.Resolve(Target{Platform: "jev", Model: "jev-latest"}, Attributes{})
+	public := view.Resolve(Target{Platform: "jev", Model: "jev-latest"}, modelcatalog.Attributes{})
 	require.Equal(t, 64, *public.Attributes.Context)
 	require.Equal(t, 10, *public.Attributes.OutputLimit)
 	require.Equal(t, "local_supplement", public.Sources["output_limit"])
 	public.Sources["output_limit"] = "changed"
 	*public.Attributes.Context = 1
-	require.Equal(t, 64, *view.Resolve(Target{Platform: "jev", Model: "jev-latest"}, Attributes{}).Attributes.Context)
-	require.Nil(t, view.Resolve(Target{Platform: "gemini", Model: "custom/models/gemini-sample"}, Attributes{}).Attributes.Context)
+	require.Equal(t, 64, *view.Resolve(Target{Platform: "jev", Model: "jev-latest"}, modelcatalog.Attributes{}).Attributes.Context)
+	require.Nil(t, view.Resolve(Target{Platform: "gemini", Model: "custom/models/gemini-sample"}, modelcatalog.Attributes{}).Attributes.Context)
 }
 
 // TestViewPlatformRulesDoNotInferFutureModels resolves unregistered future
@@ -187,13 +157,13 @@ func TestViewServiceIdentityAndPublicSupplements(t *testing.T) {
 // and tool search declarations must remain unknown despite recognizable model
 // family prefixes.
 func TestViewPlatformRulesDoNotInferFutureModels(t *testing.T) {
-	body, err := Offline()
+	body, err := modelcatalog.Offline()
 	require.NoError(t, err)
-	catalog, err := Parse(body)
+	catalog, err := modelcatalog.Parse(body)
 	require.NoError(t, err)
-	require.Equal(t, "ed1c21db1a80af0b3206f458c0823357c9d7dd332f81557e74d5d6e83d4324f4", catalog.Version)
+	require.Equal(t, "0b4912a578f53bdafb9f4c7ac27d75f10e97e8a359a4ae8f4bcfccf545f9a49f", catalog.Version)
 	for _, target := range []Target{
-		{Platform: "openai", Model: "gpt-6.2-sol"},
+		{Platform: "openai", Model: "gpt-6.8-sol"},
 		{Platform: "grok", Model: "grok-latest"},
 		{Platform: "grok", Model: "grok-build-latest"},
 		{Platform: "zhipu", Model: "glm-9"},
@@ -201,7 +171,7 @@ func TestViewPlatformRulesDoNotInferFutureModels(t *testing.T) {
 		{Platform: "anthropic", ProviderType: "bedrock", Model: "us.anthropic.claude-opus-8"},
 	} {
 		t.Run(target.Model, func(t *testing.T) {
-			result := catalog.View().Resolve(target, Attributes{})
+			result := NewView(catalog.Publication()).Resolve(target, modelcatalog.Attributes{})
 			require.Nil(t, result.Attributes.Context)
 			require.Nil(t, result.Attributes.ReasoningOptions)
 			require.Nil(t, result.Attributes.Media)
@@ -212,29 +182,21 @@ func TestViewPlatformRulesDoNotInferFutureModels(t *testing.T) {
 }
 
 // TestViewAdapterLimitsIntersectOverrides supplies broad or cleared modalities
-// before selecting converter routes. Qoder, text, image, and batch restrictions
+// before selecting converter routes. Text, image, and batch restrictions
 // must narrow those values, and OAuth image input fidelity remains disabled
 // after an administrator override.
 func TestViewAdapterLimitsIntersectOverrides(t *testing.T) {
 	view := View{}
-	for _, modalities := range [][]string{{"text", "image"}, {"image"}, {}} {
-		result := view.Resolve(Target{Platform: "qoder", Model: "auto"}, Attributes{InputModalities: &modalities})
-		want := []string{}
-		if len(modalities) > 0 && modalities[0] == "text" {
-			want = []string{"text"}
-		}
-		require.Equal(t, want, *result.Attributes.InputModalities)
-	}
 	modalities := []string{"text", "image", "audio", "video", "pdf"}
-	bridge := view.Resolve(Target{Platform: "gemini", Model: "custom", ClientProtocol: "anthropic_messages", UpstreamProtocol: "gemini_generate_content"}, Attributes{InputModalities: &modalities, OutputModalities: &modalities})
+	bridge := view.Resolve(Target{Platform: "gemini", Model: "custom", ClientProtocol: "anthropic_messages", UpstreamProtocol: "gemini_generate_content"}, modelcatalog.Attributes{InputModalities: &modalities, OutputModalities: &modalities})
 	require.Equal(t, []string{"text", "image"}, *bridge.Attributes.InputModalities)
 	require.Equal(t, []string{"text", "image"}, *bridge.Attributes.OutputModalities)
-	image := view.Resolve(Target{Platform: "gemini", Model: "custom", ClientProtocol: "openai_images_generations", UpstreamProtocol: "gemini_generate_content"}, Attributes{OutputModalities: &modalities})
+	image := view.Resolve(Target{Platform: "gemini", Model: "custom", ClientProtocol: "openai_images_generations", UpstreamProtocol: "gemini_generate_content"}, modelcatalog.Attributes{OutputModalities: &modalities})
 	require.Equal(t, []string{"image"}, *image.Attributes.OutputModalities)
-	batch := view.Resolve(Target{Platform: "gemini", Model: "gemini-3.1-flash-image", ClientProtocol: "image_batches"}, Attributes{})
+	batch := view.Resolve(Target{Platform: "gemini", Model: "gemini-3.1-flash-image", ClientProtocol: "image_batches"}, modelcatalog.Attributes{})
 	require.Equal(t, []string{"1K"}, batch.Attributes.Media.ImageSizes)
-	oauthImage := view.Resolve(Target{Platform: "openai", ProviderType: "oauth", Model: "gpt-image-1.5", ClientProtocol: "openai_images_edits"}, Attributes{Media: &MediaCapabilities{InputFidelity: valuePointer(true)}})
-	require.Equal(t, valuePointer(false), oauthImage.Attributes.Media.InputFidelity)
+	oauthImage := view.Resolve(Target{Platform: "openai", ProviderType: "oauth", Model: "gpt-image-1.5", ClientProtocol: "openai_images_edits"}, modelcatalog.Attributes{Media: &modelcatalog.MediaCapabilities{InputFidelity: new(true)}})
+	require.Equal(t, new(false), oauthImage.Attributes.Media.InputFidelity)
 }
 
 // TestViewRecognizesOfficialCompatibleServices presents official endpoints
@@ -242,9 +204,9 @@ func TestViewAdapterLimitsIntersectOverrides(t *testing.T) {
 // limits, and modalities must match their own catalog entries, while a custom
 // Kimi relay has no recognized service.
 func TestViewRecognizesOfficialCompatibleServices(t *testing.T) {
-	body, err := Offline()
+	body, err := modelcatalog.Offline()
 	require.NoError(t, err)
-	catalog, err := Parse(body)
+	catalog, err := modelcatalog.Parse(body)
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		url, mode, model, service, site string /* configured endpoint URL, configured provider mode, complete outbound model, expected catalog service, expected service site */
@@ -259,7 +221,7 @@ func TestViewRecognizesOfficialCompatibleServices(t *testing.T) {
 	} {
 		t.Run(tc.service, func(t *testing.T) {
 			target := Target{Platform: "openai", ProviderType: "apikey", Model: tc.model, BaseURL: tc.url, ProviderMode: tc.mode}
-			resolved := catalog.View().Resolve(target, Attributes{})
+			resolved := NewView(catalog.Publication()).Resolve(target, modelcatalog.Attributes{})
 			expected, exists := catalog.Lookup([]string{tc.service + "/" + tc.model})
 			require.True(t, exists)
 			require.Equal(t, tc.service, resolved.Target.CatalogProvider)
@@ -271,7 +233,7 @@ func TestViewRecognizesOfficialCompatibleServices(t *testing.T) {
 	}
 	custom := Target{Platform: "kimi", ProviderType: "apikey", ProviderMode: "coding", Site: "global", BaseURL: "https://relay.example/v1", Model: "k3"}
 	require.Empty(t, custom.ServiceID())
-	legacy := catalog.View().Resolve(Target{Platform: "deepseek", Model: "deepseek-chat"}, Attributes{})
+	legacy := NewView(catalog.Publication()).Resolve(Target{Platform: "deepseek", Model: "deepseek-chat"}, modelcatalog.Attributes{})
 	require.Nil(t, legacy.Attributes.Conditions)
 }
 
@@ -296,7 +258,7 @@ func TestTargetAttributeKeyPreservesServiceAndExecutionRules(t *testing.T) {
 		func(v *Target) { v.Endpoint = "compact" },
 		func(v *Target) { v.CatalogProvider = "openai" },
 		func(v *Target) { v.Ollama = true },
-		func(v *Target) { v.OllamaOutputCap = valuePointer(100) },
+		func(v *Target) { v.OllamaOutputCap = new(100) },
 		func(v *Target) { v.BaseURL = "" },
 		func(v *Target) { v.BaseURL = "https://api.openai.com/v1" },
 	} {
@@ -308,4 +270,98 @@ func TestTargetAttributeKeyPreservesServiceAndExecutionRules(t *testing.T) {
 	payg.BaseURL = "https://api.z.ai/api/paas/v4"
 	coding.BaseURL = "https://api.z.ai/api/coding/paas/v4"
 	require.NotEqual(t, payg.Key().ForAttributes(), coding.Key().ForAttributes())
+}
+
+// TestOpenCodeCanonicalMetadataKeepsOfferingAndPriceIdentities resolves a service
+// alias whose author has public metadata. Limits and encoding come from their
+// respective identities while the service offering stays excluded from prices.
+func TestOpenCodeCanonicalMetadataKeepsOfferingAndPriceIdentities(t *testing.T) {
+	body, err := modelcatalog.Offline()
+	require.NoError(t, err)
+	catalog, err := modelcatalog.Parse(body)
+	require.NoError(t, err)
+	var supplements map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(modelcatalog.Supplements(), &supplements))
+	const author = "nvidia/nemotron-3.5-lightning"
+	require.NoError(t, catalog.ApplyAttributeSupplement(author, supplements[author]))
+	model := "nemotron-3.5-lightning-free"
+	resolved := NewView(catalog.Publication()).Resolve(Target{Platform: "opencode", ProviderType: "apikey", ProviderMode: "payg", Model: model, UpstreamProtocol: "openai_chat_completions"}, modelcatalog.Attributes{})
+	require.Equal(t, model, resolved.Target.Model)
+	require.Equal(t, "nvidia/nemotron-3.5-lightning", resolved.Target.AttributeModel)
+	require.NotNil(t, resolved.Attributes.Context)
+	require.Equal(t, 262144, *resolved.Attributes.Context)
+	_, priced := catalog.Lookup([]string{"opencode/" + model})
+	require.False(t, priced)
+	require.Equal(t, "openai_chat_completions", OpenCodeProtocols("payg")[model])
+}
+
+// TestOpenCodeClaudeEncodingUsesModelRules resolves the same Claude Messages
+// model through an intermediary and its author. Adaptive thinking and conditional
+// temperature follow the model while provider identity remains OpenCode.
+func TestOpenCodeClaudeEncodingUsesModelRules(t *testing.T) {
+	body, err := modelcatalog.Offline()
+	require.NoError(t, err)
+	catalog, err := modelcatalog.Parse(body)
+	require.NoError(t, err)
+	for _, platform := range []string{"anthropic", "opencode"} {
+		resolved := NewView(catalog.Publication()).Resolve(Target{Platform: platform, ProviderType: "apikey", Model: "claude-opus-4-7", UpstreamProtocol: "anthropic_messages"}, modelcatalog.Attributes{})
+		require.Equal(t, platform, resolved.Target.Platform)
+		if platform == "opencode" {
+			require.Equal(t, "anthropic/claude-opus-4-7", resolved.Target.AttributeModel)
+			_, priced := catalog.Lookup([]string{"opencode/claude-opus-4-7"})
+			require.False(t, priced)
+		}
+		require.Equal(t, "adaptive", resolved.Rules.ThinkingMode)
+		require.Equal(t, "anthropic", resolved.Rules.SignatureMode)
+		require.NotNil(t, resolved.ForRequest(RequestState{}).Attributes.Temperature)
+		require.False(t, *resolved.ForRequest(RequestState{}).Attributes.Temperature)
+		require.Empty(t, resolved.Rules.DropFields)
+	}
+}
+
+// TestOpenCodeLiveCanonicalMetadataResolvesUnbundledOffering parses a publication
+// containing a new service alias. Its declared canonical metadata is usable
+// even when no embedded offering or price entry exists for that alias.
+func TestOpenCodeLiveCanonicalMetadataResolvesUnbundledOffering(t *testing.T) {
+	catalog, err := modelcatalog.Parse([]byte(`{"models":{"author/new":{"limit":{"context":12345}}},"providers":{"opencode":{"npm":"@ai-sdk/openai-compatible","models":{"new-offering":{"canonical_model_id":"author/new","cost":{"input":99,"output":99}}}}}}`))
+	require.NoError(t, err)
+	resolved := NewView(catalog.Publication()).Resolve(Target{Platform: "opencode", Model: "new-offering"}, modelcatalog.Attributes{})
+	require.Equal(t, "author/new", resolved.Target.AttributeModel)
+	require.NotNil(t, resolved.Attributes.Context)
+	require.Equal(t, 12345, *resolved.Attributes.Context)
+	_, priced := catalog.Lookup([]string{"new-offering"})
+	require.False(t, priced)
+}
+
+// TestConfiguredAttributesExposeAdapterConflicts resolves profile overrides on
+// ordinary provider routes without an account model source. Effective values
+// keep wire restrictions and the preview retains the conflicting configuration.
+func TestConfiguredAttributesExposeAdapterConflicts(t *testing.T) {
+	target := Target{Platform: "openai", ProviderType: "oauth", Model: "gpt-image-2", ClientProtocol: "openai_images_edits", UpstreamProtocol: "openai_images_edits"}
+	for _, enabled := range []bool{false, true} {
+		result := View{}.Resolve(target, modelcatalog.Attributes{Media: &modelcatalog.MediaCapabilities{InputFidelity: new(enabled)}})
+		require.Equal(t, new(false), result.Attributes.Media.InputFidelity)
+		if enabled {
+			require.NotNil(t, result.ConfiguredAttributes)
+			require.Equal(t, new(true), result.ConfiguredAttributes.Media.InputFidelity)
+			copy := result.Clone()
+			*copy.ConfiguredAttributes.Media.InputFidelity = false
+			require.Equal(t, new(true), result.ConfiguredAttributes.Media.InputFidelity)
+		} else {
+			require.Nil(t, result.ConfiguredAttributes)
+		}
+	}
+	cross := View{}.Resolve(Target{Platform: "gemini", ClientProtocol: "anthropic_messages", UpstreamProtocol: "gemini_generate_content"}, modelcatalog.Attributes{InputModalities: new([]string{"text", "audio"})})
+	require.NotNil(t, cross.ConfiguredAttributes)
+	require.Equal(t, new([]string{"text", "audio"}), cross.ConfiguredAttributes.InputModalities)
+	require.Equal(t, new([]string{"text"}), cross.Attributes.InputModalities)
+	// The group explicitly borrowed all capabilities of the referenced model.
+	reader := ViewFromLookup(func(string) modelcatalog.Attributes {
+		return modelcatalog.Attributes{InputModalities: new([]string{"text", "audio"})}
+	})
+	ref := reader.ResolveReference(Target{Model: "alias", ClientProtocol: "anthropic_messages", UpstreamProtocol: "gemini_generate_content"}, "source", modelcatalog.Attributes{})
+	require.NotNil(t, ref.ConfiguredAttributes)
+	require.Equal(t, new([]string{"text", "audio"}), ref.ConfiguredAttributes.InputModalities)
+	require.Equal(t, new([]string{"text"}), ref.Attributes.InputModalities)
+	require.Equal(t, "alias", ref.Target.Model)
 }

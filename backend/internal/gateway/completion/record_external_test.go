@@ -28,7 +28,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
@@ -582,9 +581,9 @@ func TestGatewayServiceRecordUsage_QoderRequestedImageDoesNotUseGlobalFallback(t
 // It checks positive base cost when that full alias has fixture pricing, zero
 // otherwise, and command/row charge agreement.
 func TestGatewayServiceRecordUsage_QoderAliasesInheritAvailableBuiltinPrices(t *testing.T) {
-	aliases := qoder.DefaultRequestModelIDs()
+	aliases := map[string]string{"auto": "auto", "ultimate": "ultimate", "cantus": "cmodel", "qwen3.8-max": "qmodel_38max", "qwen4-max": "qmodel_latest", "glm-5.3": "gmodel"}
 
-	for _, alias := range aliases {
+	for alias, route := range aliases {
 		t.Run(alias, func(t *testing.T) {
 			usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 			billingRepo := &completiontestkit.SettlementStore{}
@@ -596,7 +595,7 @@ func TestGatewayServiceRecordUsage_QoderAliasesInheritAvailableBuiltinPrices(t *
 					RequestID:     "qoder_alias_" + alias,
 					Usage:         usage,
 					Model:         alias,
-					UpstreamModel: lookupQoderAliasKeyForTest(alias),
+					UpstreamModel: route,
 					Duration:      time.Second,
 				},
 				APIKey: &apikey.APIKey{
@@ -4666,18 +4665,6 @@ func requireGatewayRecordUsageBillingRepoStub(t *testing.T, svc *completiontestk
 	return billingRepo
 }
 
-// lookupQoderAliasKeyForTest resolves a listed Qoder request alias to its route
-// key for fixture input. Unknown aliases return their supplied spelling, so
-// test pricing still uses the declared full identity.
-func lookupQoderAliasKeyForTest(alias string) string {
-	if info, ok := qoder.LookupQoderModelAlias(alias); ok {
-		return info.Key
-	}
-	// An unknown alias stays as supplied evidence; pricing tests can then observe
-	// its missing full-identity price rather than constructing a related model name.
-	return alias
-}
-
 // newGatewayRecordUsageServiceWithResolverForTest builds the native recording
 // fixture with a production-style catalogue resolver and group factor one. The
 // caller owns the returned mutable fixture and key for synchronous tier
@@ -4952,4 +4939,70 @@ func TestRecordFundingPricingInstant(t *testing.T) {
 			require.InDelta(t, logs.LastLog.TotalCost*0.5*tc.wantPeak, funds.LastCmd.BillableAmountUSD, 1e-12)
 		})
 	}
+}
+
+// TestCatalogOnlyCompletionUsesCapturedPricingTime sends dated catalog usage
+// through each completion price path without a group resolver. Both prices
+// follow the recorded instant instead of the live calculation clock.
+func TestCatalogOnlyCompletionUsesCapturedPricingTime(t *testing.T) {
+	model := "dated-catalog-model"
+	service := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*pricing.CatalogModelPricing{
+		model: {
+			InputCostPerToken: 1e-6, OutputCostPerToken: 1e-6,
+			CatalogRules: pricing.CatalogRules{ServiceTierPrices: []pricing.CatalogServicePrice{
+				{After: "2026-12-01", Zone: "UTC", Factor: new(2.0)},
+			}},
+		},
+	}})
+	recorder := completion.NewRecorder(
+		completion.Dependencies{Calculator: billingtestkit.Calculator(service, nil)},
+		completion.RecorderOptions{DefaultMultiplier: 1},
+	)
+	result := &completion.Result{Model: model, Usage: completion.TokenUsage{InputTokens: 1000000, OutputTokens: 1000000}}
+	key := &completion.KeySnapshot{}
+	at := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+
+	cost := recorder.CalculateTokenCost(context.Background(), result, key, nil, model, model, "", model, 1, &completion.PricingOptions{PricingAt: at})
+	require.InDelta(t, 4, cost.TotalCost, 1e-12)
+	tokens := pricing.UsageTokens{InputTokens: 1000000, OutputTokens: 1000000}
+	cost, err := recorder.CalculateOpenAIRecordUsageTokenCostAt(context.Background(), key, model, 1, at, tokens, "", "")
+	require.NoError(t, err)
+	require.InDelta(t, 4, cost.TotalCost, 1e-12)
+}
+
+// TestV2GPTImageMiniUsesMeasuredImageTokenPrices restores default settlement
+// from the bundled directory. A native Images result with no configured
+// per-image amount must charge its text, image, and cached input buckets
+// together with the image output.
+func TestV2GPTImageMiniUsesMeasuredImageTokenPrices(t *testing.T) {
+	catalog := provider.NewService(provider.Options{DataDir: t.TempDir()}, nil)
+	require.NoError(t, catalog.Initialize())
+	t.Cleanup(catalog.Stop)
+
+	const model = "gpt-image-1-mini"
+	require.Equal(t, []string{"image"}, *catalog.ModelAttributes(model).OutputModalities)
+	recorder := completion.NewRecorder(
+		completion.Dependencies{Calculator: billingtestkit.Calculator(catalog, nil)},
+		completion.RecorderOptions{DefaultMultiplier: 1},
+	)
+	usage := completion.TokenUsage{
+		InputTokens: 210, OutputTokens: 200, CacheReadInputTokens: 30,
+		ImageInputTokens: 100, ImageCacheReadTokens: 20, ImageOutputTokens: 200,
+	}
+	result := &completion.Result{Model: model, UpstreamModel: model, ImageCount: 1, Usage: usage}
+	tokens := pricing.UsageTokens{
+		InputTokens: usage.InputTokens - usage.CacheReadInputTokens, OutputTokens: usage.OutputTokens,
+		CacheReadTokens: usage.CacheReadInputTokens, ImageInputTokens: usage.ImageInputTokens,
+		ImageCacheReadTokens: usage.ImageCacheReadTokens, ImageOutputTokens: usage.ImageOutputTokens,
+	}
+	cost, err := recorder.CalculateOpenAIRecordUsageCostAt(
+		t.Context(), result, &completion.KeySnapshot{}, []string{model}, 1, 1, 1, 1, tokens, "", time.Time{},
+	)
+	require.NoError(t, err)
+	require.Equal(t, string(completion.BillingModeToken), cost.BillingMode)
+	require.InDelta(t, 0.0002, cost.InputCost, 1e-12)
+	require.InDelta(t, 0.0002, cost.ImageInputCost, 1e-12)
+	require.InDelta(t, 0.000007, cost.CacheReadCost, 1e-12)
+	require.InDelta(t, 0.0016, cost.ImageOutputCost, 1e-12)
+	require.InDelta(t, 0.002007, cost.ActualCost, 1e-12)
 }

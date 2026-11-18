@@ -19,11 +19,13 @@ import (
 	"github.com/tidwall/gjson"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
@@ -271,6 +273,7 @@ func TestQoderGatewayAllowsExplicitPreviewCompatibilityMapping(t *testing.T) {
 			"model_whitelist": []any{},
 		},
 	}
+	gatewaytestkit.SetQoderCatalog(provider)
 	client := &gatewaytestkit.QoderClient{
 		Body: "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"}}]}\"}\n\n" +
 			"data: {\"body\":\"[DONE]\"}\n\n",
@@ -387,7 +390,7 @@ func TestQoderGatewayChatCompletionsReusesSessionAndSendsFullReplay(t *testing.T
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, secondMessages[1])["role"])
 	require.Equal(t, "assistant", qoderFixtureValue[map[string]any](t, secondMessages[2])["role"])
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, secondMessages[3])["role"])
-	require.Equal(t, "next", qoderFixtureValue[map[string]any](t, qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])["text"])
+	require.Equal(t, "next", qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])
 }
 
 // TestQoderGatewayChatCompletionsWithoutSessionDoesNotReuseByFirstText repeats
@@ -562,217 +565,6 @@ func TestQoderGatewayResponsesMapsUpstreamToolNameToDeclaredFunctionCall(t *test
 	upstream := qoderLastUpstreamPayloadForTest(t, client)
 	tools := qoderFixtureValue[[]any](t, upstream["tools"])
 	require.Equal(t, "bash", qoderFixtureValue[map[string]any](t, qoderFixtureValue[map[string]any](t, tools[0])["function"])["name"])
-}
-
-// TestQoderGatewayResponsesPreviousResponseIDReusesQoderSession continues
-// twice using generated previous-response IDs. The first two client IDs must
-// differ, while all three upstream payloads retain one session and the second
-// and third requests carry their respective continuation prompts.
-func TestQoderGatewayResponsesPreviousResponseIDReusesQoderSession(t *testing.T) {
-	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
-
-	_, firstResponse := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"instructions":"be terse",
-		"input":"hello",
-		"stream":false
-	}`))
-	firstID := gjson.Get(firstResponse, "id").String()
-	require.NotEmpty(t, firstID)
-	firstPayload := qoderPayloadAtForTest(t, client, 0)
-
-	_, secondResponse := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"previous_response_id":`+strconv.Quote(firstID)+`,
-		"input":"next",
-		"stream":false
-	}`))
-	secondID := gjson.Get(secondResponse, "id").String()
-	require.NotEmpty(t, secondID)
-	require.NotEqual(t, firstID, secondID)
-	secondPayload := qoderPayloadAtForTest(t, client, 1)
-	require.Equal(t, firstPayload["session_id"], secondPayload["session_id"])
-	require.Equal(t, "next", qoderPayloadPromptForTest(t, secondPayload))
-
-	qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"previous_response_id":`+strconv.Quote(secondID)+`,
-		"input":"third",
-		"stream":false
-	}`))
-	thirdPayload := qoderPayloadAtForTest(t, client, 2)
-	require.Equal(t, firstPayload["session_id"], thirdPayload["session_id"])
-	require.Equal(t, "third", qoderPayloadPromptForTest(t, thirdPayload))
-}
-
-// TestQoderGatewayResponsesPreviousResponseIDIsScopedByProvider reuses a
-// response ID while switching providers. The second provider must receive a
-// different upstream session, preventing a client response alias from crossing
-// provider ownership.
-func TestQoderGatewayResponsesPreviousResponseIDIsScopedByProvider(t *testing.T) {
-	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
-	provider2 := *provider
-	provider2.ID = provider.ID + 1
-	svc.Tokens.Core.Sessions[provider2.ID] = providercore.QoderSessionCacheEntry[*qoder.SessionContext]{
-		CredentialsHash: providercore.QoderCredentialsHash(provider2.Credentials),
-		Session:         &qoder.SessionContext{Identity: &qoder.AuthIdentity{SecurityOauthToken: "token-2"}},
-	}
-
-	_, firstResponse := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"input":"hello",
-		"stream":false
-	}`))
-	firstID := gjson.Get(firstResponse, "id").String()
-	require.NotEmpty(t, firstID)
-	firstPayload := qoderPayloadAtForTest(t, client, 0)
-
-	qoderForwardResponsesResultAndBodyForTest(t, svc, &provider2, []byte(`{
-		"model":"deepseek-v4-pro",
-		"previous_response_id":`+strconv.Quote(firstID)+`,
-		"input":"next",
-		"stream":false
-	}`))
-	secondPayload := qoderPayloadAtForTest(t, client, 1)
-	require.NotEqual(t, firstPayload["session_id"], secondPayload["session_id"], "Qoder upstream sessions are provider-scoped; a response id from one provider must not alias another provider's session")
-}
-
-// TestQoderGatewayResponsesPreviousResponseIDWithExplicitSessionAppendsToExistingSession
-// combines a previous-response ID with explicit session continuation. The next
-// prompt must append through the existing upstream session rather than create
-// a separate conversation.
-func TestQoderGatewayResponsesPreviousResponseIDWithExplicitSessionAppendsToExistingSession(t *testing.T) {
-	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
-
-	_, firstResponse := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"session_id":"responses-explicit-session",
-		"input":"hello",
-		"stream":false
-	}`))
-	firstID := gjson.Get(firstResponse, "id").String()
-	require.NotEmpty(t, firstID)
-	firstPayload := qoderPayloadAtForTest(t, client, 0)
-
-	qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"session_id":"responses-explicit-session",
-		"previous_response_id":`+strconv.Quote(firstID)+`,
-		"input":"next",
-		"stream":false
-	}`))
-	secondPayload := qoderPayloadAtForTest(t, client, 1)
-	require.Equal(t, firstPayload["session_id"], secondPayload["session_id"])
-	require.Equal(t, "next", qoderPayloadPromptForTest(t, secondPayload))
-}
-
-// TestQoderGatewayResponsesGeneratedResponseIDDoesNotMaskPromptCacheKey mixes
-// a stable prompt-cache key with generated response aliases and a branch from
-// the first response. Each payload must retain the same upstream session and
-// correct branch prompt.
-func TestQoderGatewayResponsesGeneratedResponseIDDoesNotMaskPromptCacheKey(t *testing.T) {
-	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
-
-	_, firstResponse := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"prompt_cache_key":"responses-cache-session",
-		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],
-		"stream":false
-	}`))
-	firstID := gjson.Get(firstResponse, "id").String()
-	require.NotEmpty(t, firstID)
-	firstPayload := qoderPayloadAtForTest(t, client, 0)
-
-	qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"prompt_cache_key":"responses-cache-session",
-		"input":[
-			{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
-			{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
-		],
-		"stream":false
-	}`))
-	secondPayload := qoderPayloadAtForTest(t, client, 1)
-	require.Equal(t, firstPayload["session_id"], secondPayload["session_id"])
-
-	qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"previous_response_id":`+strconv.Quote(firstID)+`,
-		"input":"branch from first id",
-		"stream":false
-	}`))
-	thirdPayload := qoderPayloadAtForTest(t, client, 2)
-	require.Equal(t, firstPayload["session_id"], thirdPayload["session_id"])
-	require.Equal(t, "branch from first id", qoderPayloadPromptForTest(t, thirdPayload))
-}
-
-// TestQoderGatewayResponsesStreamEmptyOutputAliasesResponseIDToStableSession
-// creates a streaming Responses identity without content output. Its generated
-// alias must still continue the stable upstream session and carry the next
-// request prompt.
-func TestQoderGatewayResponsesStreamEmptyOutputAliasesResponseIDToStableSession(t *testing.T) {
-	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
-	client.Body = "data: {\"body\":\"[DONE]\"}\n\n"
-
-	_, firstStream := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"prompt_cache_key":"responses-empty-stream-session",
-		"input":"hello",
-		"stream":true
-	}`))
-	firstID := qoderResponsesCompletedEventForTest(t, firstStream).Get("response.id").String()
-	require.NotEmpty(t, firstID)
-	firstPayload := qoderPayloadAtForTest(t, client, 0)
-
-	client.Body = qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-		map[string]any{"delta": map[string]any{"content": "OK"}},
-	}}) + "data: {\"body\":\"[DONE]\"}\n\n"
-	qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"previous_response_id":`+strconv.Quote(firstID)+`,
-		"input":"next",
-		"stream":false
-	}`))
-	secondPayload := qoderPayloadAtForTest(t, client, 1)
-	require.Equal(t, firstPayload["session_id"], secondPayload["session_id"])
-	require.Equal(t, "next", qoderPayloadPromptForTest(t, secondPayload))
-}
-
-// TestQoderGatewayResponsesStreamPreviousResponseIDReusesQoderSession
-// continues a streaming Responses conversation by its created ID. Created and
-// completed identities must agree per response, while later client IDs change
-// and upstream session identity stays stable.
-func TestQoderGatewayResponsesStreamPreviousResponseIDReusesQoderSession(t *testing.T) {
-	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
-
-	_, firstStream := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"instructions":"be terse",
-		"input":"hello",
-		"stream":true
-	}`))
-	firstCreated := qoderResponsesCreatedEventForTest(t, firstStream)
-	firstCompleted := qoderResponsesCompletedEventForTest(t, firstStream)
-	firstID := firstCreated.Get("response.id").String()
-	require.NotEmpty(t, firstID)
-	require.Equal(t, firstID, firstCompleted.Get("response.id").String())
-	firstPayload := qoderPayloadAtForTest(t, client, 0)
-
-	_, secondStream := qoderForwardResponsesResultAndBodyForTest(t, svc, provider, []byte(`{
-		"model":"deepseek-v4-pro",
-		"previous_response_id":`+strconv.Quote(firstID)+`,
-		"input":"next",
-		"stream":true
-	}`))
-	secondCreated := qoderResponsesCreatedEventForTest(t, secondStream)
-	secondCompleted := qoderResponsesCompletedEventForTest(t, secondStream)
-	secondID := secondCreated.Get("response.id").String()
-	require.NotEmpty(t, secondID)
-	require.NotEqual(t, firstID, secondID)
-	require.Equal(t, secondID, secondCompleted.Get("response.id").String())
-	secondPayload := qoderPayloadAtForTest(t, client, 1)
-	require.Equal(t, firstPayload["session_id"], secondPayload["session_id"])
-	require.Equal(t, "next", qoderPayloadPromptForTest(t, secondPayload))
 }
 
 // TestQoderGatewayResponsesStreamsDeclaredFunctionCallEvents streams an
@@ -968,7 +760,7 @@ func TestQoderGatewayClaudeCodeContextWithoutSessionUsesStablePrefixKey(t *testi
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, messages[1])["role"])
 	require.Equal(t, "assistant", qoderFixtureValue[map[string]any](t, messages[2])["role"])
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, messages[3])["role"])
-	require.Equal(t, "continue", qoderFixtureValue[map[string]any](t, qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])["text"])
+	require.Equal(t, "continue", qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])
 }
 
 // TestQoderGatewayDoesNotCommitConversationOnUpstreamFailure fails one upstream
@@ -1211,7 +1003,7 @@ func TestQoderGatewayFallsBackToFullReplayWhenPrefixDoesNotMatch(t *testing.T) {
 	require.NotEqual(t, first["session_id"], second["session_id"])
 	messages := qoderFixtureValue[[]any](t, second["messages"])
 	require.Len(t, messages, 3)
-	require.Equal(t, "changed", qoderFixtureValue[map[string]any](t, qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[0])["contents"])[0])["text"])
+	require.Equal(t, "changed", qoderFixtureValue[map[string]any](t, qoderFixtureValue[[]any](t, qoderFixtureValue[map[string]any](t, messages[0])["content"])[0])["text"])
 }
 
 // TestQoderGatewayFallsBackToFullReplayWhenSystemOrToolsChange changes system
@@ -1300,7 +1092,7 @@ func TestQoderGatewayAnthropicMetadataSessionWinsOverChangingHeader(t *testing.T
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, messages[0])["role"])
 	require.Equal(t, "assistant", qoderFixtureValue[map[string]any](t, messages[1])["role"])
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, messages[2])["role"])
-	require.Equal(t, "continue", qoderFixtureValue[map[string]any](t, qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])["text"])
+	require.Equal(t, "continue", qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])
 }
 
 // TestQoderGatewayClaudeCodeUsesExplicitHeaderSessionBeforeStableSeed combines
@@ -1386,7 +1178,7 @@ func TestQoderGatewayClaudeCodeUsesMetadataSessionBeforeStableSeed(t *testing.T)
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, messages[1])["role"])
 	require.Equal(t, "assistant", qoderFixtureValue[map[string]any](t, messages[2])["role"])
 	require.Equal(t, "user", qoderFixtureValue[map[string]any](t, messages[3])["role"])
-	require.Equal(t, "continue", qoderFixtureValue[map[string]any](t, qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])["text"])
+	require.Equal(t, "continue", qoderFixtureValue[map[string]any](t, second["chat_context"])["text"])
 
 	metadata2 := `{"device_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","provider_uuid":"","session_id":"66666666-7777-8888-9999-aaaaaaaaaaaa"}`
 	other := qoderForwardMessagesForTest(t, svc, provider, "", []byte(`{
@@ -2058,8 +1850,7 @@ func TestQoderGatewayForwardChatCompletionsHonorsCanceledContext(t *testing.T) {
 func qoderPayloadPromptForTest(t *testing.T, payload map[string]any) string {
 	t.Helper()
 	chatContext := qoderFixtureValue[map[string]any](t, payload["chat_context"])
-	text := qoderFixtureValue[map[string]any](t, chatContext["text"])
-	return qoderFixtureValue[string](t, text["text"])
+	return qoderFixtureValue[string](t, chatContext["text"])
 }
 
 // qoderPayloadMessageTextForTest returns the first string text block,
@@ -2072,7 +1863,7 @@ func qoderPayloadMessageTextForTest(msg map[string]any) string {
 	}
 	// Upstream fixture history can use typed content blocks or legacy string
 	// content; ignore unusable blocks before selecting the first readable representation.
-	contents, _ := msg["contents"].([]any)
+	contents, _ := msg["content"].([]any)
 	for _, raw := range contents {
 		block, ok := raw.(map[string]any)
 		if !ok || block["type"] != "text" {
@@ -2200,21 +1991,6 @@ func qoderForwardResponsesResultAndBodyForTest(t *testing.T, svc *gatewaytestkit
 	result, err := ForwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIResponses)
 	require.NoError(t, err)
 	return result, rec.Body.String()
-}
-
-// qoderResponsesCreatedEventForTest returns the first decoded response.created
-// fixture event. Missing creation fails the test after scanning supported
-// Responses data fields, preventing callers from silently comparing an absent
-// response identity.
-func qoderResponsesCreatedEventForTest(t *testing.T, body string) gjson.Result {
-	t.Helper()
-	for _, event := range qoderResponsesStreamEventsForTest(t, body) {
-		if event.Get("type").String() == "response.created" {
-			return event
-		}
-	}
-	t.Fatalf("response.created event not found in %s", body)
-	return gjson.Result{}
 }
 
 // qoderLastUpstreamPayloadForTest decodes the final recorded Qoder request
@@ -2452,7 +2228,7 @@ func TestQoderConversationKeyPrefersExplicitSessionOverClaudeCodeStableSeed(t *t
 		Messages: []qoder.QoderMessage{{Role: "user", Text: "inspect"}},
 	}
 
-	key, source := qoder.QoderConversationKey(QoderRequestMetadata(c), 7, "anthropic_messages", request)
+	key, source := qoder.QoderConversationKey(QoderRequestMetadata(c), 7, request)
 
 	require.Equal(t, "header", source)
 	require.Equal(t, qoder.QoderProviderScopedConversationKey(7, "header:"+upstreamcore.IsolateSessionID(0, "header-session")), key)
@@ -2474,7 +2250,7 @@ func TestQoderConversationKeyPrefersMetadataOverClaudeCodeStableSeed(t *testing.
 		Messages:       []qoder.QoderMessage{{Role: "user", Text: "inspect"}},
 	}
 
-	key, source := qoder.QoderConversationKey(QoderRequestMetadata(c), 7, "anthropic_messages", request)
+	key, source := qoder.QoderConversationKey(QoderRequestMetadata(c), 7, request)
 
 	require.Equal(t, "metadata_user_id", source)
 	require.Equal(t, qoder.QoderProviderScopedConversationKey(7, "metadata_user_id:"+upstreamcore.IsolateSessionID(0, "session-123")), key)
@@ -4478,7 +4254,7 @@ func TestQoderThinkingFlowsThroughAllEndpoints(t *testing.T) {
 			endpoint:       "responses",
 			body:           `{"model":"deepseek-v4-pro","reasoning":{"effort":"high"},"input":"hello","stream":true}`,
 			wantEnabled:    true,
-			wantEffort:     "max",
+			wantEffort:     "high",
 			wantEffortPath: true,
 		},
 		{
@@ -4505,7 +4281,7 @@ func TestQoderThinkingFlowsThroughAllEndpoints(t *testing.T) {
 			endpoint:       "responses",
 			body:           `{"model":"deepseek-v4-pro","reasoning":{"effort":"high"},"input":"hello","stream":true}`,
 			wantEnabled:    true,
-			wantEffort:     "max",
+			wantEffort:     "high",
 			wantEffortPath: true,
 		},
 		{
@@ -4518,46 +4294,58 @@ func TestQoderThinkingFlowsThroughAllEndpoints(t *testing.T) {
 			wantEffortPath: true,
 		},
 		{
-			name:        "global qwen 38 chat completions public alias",
-			site:        qoder.SiteGlobal,
-			endpoint:    "chat",
-			body:        `{"model":"qwen3.8-max","reasoning_effort":"low","messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			wantEnabled: true,
+			name:           "global qwen 38 chat completions public alias",
+			site:           qoder.SiteGlobal,
+			endpoint:       "chat",
+			body:           `{"model":"qwen3.8-max","reasoning_effort":"low","messages":[{"role":"user","content":"hello"}],"stream":true}`,
+			wantEnabled:    true,
+			wantEffort:     "low",
+			wantEffortPath: true,
 		},
 		{
-			name:        "global qwen 38 responses raw route",
-			site:        qoder.SiteGlobal,
-			endpoint:    "responses",
-			body:        `{"model":"qmodel_38max","reasoning":{"effort":"high"},"input":"hello","stream":true}`,
-			wantEnabled: true,
+			name:           "global qwen 38 responses raw route",
+			site:           qoder.SiteGlobal,
+			endpoint:       "responses",
+			body:           `{"model":"qmodel_38max","reasoning":{"effort":"high"},"input":"hello","stream":true}`,
+			wantEnabled:    true,
+			wantEffort:     "xhigh",
+			wantEffortPath: true,
 		},
 		{
-			name:        "global qwen 38 anthropic messages",
-			site:        qoder.SiteGlobal,
-			endpoint:    "messages",
-			body:        `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"type":"enabled"},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			wantEnabled: true,
+			name:           "global qwen 38 anthropic messages",
+			site:           qoder.SiteGlobal,
+			endpoint:       "messages",
+			body:           `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"type":"enabled"},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
+			wantEnabled:    true,
+			wantEffort:     "medium",
+			wantEffortPath: true,
 		},
 		{
-			name:        "cn qwen 38 chat completions raw route",
-			site:        qoder.SiteCN,
-			endpoint:    "chat",
-			body:        `{"model":"qmodel_38max","reasoning_effort":"medium","messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			wantEnabled: true,
+			name:           "cn qwen 38 chat completions raw route",
+			site:           qoder.SiteCN,
+			endpoint:       "chat",
+			body:           `{"model":"qmodel_38max","reasoning_effort":"medium","messages":[{"role":"user","content":"hello"}],"stream":true}`,
+			wantEnabled:    true,
+			wantEffort:     "medium",
+			wantEffortPath: true,
 		},
 		{
-			name:        "cn qwen 38 responses public alias",
-			site:        qoder.SiteCN,
-			endpoint:    "responses",
-			body:        `{"model":"qwen3.8-max","reasoning":{"effort":"max"},"input":"hello","stream":true}`,
-			wantEnabled: true,
+			name:           "cn qwen 38 responses public alias",
+			site:           qoder.SiteCN,
+			endpoint:       "responses",
+			body:           `{"model":"qwen3.8-max","reasoning":{"effort":"max"},"input":"hello","stream":true}`,
+			wantEnabled:    true,
+			wantEffort:     "xhigh",
+			wantEffortPath: true,
 		},
 		{
-			name:        "cn qwen 38 anthropic messages",
-			site:        qoder.SiteCN,
-			endpoint:    "messages",
-			body:        `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"budget_tokens":1},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			wantEnabled: true,
+			name:           "cn qwen 38 anthropic messages",
+			site:           qoder.SiteCN,
+			endpoint:       "messages",
+			body:           `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"budget_tokens":1},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
+			wantEnabled:    true,
+			wantEffort:     "xhigh",
+			wantEffortPath: true,
 		},
 	}
 
@@ -4573,6 +4361,7 @@ func TestQoderThinkingFlowsThroughAllEndpoints(t *testing.T) {
 				Type:        capability.ProviderTypeCosy,
 				Credentials: credentials,
 			}
+			gatewaytestkit.SetQoderCatalog(provider)
 			client := &gatewaytestkit.QoderClient{
 				Body: "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"}}]}\"}\n\n" +
 					"data: {\"body\":\"[DONE]\"}\n\n",
@@ -4623,6 +4412,7 @@ func TestQoderThinkingUsesProviderMappedRouteKey(t *testing.T) {
 			},
 		},
 	}
+	gatewaytestkit.SetQoderCatalog(provider)
 	client := &gatewaytestkit.QoderClient{
 		Body: "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"}}]}\"}\n\n" +
 			"data: {\"body\":\"[DONE]\"}\n\n",
@@ -4647,7 +4437,7 @@ func TestQoderThinkingUsesProviderMappedRouteKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "qmodel_38max", result.UpstreamModel)
 	payload := qoderLastUpstreamPayloadForTest(t, client)
-	assertQoderThinkingPayload(t, payload, true, "", false)
+	assertQoderThinkingPayload(t, payload, true, "medium", true)
 }
 
 // assertQoderThinkingPayload checks both reasoning switches and all four
@@ -4676,4 +4466,23 @@ func assertQoderThinkingPayload(t *testing.T, payload map[string]any, enabled bo
 		}
 		require.False(t, gjson.GetBytes(raw, path).Exists(), path)
 	}
+}
+
+// TestMixedGroupQoderValidationRetainsClientError sends a stateful request through
+// the mixed-platform native dispatcher. The error must be presented once as a
+// local 400 and stay recognizable to scheduler feedback without invoking transport.
+func TestMixedGroupQoderValidationRetainsClientError(t *testing.T) {
+	row, fixture, client := gatewaytestkit.NewDefaultQoderFixture()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	executor := UnifiedTextExecutor{Qoder: fixture.Runtime}
+	result, err := executor.native(t.Context(), c, gatewayprovider.NewExecutionProvider(row), []byte(`{"model":"ultimate","input":"test","store":true}`), protocolcore.ProtocolOpenAIResponses)
+	require.Nil(t, result)
+	require.True(t, routing.IsModelAttributeError(err))
+	require.True(t, qoder.IsRequestError(err))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unsupported_response_state")
+	require.True(t, IsResponseCommitted(c))
+	require.Zero(t, client.BodyCount())
 }
