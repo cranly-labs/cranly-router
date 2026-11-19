@@ -32,6 +32,11 @@ export const PRIVATE_MODULES = [
     entries: ['src/views/admin/providers/ProvidersView.vue'],
   },
   {
+    directory: 'src/views/admin/groups/',
+    owners: ['src/views/admin/GroupsView.vue'],
+    entries: [],
+  },
+  {
     directory: 'src/views/admin/settings/',
     owners: ['src/views/admin/SettingsView.vue'],
     entries: [],
@@ -47,6 +52,49 @@ export const PRIVATE_MODULES = [
       'src/views/admin/RiskControlView.vue',
       'src/views/admin/__tests__/RiskControlView.spec.ts',
     ],
+    entries: [],
+  },
+  {
+    directory: 'src/views/admin/ops/',
+    owners: [],
+    entries: ['src/views/admin/ops/OpsDashboard.vue'],
+  },
+  {
+    directory: 'src/views/admin/orders/',
+    owners: [],
+    entries: [
+      'src/views/admin/orders/AdminPaymentDashboardView.vue',
+      'src/views/admin/orders/AdminOrdersView.vue',
+      'src/views/admin/orders/AdminPaymentPlansView.vue',
+    ],
+  },
+  {
+    directory: 'src/views/admin/affiliates/',
+    owners: [],
+    entries: [
+      'src/views/admin/affiliates/AdminAffiliateInvitesView.vue',
+      'src/views/admin/affiliates/AdminAffiliateRebatesView.vue',
+      'src/views/admin/affiliates/AdminAffiliateTransfersView.vue',
+    ],
+  },
+  {
+    directory: 'src/views/admin/mcp/',
+    owners: ['src/views/admin/McpManagementView.vue'],
+    entries: [],
+  },
+  {
+    directory: 'src/views/admin/proxies/',
+    owners: ['src/views/admin/ProxiesView.vue'],
+    entries: [],
+  },
+  {
+    directory: 'src/views/home/',
+    owners: ['src/views/HomeView.vue'],
+    entries: [],
+  },
+  {
+    directory: 'src/views/user/keys/',
+    owners: ['src/views/user/KeysView.vue'],
     entries: [],
   },
 ]
@@ -66,6 +114,12 @@ export const IMPORT_EXCEPTIONS = [
   {
     importer: 'src/utils/__tests__/typesafe.spec.ts',
     target: 'src/views/admin/providers/testing/providerTestProtocols',
+  },
+  // The cross-page platform catalog spec verifies Ops filter options alongside
+  // GroupsView and SubscriptionsView without exposing Ops internals to pages.
+  {
+    importer: 'src/views/admin/__tests__/platformFilterCatalogUsage.spec.ts',
+    target: 'src/views/admin/ops/platformOptions',
   },
 ]
 

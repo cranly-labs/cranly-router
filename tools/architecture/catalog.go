@@ -149,7 +149,7 @@ internal/settings`, Tests: ""},
 		"internal/backup": {Production: `internal/server/adminapi internal/backup/... internal/identity/httpapi/authctx internal/infra/telemetry/... internal/pkg/
 internal/server/httpx`, Tests: "internal/identity internal/infra/postgres/..."},
 		"internal/batchimage": {Production: `internal/provider/modelrules internal/modelcatalog ent/... internal/provider internal/provider/provider internal/apikey internal/batchimage/...
-internal/billing internal/gateway/httpapi internal/infra/postgres/... internal/infra/telemetry/...
+internal/billing internal/gateway/httpapi internal/infra/postgres/... internal/infra/redis/... internal/infra/telemetry/...
 internal/pkg/ internal/protocol internal/routing internal/routing/capability
 internal/routing/modelmap internal/server/httpx internal/upstream internal/upstream/gemini
 internal/upstream/vertex internal/usage`, Tests: `internal/modelcatalog/testkit internal/billing/pricing internal/billing/provider internal/billing/testkit internal/config internal/gateway/completion
@@ -166,7 +166,7 @@ internal/upstream/openai`},
 		"internal/config": {Production: `internal/config/... internal/identity/authconfig internal/scheduler/policy
 internal/server/clientip/policy internal/server/httpconfig`, Tests: ""},
 		"internal/creative": {Production: `internal/provider/modelrules internal/server/adminapi internal/modelcatalog ent/... internal/provider internal/provider/provider internal/billing internal/billing/pricing
-internal/creative/... internal/identity/httpapi/authctx internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/
+internal/creative/... internal/identity/httpapi/authctx internal/infra/postgres/... internal/infra/redis/... internal/infra/telemetry/... internal/pkg/
 internal/protocol internal/protocol/gemini internal/routing internal/routing/capability internal/routing/modelmap
 internal/scheduler internal/server/httpx internal/settings internal/upstream
 internal/upstream/gemini internal/upstream/grok internal/upstream/openai internal/usage`, Tests: `internal/modelcatalog/testkit internal/apikey internal/billing/provider internal/billing/testkit internal/config
@@ -229,10 +229,7 @@ internal/settings`, Tests: ""},
 internal/billing/provider internal/idempotency internal/idempotency/httpapi
 internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/ internal/protocol
 internal/protocol/openai internal/routing/... internal/scheduler/policy internal/server/httpx
-internal/settings internal/upstream/anthropic internal/upstream/antigravity
-internal/upstream/deepseek internal/upstream/kimi internal/upstream/zhipu
-internal/upstream/gemini/codeassist internal/upstream/grok internal/upstream/openai
-internal/upstream/qoder`, Tests: `internal/modelcatalog/testkit internal/provider/provider internal/apikey internal/billing/testkit internal/gateway/media
+internal/settings`, Tests: `internal/modelcatalog/testkit internal/provider/provider internal/apikey internal/billing/testkit internal/gateway/media
 internal/gateway/provider internal/gateway/provider/modelidentity internal/idempotency/testkit
 internal/identity/httpapi/authctx internal/scheduler internal/testutil/postgrescontainer migrations internal/modelcatalog/provider`},
 		"internal/scheduler": {Production: `internal/server/adminapi internal/provider internal/egress internal/infra/postgres/... internal/infra/telemetry/...
@@ -462,16 +459,16 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/apikey", Imports: "internal/apikey/postgres", Files: "admin_external_test.go"},
 		{Scope: "internal/apikey/postgres", Imports: "internal/billing/postgres internal/usage/postgres/query", Files: "key_store.go"},
 		{Scope: "internal/backup", Imports: "internal/backup/provider internal/infra/postgres", Files: "backup_external_test.go"},
-		{Scope: "internal/batchimage", Imports: "internal/batchimage/provider", Files: "cleanup_test.go helpers_test.go job_lifecycle_scenario_test.go processor_test.go public_test.go settlement_test.go"},
-		{Scope: "internal/batchimage", Imports: "internal/billing/provider", Files: "public_test.go"},
+		{Scope: "internal/batchimage", Imports: "internal/batchimage/provider", Files: "cleanup_test.go helpers_test.go job_lifecycle_scenario_test.go processor_test.go public_catalog_test.go public_test.go settlement_test.go"},
+		{Scope: "internal/batchimage", Imports: "internal/billing/provider", Files: "helpers_test.go"},
 		{Scope: "internal/billing", Imports: "internal/billing/postgres", Files: "redeem_admin_external_test.go subscription_service_test.go"},
 		{Scope: "internal/billing", Imports: "internal/billing/provider", Files: "price_resolver_test.go"},
 		{Scope: "internal/billing", Imports: "internal/modelcatalog/provider", Files: "calculator_external_test.go helpers_external_test.go price_resolver_test.go"},
 		{Scope: "internal/billing", Imports: "internal/gateway/provider/modelidentity", Files: "calculator_external_test.go helpers_external_test.go"},
 		{Scope: "internal/billing/postgres", Imports: "internal/batchimage/postgres", Files: "settlement_test.go"},
-		{Scope: "internal/creative", Imports: "internal/creative/provider", Files: "helpers_external_test.go public_external_test.go"},
-		{Scope: "internal/creative", Imports: "internal/gateway/provider/modelidentity", Files: "helpers_external_test.go public_external_test.go"},
-		{Scope: "internal/creative", Imports: "internal/billing/provider", Files: "public_external_test.go"},
+		{Scope: "internal/creative", Imports: "internal/creative/provider", Files: "helpers_external_test.go public_catalog_external_test.go"},
+		{Scope: "internal/creative", Imports: "internal/gateway/provider/modelidentity", Files: "helpers_external_test.go"},
+		{Scope: "internal/creative", Imports: "internal/billing/provider", Files: "helpers_external_test.go"},
 		{Scope: "internal/gateway/clientmeta", Imports: "net/http/httptest", Files: "claude_validator_test.go"},
 		{Scope: "internal/gateway/clientmeta", Imports: "net/http os", Files: "claude_validator_test.go"},
 		{Scope: "internal/gateway/completion", Imports: "internal/gateway/provider", Files: "pricing_external_test.go record_external_test.go"},
@@ -492,6 +489,7 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/routing", Imports: "internal/gateway/provider/modelidentity", Files: "marketplace_external_test.go"},
 		{Scope: "internal/scheduler/rediscache", Imports: "internal/provider/provider", Files: "snapshot_integration_test.go snapshot_encoding_scenario_test.go"},
 		{Scope: "internal/search", Imports: "internal/search/provider", Files: "config_test.go"},
+		{Scope: "internal/settings", Imports: "internal/upstream/anthropic internal/upstream/antigravity internal/upstream/grok", Files: "testkit/composite.go"},
 		{Scope: "internal/setup", Imports: "internal/app/bootstrap", Files: "setup.go"},
 		{Scope: "internal/team/postgres", Imports: "internal/apikey/postgres internal/billing/postgres", Files: "team_test.go"},
 		{Scope: "internal/team/postgres", Imports: "internal/usage/postgres/query", Files: "team.go"},
