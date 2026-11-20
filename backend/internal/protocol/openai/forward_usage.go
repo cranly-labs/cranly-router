@@ -2,6 +2,8 @@ package openai
 
 import (
 	"github.com/tidwall/gjson"
+
+	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
 // forward_usage.go extracts and combines token observations from Responses,
@@ -22,7 +24,7 @@ import (
 
 // ForwardUsage holds token, cache, and image observations for downstream accounting.
 type ForwardUsage struct {
-	CacheWriteDetails        *CacheWriteTokensDetails `json:"-"`                                     // validated TTL write counters
+	CacheWriteDetails        *CacheWriteTokensDetails `json:"-"`                                     // observed TTL write counters
 	ImageFrameCount          int                      `json:"-"`                                     // independently observed animation frame units
 	InputTokens              int                      `json:"input_tokens"`                          // reported input tokens
 	ImageInputTokens         int                      `json:"image_input_tokens,omitempty"`          // reported image-input tokens
@@ -66,8 +68,10 @@ func AddForwardUsage(dst *ForwardUsage, usage ForwardUsage) {
 	dst.ImageInputTokens += usage.ImageInputTokens
 	dst.ImageCacheReadTokens += usage.ImageCacheReadTokens
 	dst.OutputTokens += usage.OutputTokens
-	dst.CacheWriteDetails = AddCacheWriteDetails(dst.CacheCreationInputTokens, dst.CacheWriteDetails, usage.CacheCreationInputTokens, usage.CacheWriteDetails)
-	dst.CacheCreationInputTokens += usage.CacheCreationInputTokens
+	dst.CacheCreationInputTokens, dst.CacheWriteDetails = combineCacheWriteObservations(
+		dst.CacheCreationInputTokens, dst.CacheWriteDetails,
+		usage.CacheCreationInputTokens, usage.CacheWriteDetails,
+	)
 	dst.CacheReadInputTokens += usage.CacheReadInputTokens
 	dst.ImageOutputTokens += usage.ImageOutputTokens
 }
@@ -82,6 +86,9 @@ func AddForwardUsage(dst *ForwardUsage, usage ForwardUsage) {
 // before input detail. Callers validate the complete body separately because
 // these gjson path reads can expose usage from partially parsed JSON.
 func ExtractEmbeddingsUsage(body []byte) ForwardUsage {
+	if len(body) == 0 || wirejson.ValidateUsageEnvelope(body) != nil {
+		return ForwardUsage{}
+	}
 	usage := gjson.GetBytes(body, "usage")
 	if !usage.Exists() || !usage.IsObject() {
 		return ForwardUsage{}
