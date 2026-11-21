@@ -1,9 +1,14 @@
 package requeststate
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 // TestExtractGrokResponsesReasoningEffortSupportsOpenAICompatibleField supplies
@@ -375,4 +380,101 @@ func TestExtractOpenAIServiceTierFromBody(t *testing.T) {
 	require.Equal(t, "ultrafast", *ExtractOpenAIServiceTierFromBody([]byte(`{"service_tier":"ultrafast"}`)))
 	require.Nil(t, ExtractOpenAIServiceTierFromBody([]byte(`{"service_tier":"turbo"}`)))
 	require.Nil(t, ExtractOpenAIServiceTierFromBody(nil))
+}
+
+// TestExtractRoutingReasoningEffort supplies protocol-specific effort payloads
+// across Anthropic, OpenAI Responses, OpenAI Chat, and Gemini alongside
+// model-suffix and budget-only bodies. Extraction must normalize explicit
+// fields without inferring effort from suffixes or budgets.
+func TestExtractRoutingReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name     string              // protocol extraction scenario
+		protocol protocol.ProtocolID // inbound protocol identifier
+		body     string              // JSON request payload
+		want     string              // expected canonical effort label
+	}{
+		{name: "anthropic output_config", protocol: protocol.ProtocolAnthropicMessages, body: `{"model":"claude-opus-5-5","output_config":{"effort":"HIGH"}}`, want: "high"},
+		{name: "openai responses reasoning", protocol: protocol.ProtocolOpenAIResponses, body: `{"model":"claude-opus-5-5","reasoning":{"effort":"x-high"}}`, want: "xhigh"},
+		{name: "openai chat flat field", protocol: protocol.ProtocolOpenAIChatCompletions, body: `{"model":"claude-opus-5-5","reasoning_effort":"medium"}`, want: "medium"},
+		{name: "openai chat nested fallback", protocol: protocol.ProtocolOpenAIChatCompletions, body: `{"model":"claude-opus-5-5","reasoning":{"effort":"low"}}`, want: "low"},
+		{name: "gemini camelCase thinkingLevel", protocol: protocol.ProtocolGeminiGenerateContent, body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`, want: "high"},
+		{name: "gemini snake_case thinking_level", protocol: protocol.ProtocolGeminiGenerateContent, body: `{"generation_config":{"thinking_config":{"thinking_level":"MINIMAL"}}}`, want: "minimal"},
+		{name: "does not infer from suffix or budget", protocol: protocol.ProtocolAnthropicMessages, body: `{"model":"claude-opus-5-5-high","thinking":{"type":"enabled","budget_tokens":8000}}`, want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ExtractRoutingReasoningEffort([]byte(tc.body), tc.protocol))
+		})
+	}
+}
+
+// TestStripWireReasoningEffort removes protocol effort fields and deletes
+// empty parent containers while preserving sibling parameters across all four
+// supported wire protocols.
+func TestStripWireReasoningEffort(t *testing.T) {
+	out := StripWireReasoningEffort([]byte(`{"model":"claude-opus-5-5-high","output_config":{"effort":"high"}}`), protocol.ProtocolAnthropicMessages)
+	require.JSONEq(t, `{"model":"claude-opus-5-5-high"}`, string(out))
+
+	outSibling := StripWireReasoningEffort([]byte(`{"model":"claude-opus-5-5-high","output_config":{"effort":"high","format":{"type":"json"}}}`), protocol.ProtocolAnthropicMessages)
+	require.JSONEq(t, `{"model":"claude-opus-5-5-high","output_config":{"format":{"type":"json"}}}`, string(outSibling))
+
+	outResponses := StripWireReasoningEffort([]byte(`{"model":"claude-opus-5-5-high","reasoning":{"effort":"high","summary":"auto"}}`), protocol.ProtocolOpenAIResponses)
+	require.JSONEq(t, `{"model":"claude-opus-5-5-high","reasoning":{"summary":"auto"}}`, string(outResponses))
+
+	outResponsesEmpty := StripWireReasoningEffort([]byte(`{"model":"claude-opus-5-5-high","reasoning":{"effort":"high"}}`), protocol.ProtocolOpenAIResponses)
+	require.JSONEq(t, `{"model":"claude-opus-5-5-high"}`, string(outResponsesEmpty))
+
+	outChat := StripWireReasoningEffort([]byte(`{"model":"claude-opus-5-5-high","reasoning_effort":"high","stream":true}`), protocol.ProtocolOpenAIChatCompletions)
+	require.JSONEq(t, `{"model":"claude-opus-5-5-high","stream":true}`, string(outChat))
+
+	outGemini := StripWireReasoningEffort([]byte(`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"},"temperature":0.2}}`), protocol.ProtocolGeminiGenerateContent)
+	require.JSONEq(t, `{"generationConfig":{"temperature":0.2}}`, string(outGemini))
+
+	outGeminiEmpty := StripWireReasoningEffort([]byte(`{"contents":[],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`), protocol.ProtocolGeminiGenerateContent)
+	require.JSONEq(t, `{"contents":[]}`, string(outGeminiEmpty))
+
+	outAntigravityWrapped := StripWireReasoningEffort([]byte(`{"project":"p1","model":"claude-opus-5-5-high","request":{"contents":[],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}}`), protocol.ProtocolGeminiGenerateContent)
+	require.JSONEq(t, `{"project":"p1","model":"claude-opus-5-5-high","request":{"contents":[]}}`, string(outAntigravityWrapped))
+}
+
+// TestResolveAttemptForEffortClearsPriorEffort verifies that ResolveAttempt
+// retains a saved route plan's effort while ResolveAttemptForEffort with an
+// empty string clears it and falls back to ordinary model mapping.
+func TestResolveAttemptForEffortClearsPriorEffort(t *testing.T) {
+	group := &routing.Group{ID: 7, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolAnthropicMessages}}
+	plan := routing.Plan(routing.PlanInput{
+		Group:           group,
+		RequestedModel:  "claude-opus-5-5",
+		GroupMapping:    routing.GroupMappingResult{MappedModel: "claude-opus-5-5"},
+		ClientProtocol:  protocol.ProtocolAnthropicMessages,
+		ReasoningEffort: "high",
+	})
+	snapshot := provider.ProviderSnapshot{
+		ID:               42,
+		Platform:         provider.PlatformAnthropic,
+		Type:             provider.ProviderTypeAPIKey,
+		EnabledProtocols: []protocol.ProtocolID{protocol.ProtocolAnthropicMessages},
+		ModelPolicy: provider.NewModelRoutingSnapshotWithEffort(
+			map[string]string{"claude-opus-5-5": "claude-opus-5-5-default"},
+			provider.EffortModelMapping{"claude-opus-5-5": {"high": "claude-opus-5-5-high"}},
+		),
+	}
+	ctx := WithRoutePlan(WithClientProtocol(WithGroup(context.Background(), group), protocol.ProtocolAnthropicMessages), plan)
+	state := RoutingStateFromContext(ctx)
+
+	retained, ok, err := state.ResolveAttempt(snapshot, AttemptRoute{})
+	require.NoError(t, err)
+	require.True(t, ok)
+	cand, planned := retained.Candidate()
+	require.True(t, planned)
+	require.Equal(t, "claude-opus-5-5-high", cand.Models.ProviderMappedModel)
+	require.True(t, retained.EffortMappingMatched())
+
+	cleared, ok, err := state.ResolveAttemptForEffort(snapshot, AttemptRoute{}, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	candCleared, plannedCleared := cleared.Candidate()
+	require.True(t, plannedCleared)
+	require.Equal(t, "claude-opus-5-5-default", candCleared.Models.ProviderMappedModel)
+	require.False(t, cleared.EffortMappingMatched())
 }

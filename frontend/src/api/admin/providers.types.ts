@@ -38,15 +38,14 @@ export interface GeminiCredentials {
   // OAuth authentication
   access_token?: string // Session access token.
   refresh_token?: string // Session renewal token.
-  oauth_type?: 'code_assist' | 'google_one' | 'ai_studio' | string // OAuth integration variant.
+  oauth_type?: 'code_assist' | 'ai_studio' | string // OAuth integration variant.
   tier_id?:
-    | 'google_one_free'
-    | 'google_ai_pro'
-    | 'google_ai_ultra'
     | 'gcp_standard'
     | 'gcp_enterprise'
     | 'aistudio_free'
     | 'aistudio_paid'
+    | 'legacy-tier'
+    | 'free-tier'
     | 'LEGACY'
     | 'PRO'
     | 'ULTRA'
@@ -56,6 +55,8 @@ export interface GeminiCredentials {
   scope?: string // Granted OAuth permissions.
   expires_at?: string // Record expiration timestamp.
   model_mapping?: Record<string, string> // Requested-to-upstream model mappings.
+  effort_model_mapping?: Record<string, Record<string, string>> // Effort-scoped model overrides keyed by source model and canonical effort.
+  effort_model_mapping_strip_effort?: boolean // Strips wire effort fields when an effort-scoped model mapping matches.
 }
 
 // TempUnschedulableState records the rule and response that temporarily excluded a
@@ -375,10 +376,23 @@ export interface UsageProgress {
   limit_requests?: number // Allowed request count.
 }
 
-// AntigravityModelQuota reports observed quota utilization and reset time for one model.
+// AntigravityModelQuota reports observed quota utilization, reset time, and optional local usage for one model or family bucket.
 export interface AntigravityModelQuota {
   utilization: number // Quota utilization percentage.
   reset_time: string // ISO8601 quota reset timestamp.
+  window_stats?: WindowStats | null // Local usage totals recorded during this window.
+}
+
+// AntigravityQuotaGroup summarizes weekly and 5-hour windows for one Antigravity model family.
+export interface AntigravityQuotaGroup {
+  weekly?: AntigravityModelQuota | null // Rolling 7-day quota window.
+  five_hour?: AntigravityModelQuota | null // Rolling 5-hour quota window.
+}
+
+// AntigravityQuotaSummary groups Antigravity usage windows into Gemini and Claude/GPT families.
+export interface AntigravityQuotaSummary {
+  gemini?: AntigravityQuotaGroup | null // Gemini models quota windows.
+  claude_gpt?: AntigravityQuotaGroup | null // Claude and GPT models quota windows.
 }
 
 // GrokQuotaWindow contains observed request or token limits returned by Grok.
@@ -446,6 +460,7 @@ export interface ProviderUsageInfo {
   gemini_flash_minute?: UsageProgress | null // Gemini Flash minute allowance.
   quota_auto_paused?: boolean // Quota exhaustion pause state.
   antigravity_quota?: Record<string, AntigravityModelQuota> | null // Antigravity per-model quota.
+  antigravity_quota_summary?: AntigravityQuotaSummary | null // Grouped Antigravity weekly and 5h windows.
   grok_request_quota?: GrokQuotaWindow | null // Grok request quota.
   grok_token_quota?: GrokQuotaWindow | null // Grok token quota.
   grok_retry_after_seconds?: number | null // Grok retry after seconds.

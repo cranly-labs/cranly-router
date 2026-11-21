@@ -34,22 +34,28 @@ type ModelHealth struct {
 	Health      *provider.HealthService // provider health rule service
 }
 
-// LimitKey resolves the model identity used by provider cooldown state. A nil
-// record or empty trimmed input returns that trimmed input immediately. OpenAI
-// and Grok callers supply already mapped upstream names, with Grok applying its
-// platform normalization.
-//
-// Antigravity resolution includes the attempt's thinking setting, and remaining
-// platforms resolve one provider mapping. If either resolution yields an empty
-// result, the original trimmed name remains the key, so model health does not
-// lose the identity that the caller observed.
+// LimitKey resolves the model identity used by provider cooldown state without
+// an explicit effort override, delegating to LimitKeyForEffort.
 func (s *ModelHealth) LimitKey(value *provider.Record, requested string, thinking *bool) string {
+	return s.LimitKeyForEffort(value, requested, "", thinking)
+}
+
+// LimitKeyForEffort resolves the model identity used by provider cooldown state
+// with an optional reasoning effort. A nil record or empty trimmed input returns
+// that trimmed input immediately. OpenAI and Grok callers supply already mapped
+// upstream names, with Grok applying its platform normalization.
+//
+// Antigravity resolution includes the attempt's effort and thinking settings,
+// and remaining platforms resolve one effort-aware provider mapping. If
+// resolution yields an empty result, the original trimmed name remains the key,
+// so model health does not lose the identity that the caller observed.
+func (s *ModelHealth) LimitKeyForEffort(value *provider.Record, requested, effort string, thinking *bool) string {
 	key := strings.TrimSpace(requested)
 	if value == nil || key == "" {
 		return key
 	}
 	if value.Platform == provider.PlatformAntigravity {
-		mapped := FinalAntigravityModel(value, key, thinking)
+		mapped := FinalAntigravityModelForEffort(value, key, effort, thinking)
 		if mapped = strings.TrimSpace(mapped); mapped != "" {
 			return mapped
 		}
@@ -72,7 +78,12 @@ func (s *ModelHealth) LimitKey(value *provider.Record, requested string, thinkin
 		// that input for health state associated with this attempt's model.
 		return key
 	}
-	mapped, _ := provider.ResolveMappedModel(provider.ResolveModelMapping(value, ModelDefaults()), key)
+	mapped, _, _ := provider.ResolveMappedModelForEffort(
+		provider.ResolveModelMapping(value, ModelDefaults()),
+		provider.ResolveEffortModelMapping(value),
+		key,
+		effort,
+	)
 	if mapped = strings.TrimSpace(mapped); mapped != "" {
 		return mapped
 	}
@@ -81,12 +92,19 @@ func (s *ModelHealth) LimitKey(value *provider.Record, requested string, thinkin
 	return key
 }
 
-// Observe classifies a model failure and returns whether Health handled it.
-// Callers provide the current attempt's model and endpoint intent; image
-// classification uses endpoint intent or resolved output evidence. Health must
-// be configured before observations are submitted.
+// Observe classifies a model failure without an explicit effort override and
+// returns whether Health handled it.
 func (s *ModelHealth) Observe(ctx context.Context, value *provider.Record, model string, status int, body []byte, thinking *bool, imagesEndpoint bool) bool {
-	key := s.LimitKey(value, model, thinking)
+	return s.ObserveForEffort(ctx, value, model, "", status, body, thinking, imagesEndpoint)
+}
+
+// ObserveForEffort classifies a model failure under an optional reasoning
+// effort and returns whether Health handled it. Callers provide the current
+// attempt's model, effort, and endpoint intent; image classification uses
+// endpoint intent or resolved output evidence. Health must be configured
+// before observations are submitted.
+func (s *ModelHealth) ObserveForEffort(ctx context.Context, value *provider.Record, model, effort string, status int, body []byte, thinking *bool, imagesEndpoint bool) bool {
+	key := s.LimitKeyForEffort(value, model, effort, thinking)
 	image := imagesEndpoint
 	if !image && s.ImageOutput != nil {
 		image = s.ImageOutput(ctx, value, key)
@@ -94,11 +112,17 @@ func (s *ModelHealth) Observe(ctx context.Context, value *provider.Record, model
 	return s.Health.ApplyModelUnavailable(ctx, value, status, provider.ModelFailureObservation{NotFound: upstream.IsModelNotFoundError(status, body), CodexPlanGated: openai.IsCodexPlanGatedModelError(status, body), ModelKey: key, ImageModel: image, ImagesEndpoint: imagesEndpoint})
 }
 
-// ObserveSparkRateLimit passes the resolved model key and Spark classification
-// to Health and returns whether it handled the limit. Callers supply this
-// attempt's model, thinking setting, headers, and body for reset
-// classification.
+// ObserveSparkRateLimit passes the resolved model key without an explicit
+// effort override and Spark classification to Health.
 func (s *ModelHealth) ObserveSparkRateLimit(ctx context.Context, value *provider.Record, model string, status int, headers http.Header, body []byte, thinking *bool) bool {
-	key := s.LimitKey(value, model, thinking)
+	return s.ObserveSparkRateLimitForEffort(ctx, value, model, "", status, headers, body, thinking)
+}
+
+// ObserveSparkRateLimitForEffort passes the effort-aware resolved model key
+// and Spark classification to Health and returns whether it handled the limit.
+// Callers supply this attempt's model, effort, thinking setting, headers, and
+// body for reset classification.
+func (s *ModelHealth) ObserveSparkRateLimitForEffort(ctx context.Context, value *provider.Record, model, effort string, status int, headers http.Header, body []byte, thinking *bool) bool {
+	key := s.LimitKeyForEffort(value, model, effort, thinking)
 	return s.Health.ApplySparkRateLimit(ctx, value, key, status, openai.IsCodexSparkModel(model), func() (provider.OpenAI429Disposition, *time.Time) { return ClassifyOpenAI429(headers, body) })
 }

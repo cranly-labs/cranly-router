@@ -364,13 +364,6 @@
               :groups="groups"
               data-tour="provider-form-groups"
             />
-            <SettingToggleRow
-              v-if="provider.platform === 'antigravity'"
-              id="edit-provider-allow-overages"
-              v-model="allowOverages"
-              :label="t('admin.providers.allowOverages')"
-              :help="t('admin.providers.allowOveragesTooltip')"
-            />
             <div v-if="!isSparkShadow">
               <span class="input-label">{{ t('admin.providers.proxy') }}</span>
               <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
@@ -401,6 +394,7 @@
             :models="isQoderCosyProvider ? (qoderCatalogStatus?.models ?? []) : undefined"
             :known-route-keys="qoderEnabledKeys"
             v-model:mappings="modelMappings"
+            v-model:strip-effort="stripEffortOnEffortModelMapping"
             :platform="provider.type === 'bedrock' ? 'anthropic' : provider.platform"
             :provider-id="
               provider.type === 'bedrock' || connectionChanged ? undefined : provider.id
@@ -411,6 +405,7 @@
             :target-placeholder="
               provider.type === 'bedrock' ? t('admin.providers.toModel') : undefined
             "
+            wildcard-validation
             @update:allowed-models="setAllowedModels"
             @synced="storeModelProtocolSuggestions"
             @add="touchQoderModelRestriction"
@@ -429,30 +424,17 @@
             :protocols="upstreamProtocols"
           />
 
-          <!-- Antigravity uses the whitelist for final model eligibility and mappings for request rewriting. -->
-          <SettingsSection
+          <!-- Antigravity shares the segmented whitelist and mapping editor while keeping both drafts independent. -->
+          <ModelRestrictionFields
             v-if="provider.platform === 'antigravity'"
-            :title="t('admin.providers.modelRestriction')"
-            :hint="t('admin.providers.selectAllowedModels')"
-          >
-            <ModelWhitelistSelector v-model="antigravityWhitelistModels" platform="antigravity" />
-            <ProviderModelMappingEditor v-model="antigravityModelMappings" wildcard-validation>
-              <template #header-actions>
-                <button
-                  type="button"
-                  class="btn btn-secondary btn-sm"
-                  :disabled="isSyncingAntigravityUpstream || !provider?.id"
-                  @click="syncAntigravityUpstreamModels"
-                >
-                  {{
-                    isSyncingAntigravityUpstream
-                      ? t('admin.providers.syncUpstreamModelsLoading')
-                      : t('admin.providers.syncUpstreamModels')
-                  }}
-                </button>
-              </template>
-            </ProviderModelMappingEditor>
-          </SettingsSection>
+            v-model:mode="antigravityModelRestrictionMode"
+            v-model:allowed-models="antigravityWhitelistModels"
+            v-model:mappings="antigravityModelMappings"
+            v-model:strip-effort="antigravityStripEffortOnEffortModelMapping"
+            platform="antigravity"
+            :provider-id="provider.id"
+            wildcard-validation
+          />
         </template>
 
         <template #scheduling>
@@ -746,6 +728,15 @@
             v-model:rows="headerOverrideRows"
             data-provider-field="header-override"
           />
+
+          <SettingsSection v-if="provider.platform === 'antigravity'">
+            <SettingToggleRow
+              id="edit-provider-allow-overages"
+              v-model="allowOverages"
+              :label="t('admin.providers.allowOverages')"
+              :help="t('admin.providers.allowOveragesTooltip')"
+            />
+          </SettingsSection>
 
           <!-- Grok custom addresses control request forwarding; authorization and refresh use their own endpoints. -->
           <SettingsSection
@@ -1071,7 +1062,6 @@ import ProviderModelMappingEditor from '@/components/provider/ProviderModelMappi
 import ProxySelector from '@/components/admin/proxy/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import CodexImageToolModeSelector from '@/components/provider/CodexImageToolModeSelector.vue'
-import ModelWhitelistSelector from '@/components/provider/ModelWhitelistSelector.vue'
 import ResponsesWSConnectionModeSelector from '@/components/provider/ResponsesWSConnectionModeSelector.vue'
 import GrokBaseUrlPresets from '@/components/provider/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/provider/CnBaseUrlPresets.vue'
@@ -1127,7 +1117,7 @@ import { VERTEX_LOCATION_OPTIONS, groupedProviderSelectOptions } from '@/constan
 import { supportsUpstreamBalanceAlert } from '@/utils/upstreamBalanceAlert'
 import { resolveUpstreamUsageConfig } from '@/utils/upstreamUsage'
 import type { SyncUpstreamModelsResult } from '@/api/admin/providers'
-import type { QoderSite } from '@/composables/useModelWhitelist'
+import { firstModelMappingRowError, type QoderSite } from '@/composables/useModelWhitelist'
 
 // EditProviderModal.vue presents provider settings, validates draft fields, and submits
 // administration updates. Authentication type and platform determine the visible controls
@@ -1173,6 +1163,7 @@ const {
   editVertexClientEmail,
   editVertexLocation,
   modelMappings,
+  stripEffortOnEffortModelMapping,
   openAICompactModelMappings,
   modelRestrictionMode,
   allowedModels,
@@ -1198,8 +1189,10 @@ const {
   upstreamRequestIdHeader,
   allowOverages,
   antigravityProjectId,
+  antigravityModelRestrictionMode,
   antigravityWhitelistModels,
   antigravityModelMappings,
+  antigravityStripEffortOnEffortModelMapping,
   tempUnschedEnabled,
   providerSchedulingThresholdOverrideEnabled,
   providerSchedulingThresholdOverrideValue,
@@ -1510,10 +1503,6 @@ const isBedrockAPIKeyMode = computed(
 const headerOverrideCapable = computed(
   () => !!props.provider && isHeaderOverrideCapable(props.provider.platform, props.provider.type),
 )
-
-// isSyncingAntigravityUpstream prevents overlapping model synchronization requests while
-// the dialog appends the current response to its mapping editor.
-const isSyncingAntigravityUpstream = ref(false)
 
 // supportsProviderSchedulingThresholdOverride controls visibility of the per-provider
 // threshold switch using the platform support rule shared with hydration.
@@ -1992,54 +1981,6 @@ const setAllowedModels = (models: string[]) => {
   allowedModels.value = models
 }
 
-// syncAntigravityUpstreamModels fetches upstream models and appends missing request-side
-// identities. Repeated model names leave existing mappings intact, and a request already
-// in progress prevents another start. The response is applied to the current mapping draft
-// when it arrives; the function does not reject results after provider replacement. Empty
-// results and failures produce translated notices, and the in-progress flag is released in
-// finally so another synchronization can be attempted.
-const syncAntigravityUpstreamModels = async () => {
-  if (!props.provider?.id || isSyncingAntigravityUpstream.value) return
-
-  isSyncingAntigravityUpstream.value = true
-  try {
-    const result = await adminAPI.providers.syncUpstreamModels(props.provider.id)
-    const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
-    if (upstreamModels.length === 0) {
-      appStore.showInfo(t('admin.providers.syncUpstreamModelsEmpty'))
-      return
-    }
-
-    let addedCount = 0
-    for (const model of upstreamModels) {
-      const exists = antigravityModelMappings.value.some((mapping) => mapping.from === model)
-      if (!exists) {
-        antigravityModelMappings.value.push({ from: model, to: model })
-        addedCount += 1
-      }
-    }
-
-    if (addedCount > 0) {
-      appStore.showSuccess(
-        t('admin.providers.syncUpstreamModelsSuccess', {
-          count: addedCount,
-          total: upstreamModels.length,
-        }),
-      )
-    } else {
-      appStore.showInfo(
-        t('admin.providers.syncUpstreamModelsNoChanges', { count: upstreamModels.length }),
-      )
-    }
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : t('admin.providers.syncUpstreamModelsFailed')
-    appStore.showError(t('admin.providers.syncUpstreamModelsError', { message }))
-  } finally {
-    isSyncingAntigravityUpstream.value = false
-  }
-}
-
 // applyTempUnschedConfig writes validated temporary-suspension settings into a credential
 // copy and reveals the rule editor when enabled rules contain no valid entries.
 const applyTempUnschedConfig = (credentials: Record<string, unknown>) =>
@@ -2133,6 +2074,22 @@ const handleSubmit = async () => {
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     failAt(t('admin.providers.pleaseSelectStatus'), 'status')
     return
+  }
+  if (showModelRestriction.value || props.provider.platform === 'antigravity') {
+    const activeMappings =
+      props.provider.platform === 'antigravity'
+        ? antigravityModelMappings.value
+        : modelMappings.value
+    const mappingError = firstModelMappingRowError(activeMappings)
+    if (mappingError) {
+      if (props.provider.platform === 'antigravity') {
+        antigravityModelRestrictionMode.value = 'mapping'
+      } else {
+        modelRestrictionMode.value = 'mapping'
+      }
+      failAt(t(`admin.providers.${mappingError}`), 'model-mapping')
+      return
+    }
   }
 
   const updatePayload = buildProviderBasePatch(draft)

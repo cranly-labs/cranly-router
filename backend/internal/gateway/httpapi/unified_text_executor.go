@@ -80,10 +80,18 @@ func (e *UnifiedTextExecutor) EnforceClient(ctx context.Context, c *gin.Context,
 
 // Responses executes one selected exchange after pricing and reasoning
 // preparation. It installs the supplied context in Gin, then uses any
-// preparation-updated context for compatible or native dispatch; provider
-// selection, switching and completion remain with its caller.
+// preparation-updated context for compatible or native dispatch. Failed
+// attempts restore the incoming routing context while retaining any captured
+// client-requested effort; provider selection, switching and completion remain
+// with its caller.
 func (e *UnifiedTextExecutor) Responses(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte) (result *forward.OpenAIResult, failure error) {
-	defer func() { captureTextPerformance(c.Request.Context(), result, failure) }()
+	baseCtx := ctx
+	defer func() {
+		captureTextPerformance(c.Request.Context(), result, failure)
+		if failure != nil {
+			restoreFailedAttemptContext(c, baseCtx)
+		}
+	}()
 	c.Request = c.Request.WithContext(ctx)
 	var err error
 	target, body, err = e.prepare(c, target, body, protocol.ProtocolOpenAIResponses)
@@ -100,9 +108,17 @@ func (e *UnifiedTextExecutor) Responses(ctx context.Context, c *gin.Context, tar
 // Messages clears the current interception marker and executes one selected
 // exchange after common preparation. Compatible targets receive cache/model and
 // optional TLS inputs; native targets use native preparation and return nil
-// result for handled local probes.
+// result for handled local probes. Failed attempts restore the caller's
+// baseline routing context while retaining any captured client-requested
+// effort.
 func (e *UnifiedTextExecutor) Messages(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, cacheKey, model string, tls ...egress.TLSFingerprintRouterMatchResult) (result *forward.OpenAIResult, failure error) {
-	defer func() { captureTextPerformance(c.Request.Context(), result, failure) }()
+	baseCtx := ctx
+	defer func() {
+		captureTextPerformance(c.Request.Context(), result, failure)
+		if failure != nil {
+			restoreFailedAttemptContext(c, baseCtx)
+		}
+	}()
 	c.Request = c.Request.WithContext(ctx)
 	c.Set(nativeMessageInterceptedKey, false)
 	var err error
@@ -119,10 +135,17 @@ func (e *UnifiedTextExecutor) Messages(ctx context.Context, c *gin.Context, targ
 
 // Chat executes one selected exchange after pricing and reasoning preparation
 // in the supplied context. Compatible targets receive cache/model and optional
-// TLS inputs, while native targets use their platform bindings; callers own
-// selection and completion.
+// TLS inputs, while native targets use their platform bindings; failed attempts
+// restore the caller's baseline routing context while retaining any captured
+// client-requested effort, and callers own selection and completion.
 func (e *UnifiedTextExecutor) Chat(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, cacheKey, model string, tls ...egress.TLSFingerprintRouterMatchResult) (result *forward.OpenAIResult, failure error) {
-	defer func() { captureTextPerformance(c.Request.Context(), result, failure) }()
+	baseCtx := ctx
+	defer func() {
+		captureTextPerformance(c.Request.Context(), result, failure)
+		if failure != nil {
+			restoreFailedAttemptContext(c, baseCtx)
+		}
+	}()
 	c.Request = c.Request.WithContext(ctx)
 	var err error
 	target, body, err = e.prepare(c, target, body, protocol.ProtocolOpenAIChatCompletions)
@@ -136,16 +159,16 @@ func (e *UnifiedTextExecutor) Chat(ctx context.Context, c *gin.Context, target *
 	return e.native(ctx, c, target, body, protocol.ProtocolOpenAIChatCompletions)
 }
 
-// prepare resolves the attempt route and records actual selected-provider
-// attribution before checking price and platform reasoning policy. It returns
-// the routed target, whose upstream protocol selects the executor. Anthropic
-// and OpenAI policy failures write local permission output in the inbound
-// format; other platforms retain the supplied bytes after pricing, and caller
+// prepare records actual selected-provider attribution, applies platform
+// reasoning policy, resolves the attempt route, and checks price before
+// dispatch. Applying platform effort policy ahead of attempt-route resolution
+// ensures group downgrades or rewrites update the routing effort seen by
+// provider effort_model_mapping and pricing preflight. Anthropic and OpenAI
+// policy failures write local permission output in the inbound format; caller
 // context changes remain in Gin.
 func (e *UnifiedTextExecutor) prepare(c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, source protocol.ProtocolID) (*gatewayadapter.ExecutionProvider, []byte, error) {
-	target, err := gatewayadapter.ProviderForProtocolAttempt(c.Request.Context(), target)
-	if err != nil {
-		return nil, nil, err
+	if target == nil {
+		return nil, nil, fmt.Errorf("provider is nil")
 	}
 	// Failover can move to a provider served by the other executor family.
 	// Clear both observation slots so a failed attempt cannot attribute its
@@ -153,28 +176,44 @@ func (e *UnifiedTextExecutor) prepare(c *gin.Context, target *gatewayadapter.Exe
 	ClearActualOpenAIUpstreamEndpoint(c)
 	SetActualUpstreamEndpoint(c, "")
 	SetOpsSelectedProvider(c, target.Record.RoutingSnapshot())
-	if err := e.checkPricing(c, target, body, source); err != nil {
-		return nil, nil, err
-	}
 	key, _ := EffectiveAPIKey(c)
-	var result []byte
+	result := body
+	var policyChanged bool
+	var policyErr error
 	switch target.Record.Platform {
 	case provider.PlatformAnthropic:
-		result, _, err = ApplyAnthropicReasoningEffortPolicyForRequest(c, key, body)
+		result, policyChanged, policyErr = ApplyAnthropicReasoningEffortPolicyForRequest(c, key, body)
 	case provider.PlatformOpenAI:
-		result, _, err = ApplyOpenAIReasoningEffortPolicyForRequest(c, key, body)
-	default:
-		return target, body, nil
+		result, policyChanged, policyErr = ApplyOpenAIReasoningEffortPolicyForRequest(c, key, body)
 	}
-	if err != nil {
+	if policyErr != nil {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+		MarkResponseCommitted(c)
 		if source == protocol.ProtocolAnthropicMessages {
-			c.JSON(http.StatusForbidden, gin.H{"type": "error", "error": gin.H{"type": "permission_error", "message": err.Error()}})
+			DefaultOpenAIErrorOutput().WriteAnthropicStreamingError(c, http.StatusForbidden, "permission_error", policyErr.Error(), CommittedSSE(c))
 		} else {
-			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": err.Error(), "code": "reasoning_effort_limit"}})
+			DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, http.StatusForbidden, "permission_error", "reasoning_effort_limit", policyErr.Error(), CommittedSSE(c), false)
 		}
+		return nil, nil, policyErr
 	}
-	return target, result, err
+	// Synchronize routing effort and route plan after a platform effort policy
+	// rewrite so attempt resolution and pricing evaluate the effective effort.
+	if policyChanged {
+		effectiveEffort := requeststate.ExtractRoutingReasoningEffort(result, source)
+		updatedCtx := requeststate.WithRoutingReasoningEffort(c.Request.Context(), effectiveEffort)
+		if plan, ok := requeststate.RoutePlanFromContext(updatedCtx); ok {
+			updatedCtx = requeststate.WithRoutePlan(updatedCtx, plan.WithReasoningEffort(effectiveEffort))
+		}
+		c.Request = c.Request.WithContext(updatedCtx)
+	}
+	target, err := gatewayadapter.ProviderForProtocolAttempt(c.Request.Context(), target)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := e.checkPricing(c, target, result, source); err != nil {
+		return nil, nil, err
+	}
+	return target, result, nil
 }
 
 // usesOpenAIExecutor reports whether the OpenAI-compatible executor serves the
@@ -349,4 +388,24 @@ func captureTextPerformance(ctx context.Context, result *forward.OpenAIResult, f
 		p.UsageComplete = false
 	}
 	result.Timings = p
+}
+
+// restoreFailedAttemptContext restores baseCtx onto c.Request after a failed
+// attempt so platform effort rewrites do not leak into subsequent failover
+// candidates. When baseCtx had no requested-effort observation, any client
+// choice captured from the inbound payload before group policy evaluation is
+// carried forward for local-denial and failure attribution.
+func restoreFailedAttemptContext(c *gin.Context, baseCtx context.Context) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	restored := baseCtx
+	// Carry forward the immutable client effort captured before group policy
+	// evaluation so local 403 denials and Ops diagnostics retain the raw choice.
+	if requeststate.RequestedReasoningEffortFromContext(restored) == nil {
+		if requested := requeststate.RequestedReasoningEffortFromContext(c.Request.Context()); requested != nil {
+			restored = requeststate.WithRequestedReasoningEffort(restored, *requested)
+		}
+	}
+	c.Request = c.Request.WithContext(restored)
 }

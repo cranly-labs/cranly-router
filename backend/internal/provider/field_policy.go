@@ -109,6 +109,8 @@ func buildCredentialFieldPolicyEntries() []credentialFieldPolicyEntry {
 		{key: "site", policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
 		{key: "base_url", policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
 		{key: "model_mapping", policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
+		{key: EffortModelMappingCredentialKey, policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
+		{key: EffortModelMappingStripEffortCredentialKey, policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
 		{key: "compact_model_mapping", policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
 		{key: "model_whitelist", policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
 		{key: OpenAIAuthModeCredentialKey, policy: CredentialFieldPolicy{IncludeInSchedulerMeta: true}},
@@ -236,9 +238,6 @@ func buildExtraFieldPolicyEntries() []extraFieldPolicyEntry {
 		{key: "antigravity_force_token_refresh", policy: ExtraFieldPolicy{DiscardOnDuplicate: true}},
 		{key: "antigravity_force_token_refresh_at", policy: ExtraFieldPolicy{DiscardOnDuplicate: true}},
 		{key: "antigravity_force_token_refresh_reason", policy: ExtraFieldPolicy{DiscardOnDuplicate: true}},
-		{key: "drive_storage_limit", policy: ExtraFieldPolicy{DiscardOnDuplicate: true}},
-		{key: "drive_storage_usage", policy: ExtraFieldPolicy{DiscardOnDuplicate: true}},
-		{key: "drive_tier_updated_at", policy: ExtraFieldPolicy{DiscardOnDuplicate: true}},
 		// Anthropic passive usage and OpenAI Codex usage/threshold windows.
 		{key: "session_window_utilization", policy: ExtraFieldPolicy{DiscardOnDuplicate: true, IncludeInSchedulerMeta: true}},
 		{key: "passive_usage_7d_utilization", policy: ExtraFieldPolicy{DiscardOnDuplicate: true, IncludeInSchedulerMeta: true}},
