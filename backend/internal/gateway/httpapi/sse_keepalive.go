@@ -37,6 +37,10 @@ const (
 	// sseKeepaliveWriterKey retains the downstream writer for snapshots and byte
 	// accounting after outer wrappers replace the request's current response writer.
 	sseKeepaliveWriterKey = "downstream_sse_keepalive_writer"
+	// localTerminalSSEWrittenKey records that emitLocalTerminalSSE attempted a
+	// terminal error frame, allowing TerminalSSEDelivered to deduplicate fallback
+	// output even when DownstreamSSEKeepalive is disabled or a write fails.
+	localTerminalSSEWrittenKey = "gateway_local_terminal_sse_written"
 	// sseKeepaliveFrameLimit bounds metadata inspection without buffering response
 	// delivery; larger frames still retain their byte-level boundary tracking.
 	sseKeepaliveFrameLimit = 4096
@@ -85,6 +89,58 @@ type sseKeepaliveWriter struct {
 	wake    chan struct{}  // buffered timer reschedule signal
 	done    chan struct{}  // middleware shutdown notification
 	worker  sync.WaitGroup // worker lifetime join barrier
+}
+
+// CommittedSSE reports whether the active HTTP response has already committed
+// a successful event-stream header, including early downstream or wait
+// heartbeats. Nil contexts or unwritten writers return false without touching
+// mutable response headers, so an open header-wait window stays intact.
+//
+// When DownstreamSSEKeepalive owns the writer, status and Content-Type are read
+// under its mutex to stay race-free with concurrent timer beats without cloning
+// the header map. Routes without that middleware inspect the current writer
+// only after Written reports true.
+func CommittedSSE(c *gin.Context) bool {
+	if c == nil || c.Writer == nil {
+		return false
+	}
+	if value, ok := c.Get(sseKeepaliveWriterKey); ok {
+		if w, valid := value.(*sseKeepaliveWriter); valid && w != nil {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			return w.committedSSELocked()
+		}
+	}
+	if !c.Writer.Written() {
+		return false
+	}
+	status := c.Writer.Status()
+	return status >= 200 && status < 300 && strings.Contains(strings.ToLower(c.Writer.Header().Get("Content-Type")), "text/event-stream")
+}
+
+// TerminalSSEDelivered reports whether this request has already emitted a
+// local terminal SSE error frame or accepted a terminal event through the
+// downstream SSE keepalive writer. Missing contexts return false; fallback
+// error handlers use this predicate to suppress duplicate terminal frames even
+// when DownstreamSSEKeepalive is absent or a terminal client write failed.
+func TerminalSSEDelivered(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if c.GetBool(localTerminalSSEWrittenKey) {
+		return true
+	}
+	value, ok := c.Get(sseKeepaliveWriterKey)
+	if !ok {
+		return false
+	}
+	w, valid := value.(*sseKeepaliveWriter)
+	if !valid || w == nil {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.terminal
 }
 
 // DownstreamSSEKeepalive installs idle heartbeats for timed HTTP text requests.

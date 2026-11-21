@@ -64,6 +64,11 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 	// after this read.
 	if input.PatchCredentials {
 		credentialInput = CloneValues(input.Credentials)
+		// Normalize effort-scoped mappings on the raw patch itself so locked
+		// storage merges canonical keys rather than raw submitted spellings.
+		if err := NormalizeEffortModelMappingCredentials(credentialInput); err != nil {
+			return nil, err
+		}
 		copy := *input
 		copy.Credentials = MergeCredentials(provider.Credentials, CloneValues(credentialInput))
 		input = &copy
@@ -149,6 +154,11 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 	}
 	if provider.IsCredentialShadow() && input.Credentials != nil {
 		provider.Credentials = SanitizeSparkShadowCredentials(input.Credentials)
+		// Validate effort-scoped mappings on Spark shadows after allowlist
+		// filtering so malformed effort labels cannot persist on shadow rows.
+		if err := NormalizeEffortModelMappingCredentials(provider.Credentials); err != nil {
+			return nil, err
+		}
 	} else if len(input.Credentials) > 0 {
 		incomingCredentials := PreserveProtocolCredentials(provider.Credentials, input.Credentials)
 		if IsOpenAIAPIKeyProvider(provider) {
@@ -166,6 +176,11 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 		// Normalize header spellings after omitted secrets are merged so the saved
 		// override object has one lowercase key for each validated upstream header.
 		if err := egress.NormalizeHeaderOverrideCredentials(provider.Credentials); err != nil {
+			return nil, err
+		}
+		// Validate and normalize effort-scoped model overrides after merging
+		// credentials so persisted rules always carry canonical effort keys.
+		if err := NormalizeEffortModelMappingCredentials(provider.Credentials); err != nil {
 			return nil, err
 		}
 		// Remove exchange-only login material after restoring omitted secrets
@@ -619,6 +634,11 @@ func (s *Admin) BulkUpdateProviders(ctx context.Context, input *BulkUpdateProvid
 	// this submitted header object before it replaces the stored object at that
 	// JSON key.
 	if err := egress.NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
+		return nil, err
+	}
+	// Validate effort-scoped model overrides before bulk JSONB merge so invalid
+	// effort labels or wildcards reject the batch instead of corrupting targets.
+	if err := NormalizeEffortModelMappingCredentials(input.Credentials); err != nil {
 		return nil, err
 	}
 	// A batch can span platforms. Use cross-platform credential sanitization so

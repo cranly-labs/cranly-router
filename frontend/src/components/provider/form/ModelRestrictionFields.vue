@@ -1,5 +1,6 @@
 <template>
   <SettingsSection
+    data-provider-field="model-mapping"
     :title="t('admin.providers.modelRestriction')"
     :hint="hint ?? t('admin.providers.modelRestrictionCombinedHint')"
   >
@@ -31,8 +32,11 @@
     <ProviderModelMappingEditor
       v-else
       v-model="mappings"
+      v-model:strip-effort="stripEffort"
+      support-effort
       :source-placeholder="sourcePlaceholder"
       :target-placeholder="targetPlaceholder"
+      :wildcard-validation="wildcardValidation"
       @add="emit('add')"
       @remove="emit('remove')"
     />
@@ -75,6 +79,7 @@ defineProps<{
   syncCredentials?: SyncUpstreamPreviewParams
   sourcePlaceholder?: string // Request model input placeholder.
   targetPlaceholder?: string // Upstream model input placeholder.
+  wildcardValidation?: boolean // Live wildcard rule diagnostics on mapping rows.
   hint?: string // Supplemental field help text.
 }>()
 // mode binds the parent-owned whitelist or model-mapping editor mode to the shared
@@ -88,6 +93,8 @@ const allowedModels = defineModel<string[]>('allowedModels', { required: true })
 // mappings binds the parent-owned request-to-upstream model mapping rows to the shared
 // controls through its model update event.
 const mappings = defineModel<ModelMappingRow[]>('mappings', { required: true })
+// stripEffort binds the optional wire-effort stripping switch when effort mappings match.
+const stripEffort = defineModel<boolean | undefined>('stripEffort', { default: undefined })
 // emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
   add: [] // Mapping row addition notification.

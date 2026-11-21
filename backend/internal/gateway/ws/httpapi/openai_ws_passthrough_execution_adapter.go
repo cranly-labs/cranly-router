@@ -17,9 +17,11 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	openaicore "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -80,6 +82,35 @@ func (p *wsPassthroughAdapter) ModelAttributes(ctx context.Context, turn int, mo
 	}
 	p.attributeContext = ctx
 	return gatewayprovider.PrepareModelAttributeParameters(ctx, p.provider, model, body, service)
+}
+
+// StripOutboundEffort removes wire reasoning effort fields from an outbound
+// WebSocket payload when the selected provider enables
+// effort_model_mapping_strip_effort and an effort-scoped model override matched.
+// Callers invoke this after usage metadata and failover snapshots capture the
+// pre-strip bytes so accounting and replacement providers keep intact effort.
+func (p *wsPassthroughAdapter) StripOutboundEffort(ctx context.Context, routingModel string, body []byte) []byte {
+	if p == nil || p.provider == nil || len(body) == 0 {
+		return body
+	}
+	effort := requeststate.ExtractRoutingReasoningEffort(body, protocol.ProtocolResponsesWebSocket)
+	sourceModel := strings.TrimSpace(routingModel)
+	if sourceModel == "" {
+		if plan, ok := requeststate.RoutePlanFromContext(ctx); ok {
+			if planned := plan.Models().GroupMappedModel; planned != "" {
+				sourceModel = planned
+			} else if requested := plan.Models().RequestedModel; requested != "" {
+				sourceModel = requested
+			}
+		}
+	}
+	if sourceModel == "" {
+		sourceModel = strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	}
+	if !gatewayprovider.ExecutionModelPolicy(p.provider).WithEffort(effort).ShouldStripWireEffort(ctx, sourceModel) {
+		return body
+	}
+	return requeststate.StripWireReasoningEffort(body, protocol.ProtocolResponsesWebSocket)
 }
 
 // IsLite reports whether this client frame requests Responses Lite handling.

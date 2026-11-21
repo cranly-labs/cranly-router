@@ -48,10 +48,16 @@ type grokForwardAdapter struct {
 	token, proxyURL string // token: provider credential; proxyURL: selected egress URL
 }
 
-// WriteGrokForwardInvalidRequest presents a rejected endpoint model or tool
-// parameter as OpenAI JSON. The caller supplies the offending param name, and
-// this helper writes HTTP 400 before any upstream exchange.
+// WriteGrokForwardInvalidRequest marks semantic commitment and presents a
+// rejected endpoint model or tool parameter as OpenAI JSON. When event-stream
+// framing is already committed after an earlier attempt's heartbeat, it emits a
+// terminal protocol SSE error frame instead of appending raw JSON.
 func WriteGrokForwardInvalidRequest(c *gin.Context, message, param string) {
+	MarkResponseCommitted(c)
+	if CommittedSSE(c) {
+		writeCommittedClientSSEError(c, http.StatusBadRequest, "invalid_request_error", "", message)
+		return
+	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": message, "param": param}})
 }
 
@@ -93,11 +99,16 @@ func (a *grokForwardAdapter) input(body []byte, model string, stream bool, start
 	}
 }
 
-// BillingModel resolves provider forwarding identity from the supplied request
-// model. Its empty dispatch override leaves that request model as the mapping
-// input, so provider mapping determines the returned forwarding/billing name.
+// BillingModel resolves effort-aware provider forwarding identity from the
+// supplied request model. Its empty dispatch override leaves that request model
+// as the mapping input, so provider mapping determines the returned forwarding
+// and billing name.
 func (a *grokForwardAdapter) BillingModel(model string) string {
-	return gatewayprovider.ExecutionModelPolicy(a.provider).ForwardModel(model, "")
+	policy := gatewayprovider.ExecutionModelPolicy(a.provider)
+	if a.c != nil && a.c.Request != nil {
+		policy = policy.WithContext(a.c.Request.Context())
+	}
+	return policy.ForwardModel(model, "")
 }
 
 // UpstreamModel trims the forwarding model using the provider's OpenAI

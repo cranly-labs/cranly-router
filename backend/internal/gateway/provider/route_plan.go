@@ -74,18 +74,30 @@ func RoutePlanForMapping(ctx context.Context, group *routing.Group, groupID *int
 		view = &routing.Group{ID: group.ID, SchedulerType: group.SchedulerType, AllowedProtocols: group.AllowedProtocols, ProtocolFallbacks: group.ProtocolFallbacks}
 	}
 	protocol, _ := requeststate.ClientProtocolFromContext(ctx)
-	return routing.Plan(routing.PlanInput{Group: view, GroupID: groupID, ClientProtocol: protocol, RequestedModel: requested, GroupMapping: mapping})
+	effort := requeststate.RoutingReasoningEffortFromContext(ctx)
+	return routing.Plan(routing.PlanInput{Group: view, GroupID: groupID, ClientProtocol: protocol, RequestedModel: requested, GroupMapping: mapping, ReasoningEffort: effort})
 }
 
 // ProviderForProtocolAttempt revalidates the target against request routing
-// state and its existing candidate. Nil targets return an error; unresolved
-// context routing returns the original target, while a resolved attempt
-// returns a shallow copy carrying the new Route.
+// state, active reasoning effort, and its existing candidate. Nil targets
+// return an error; unresolved context routing returns the original target,
+// while a resolved attempt returns a shallow copy carrying the new Route.
 func ProviderForProtocolAttempt(ctx context.Context, value *ExecutionProvider) (*ExecutionProvider, error) {
 	if value == nil {
 		return nil, fmt.Errorf("provider is nil")
 	}
-	attempt, resolved, err := requeststate.RoutingStateFromContext(ctx).ResolveAttempt(ExecutionSnapshot(value), value.Route)
+	state := requeststate.RoutingStateFromContext(ctx)
+	snapshot := ExecutionSnapshot(value)
+	var (
+		attempt  requeststate.AttemptRoute
+		resolved bool
+		err      error
+	)
+	if effort, hasEffort := requeststate.RoutingReasoningEffortLookupFromContext(ctx); hasEffort {
+		attempt, resolved, err = state.ResolveAttemptForEffort(snapshot, value.Route, effort)
+	} else {
+		attempt, resolved, err = state.ResolveAttempt(snapshot, value.Route)
+	}
 	if err != nil {
 		return nil, err
 	}

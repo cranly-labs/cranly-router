@@ -386,27 +386,13 @@
 
               <!-- Gemini OAuth authorization variant. -->
               <div v-if="providerCategory === 'oauth-based'" v-content-reveal class="space-y-2">
+                <SettingsNotice>
+                  {{ t('admin.providers.gemini.oauthType.personalUseAntigravityNotice') }}
+                </SettingsNotice>
                 <span class="input-label">{{
                   t('admin.providers.oauth.gemini.oauthTypeLabel')
                 }}</span>
                 <div class="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup">
-                  <ProviderChoiceCard
-                    :accent="form.platform"
-                    :selected="geminiOAuthType === 'google_one'"
-                    icon="user"
-                    :title="t('admin.providers.gemini.oauthType.googleOneTitle')"
-                    :description="t('admin.providers.gemini.oauthType.googleOneDesc')"
-                    @click="handleSelectGeminiOAuthType('google_one')"
-                  >
-                    <span class="mt-2 flex flex-wrap gap-1">
-                      <span class="provider-choice-badge">{{
-                        t('admin.providers.gemini.oauthType.badges.personal')
-                      }}</span>
-                      <span class="provider-choice-badge">{{
-                        t('admin.providers.gemini.oauthType.badges.noGcp')
-                      }}</span>
-                    </span>
-                  </ProviderChoiceCard>
                   <ProviderChoiceCard
                     :accent="form.platform"
                     :selected="geminiOAuthType === 'code_assist'"
@@ -436,55 +422,31 @@
                       }}</span>
                     </span>
                   </ProviderChoiceCard>
+                  <ProviderChoiceCard
+                    :accent="form.platform"
+                    :selected="geminiOAuthType === 'ai_studio'"
+                    :disabled="!geminiAIStudioOAuthEnabled"
+                    icon="sparkles"
+                    :title="t('admin.providers.gemini.oauthType.customTitle')"
+                    :description="t('admin.providers.gemini.oauthType.customDesc')"
+                    @click="handleSelectGeminiOAuthType('ai_studio')"
+                  >
+                    <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.providers.gemini.oauthType.customRequirement') }}
+                    </span>
+                    <span class="mt-2 flex flex-wrap gap-1">
+                      <span class="provider-choice-badge">{{
+                        t('admin.providers.gemini.oauthType.badges.orgManaged')
+                      }}</span>
+                      <span class="provider-choice-badge">{{
+                        t('admin.providers.gemini.oauthType.badges.adminRequired')
+                      }}</span>
+                    </span>
+                  </ProviderChoiceCard>
                 </div>
-
-                <!-- Custom OAuth client controls remain collapsed until advanced settings are opened. -->
-                <button
-                  type="button"
-                  class="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
-                  :aria-expanded="showAdvancedOAuth"
-                  @click="showAdvancedOAuth = !showAdvancedOAuth"
-                >
-                  <Icon
-                    name="chevronRight"
-                    size="sm"
-                    :animate-on-hover="false"
-                    :class="['transition-transform', showAdvancedOAuth ? 'rotate-90' : '']"
-                  />
-                  <span>{{
-                    showAdvancedOAuth
-                      ? t('admin.providers.gemini.oauthType.hideAdvanced')
-                      : t('admin.providers.gemini.oauthType.showAdvanced')
-                  }}</span>
-                </button>
-                <Collapse :open="showAdvancedOAuth" unmount-on-hide>
-                  <div class="space-y-2">
-                    <ProviderChoiceCard
-                      :accent="form.platform"
-                      :selected="geminiOAuthType === 'ai_studio'"
-                      :disabled="!geminiAIStudioOAuthEnabled"
-                      icon="sparkles"
-                      :title="t('admin.providers.gemini.oauthType.customTitle')"
-                      :description="t('admin.providers.gemini.oauthType.customDesc')"
-                      @click="handleSelectGeminiOAuthType('ai_studio')"
-                    >
-                      <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">
-                        {{ t('admin.providers.gemini.oauthType.customRequirement') }}
-                      </span>
-                      <span class="mt-2 flex flex-wrap gap-1">
-                        <span class="provider-choice-badge">{{
-                          t('admin.providers.gemini.oauthType.badges.orgManaged')
-                        }}</span>
-                        <span class="provider-choice-badge">{{
-                          t('admin.providers.gemini.oauthType.badges.adminRequired')
-                        }}</span>
-                      </span>
-                    </ProviderChoiceCard>
-                    <SettingsNotice v-if="!geminiAIStudioOAuthEnabled" tone="warning">
-                      {{ t('admin.providers.oauth.gemini.aiStudioNotConfiguredTip') }}
-                    </SettingsNotice>
-                  </div>
-                </Collapse>
+                <SettingsNotice v-if="!geminiAIStudioOAuthEnabled" tone="warning">
+                  {{ t('admin.providers.oauth.gemini.aiStudioNotConfiguredTip') }}
+                </SettingsNotice>
               </div>
 
               <!-- Fallback quota tier used when automatic detection fails. -->
@@ -493,13 +455,7 @@
                   t('admin.providers.gemini.tier.label')
                 }}</label>
                 <Select
-                  v-if="geminiOAuthType === 'google_one'"
-                  id="create-gemini-oauth-tier"
-                  v-model="geminiTierGoogleOne"
-                  :options="geminiGoogleOneTierOptions"
-                />
-                <Select
-                  v-else-if="geminiOAuthType === 'code_assist'"
+                  v-if="geminiOAuthType === 'code_assist'"
                   id="create-gemini-oauth-tier"
                   v-model="geminiTierGcp"
                   :options="geminiGCPTierOptions"
@@ -947,13 +903,6 @@
               :groups="groups"
               data-tour="provider-form-groups"
             />
-            <SettingToggleRow
-              v-if="form.platform === 'antigravity'"
-              id="create-provider-allow-overages"
-              v-model="allowOverages"
-              :label="t('admin.providers.allowOverages')"
-              :help="t('admin.providers.allowOveragesTooltip')"
-            />
             <div>
               <span class="input-label">{{ t('admin.providers.proxy') }}</span>
               <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
@@ -967,11 +916,13 @@
             v-model:mode="modelRestrictionMode"
             :allowed-models="allowedModels"
             v-model:mappings="modelMappings"
+            v-model:strip-effort="stripEffortOnEffortModelMapping"
             :platform="isBedrockCategory ? 'anthropic' : form.platform"
             :models="form.platform === 'qoder' ? [] : undefined"
             :sync-credentials="form.platform === 'qoder' ? undefined : syncPreviewCredentials"
             :source-placeholder="isBedrockCategory ? t('admin.providers.fromModel') : undefined"
             :target-placeholder="isBedrockCategory ? t('admin.providers.toModel') : undefined"
+            wildcard-validation
             @update:allowed-models="setAllowedModels"
             @synced="storeModelProtocolSuggestions"
             @add="touchQoderModelRestriction"
@@ -985,15 +936,16 @@
             :protocols="upstreamProtocols"
           />
 
-          <!-- Antigravity whitelist and mappings separately control final model admission and request rewriting. -->
-          <SettingsSection
+          <!-- Antigravity shares the segmented whitelist and mapping editor while keeping both drafts independent. -->
+          <ModelRestrictionFields
             v-if="form.platform === 'antigravity'"
-            :title="t('admin.providers.modelRestriction')"
-            :hint="t('admin.providers.selectAllowedModels')"
-          >
-            <ModelWhitelistSelector v-model="antigravityWhitelistModels" platform="antigravity" />
-            <ProviderModelMappingEditor v-model="antigravityModelMappings" wildcard-validation />
-          </SettingsSection>
+            v-model:mode="antigravityModelRestrictionMode"
+            v-model:allowed-models="antigravityWhitelistModels"
+            v-model:mappings="antigravityModelMappings"
+            v-model:strip-effort="antigravityStripEffortOnEffortModelMapping"
+            platform="antigravity"
+            wildcard-validation
+          />
         </template>
 
         <template #scheduling>
@@ -1282,6 +1234,15 @@
             data-provider-field="header-override"
           />
 
+          <SettingsSection v-if="form.platform === 'antigravity'">
+            <SettingToggleRow
+              id="create-provider-allow-overages"
+              v-model="allowOverages"
+              :label="t('admin.providers.allowOverages')"
+              :help="t('admin.providers.allowOveragesTooltip')"
+            />
+          </SettingsSection>
+
           <!-- Grok custom URLs control request forwarding; authorization and refresh retain their own endpoints. -->
           <SettingsSection
             v-if="form.platform === 'grok' && isOAuthFlow"
@@ -1544,7 +1505,11 @@
         :show-manual-option="true"
         :initial-input-method="'manual'"
         :platform="form.platform"
-        :show-project-id="geminiOAuthType === 'code_assist'"
+        :show-project-id="
+          form.platform === 'antigravity' ||
+          (form.platform === 'gemini' && geminiOAuthType === 'code_assist')
+        "
+        :initial-project-id="form.platform === 'antigravity' ? antigravityProjectId : ''"
         :auth-sessions="currentOpenAIAuthSessions"
         @generate-url="handleGenerateUrl"
         @remove-auth-session="handleRemoveOpenAIAuthSession"
@@ -1717,29 +1682,6 @@
             <tbody class="divide-y divide-gray-200 dark:divide-dark-600">
               <tr>
                 <td class="px-3 py-2 text-gray-900 dark:text-white">
-                  {{ t('admin.providers.gemini.quotaPolicy.rows.googleOne.channel') }}
-                </td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Free</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.providers.gemini.quotaPolicy.rows.googleOne.limitsFree') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Pro</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.providers.gemini.quotaPolicy.rows.googleOne.limitsPro') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Ultra</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.providers.gemini.quotaPolicy.rows.googleOne.limitsUltra') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white">
                   {{ t('admin.providers.gemini.quotaPolicy.rows.gcp.channel') }}
                 </td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Standard</td>
@@ -1880,7 +1822,10 @@ import OpenAICompactionToggle from '../../../../components/provider/OpenAICompac
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { fetchAntigravityDefaultMappings } from '@/composables/useModelWhitelist'
+import {
+  fetchAntigravityDefaultMappings,
+  firstModelMappingRowError,
+} from '@/composables/useModelWhitelist'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import {
@@ -1910,7 +1855,6 @@ import Icon from '@/components/icons/Icon.vue'
 import ProviderModelMappingEditor from '@/components/provider/ProviderModelMappingEditor.vue'
 import ProxySelector from '@/components/admin/proxy/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
-import ModelWhitelistSelector from '@/components/provider/ModelWhitelistSelector.vue'
 import ResponsesWSConnectionModeSelector from '@/components/provider/ResponsesWSConnectionModeSelector.vue'
 import GrokBaseUrlPresets from '@/components/provider/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/provider/CnBaseUrlPresets.vue'
@@ -2019,6 +1963,7 @@ const {
   editVertexClientEmail: vertexClientEmail,
   editVertexLocation: vertexLocation,
   modelMappings,
+  stripEffortOnEffortModelMapping,
   openAICompactModelMappings,
   modelRestrictionMode,
   allowedModels,
@@ -2047,6 +1992,7 @@ const {
   antigravityModelRestrictionMode,
   antigravityWhitelistModels,
   antigravityModelMappings,
+  antigravityStripEffortOnEffortModelMapping,
   tempUnschedEnabled,
   providerSchedulingThresholdOverrideEnabled,
   providerSchedulingThresholdOverrideValue,
@@ -2163,12 +2109,6 @@ const apiKeyHint = computed(() => {
 
 // Gemini tier and source options keep submitted identifiers stable while
 // translating only their visible labels for the current language.
-const geminiGoogleOneTierOptions = computed(() => [
-  { value: 'google_one_free', label: t('admin.providers.gemini.tier.googleOne.free') },
-  { value: 'google_ai_pro', label: t('admin.providers.gemini.tier.googleOne.pro') },
-  { value: 'google_ai_ultra', label: t('admin.providers.gemini.tier.googleOne.ultra') },
-])
-
 const geminiGCPTierOptions = computed(() => [
   { value: 'gcp_standard', label: t('admin.providers.gemini.tier.gcp.standard') },
   { value: 'gcp_enterprise', label: t('admin.providers.gemini.tier.gcp.enterprise') },
@@ -2544,16 +2484,15 @@ const bedrockAuthMode = ref<'sigv4' | 'apikey'>('sigv4')
 const vertexServiceAccountFileInput = ref<HTMLInputElement | null>(null)
 const vertexServiceAccountJson = ref('')
 const vertexServiceAccountDragActive = ref(false)
-const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('google_one')
+const geminiOAuthType = ref<'code_assist' | 'ai_studio'>('code_assist')
 const geminiAIStudioOAuthEnabled = ref(false)
 
 // The shared option factory supplies translated client-policy labels while
 // preserving the stable values consumed by OpenAI metadata construction.
 const openAIOAuthClientPolicyOptions = useOpenAIOAuthClientPolicyOptions()
 
-// Advanced OAuth and Gemini help visibility belong to the dialog; these controls
-// reveal explanations and optional input without changing credential selection.
-const showAdvancedOAuth = ref(false)
+// Gemini help visibility belongs to the dialog and reveals quota and setup
+// guidance without changing credential selection.
 const showGeminiHelpDialog = ref(false)
 
 // Discovered TLS fingerprint profile and router records populate selector labels.
@@ -2583,10 +2522,7 @@ const tlsFingerprintRouterOptions = computed(() => [
 const webSearchEmulationOptions = useWebSearchEmulationOptions()
 const anthropicAPIKeyAuthSchemeOptions = useAnthropicAPIKeyAuthSchemeOptions()
 
-// Gemini OAuth quota-tier fallbacks used when auto-detection is unavailable.
-const geminiTierGoogleOne = ref<'google_one_free' | 'google_ai_pro' | 'google_ai_ultra'>(
-  'google_one_free',
-)
+// Gemini OAuth quota-tier fallback used when auto-detection is unavailable.
 const geminiTierGcp = ref<'gcp_standard' | 'gcp_enterprise'>('gcp_standard')
 
 const geminiSelectedTier = computed(() => {
@@ -2595,8 +2531,6 @@ const geminiSelectedTier = computed(() => {
     return geminiProviderType.value === 'official' ? geminiTierAIStudio.value : ''
   }
   switch (geminiOAuthType.value) {
-    case 'google_one':
-      return geminiTierGoogleOne.value
     case 'code_assist':
       return geminiTierGcp.value
     default:
@@ -3106,7 +3040,7 @@ watch(
 // variant. AI Studio requires a positive capability response; unsupported
 // selection reports an error and retains the current authorization type for
 // this draft.
-const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | 'ai_studio') => {
+const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'ai_studio') => {
   if (oauthType === 'ai_studio' && !geminiAIStudioOAuthEnabled.value) {
     appStore.showError(t('admin.providers.oauth.gemini.aiStudioNotConfigured'))
     return
@@ -3114,11 +3048,6 @@ const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | '
   geminiOAuthType.value = oauthType
 }
 
-watch([antigravityModelRestrictionMode, () => form.platform], ([, platform]) => {
-  if (platform !== 'antigravity') return
-  // Antigravity keeps its whitelist empty unless explicitly edited, allowing
-  // unrestricted final models while the independently edited mapping still controls request rewriting.
-})
 // touchQoderModelRestriction records explicit Qoder model-policy edits for
 // subsequent serialization. Generated defaults remain untouched until this
 // marker is set, preventing automatic editor population from becoming an
@@ -3252,7 +3181,6 @@ const resetForm = () => {
   bedrockAuthMode.value = 'sigv4'
   vertexServiceAccountJson.value = ''
   geminiOAuthType.value = 'code_assist'
-  geminiTierGoogleOne.value = 'google_one_free'
   geminiTierGcp.value = 'gcp_standard'
   oauth.resetState()
   openaiOAuth.resetState()
@@ -3422,6 +3350,16 @@ const handleSubmit = async () => {
   // SettingsTabs locates invalid required fields across hidden panels because
   // the form disables native browser validation and must reveal the failing field.
   if (tabsRef.value && !(await tabsRef.value.validate())) return
+
+  const activeMappings =
+    form.platform === 'antigravity' ? antigravityModelMappings.value : modelMappings.value
+  const mappingError = firstModelMappingRowError(activeMappings)
+  if (mappingError) {
+    if (form.platform === 'antigravity') antigravityModelRestrictionMode.value = 'mapping'
+    else modelRestrictionMode.value = 'mapping'
+    failAt(t(`admin.providers.${mappingError}`), 'model-mapping')
+    return
+  }
 
   // OAuth categories enter authorization after the basic draft passes validation.
   if (isOAuthFlow.value) {
@@ -4123,6 +4061,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
         const tokenInfo = await antigravityOAuth.validateRefreshToken(
           refreshTokens[i],
           form.proxy_id,
+          oauthFlowRef.value?.projectId || antigravityProjectId.value || undefined,
         )
         if (!tokenInfo) {
           failedCount++
@@ -4148,7 +4087,10 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           platform: 'antigravity',
           type: 'oauth',
           credentials,
-          extra: withUpstreamRequestIdHeader(buildAntigravityCreateExtra(allowOverages.value)),
+          extra: withUpstreamRequestIdHeader({
+            ...buildAntigravityCreateExtra(allowOverages.value),
+            ...(antigravityOAuth.buildExtraInfo(tokenInfo) ?? {}),
+          }),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -4217,6 +4159,8 @@ const handleGeminiExchange = async (authCode: string) => {
       code: authCode.trim(),
       sessionId: geminiOAuth.sessionId.value,
       state: stateToUse,
+      projectId:
+        geminiOAuthType.value === 'code_assist' ? oauthFlowRef.value?.projectId : undefined,
       proxyId: form.proxy_id,
       oauthType: geminiOAuthType.value,
       tierId: geminiSelectedTier.value,
@@ -4257,13 +4201,17 @@ const handleAntigravityExchange = async (authCode: string) => {
       code: authCode.trim(),
       sessionId: antigravityOAuth.sessionId.value,
       state: stateToUse,
+      projectId: oauthFlowRef.value?.projectId || antigravityProjectId.value || undefined,
       proxyId: form.proxy_id,
     })
     if (!tokenInfo) return
 
     const credentials = antigravityOAuth.buildCredentials(tokenInfo)
     applyAntigravityPolicyCredentials(draft, credentials, 'create')
-    const extra = buildAntigravityCreateExtra(allowOverages.value)
+    const extra = {
+      ...buildAntigravityCreateExtra(allowOverages.value),
+      ...(antigravityOAuth.buildExtraInfo(tokenInfo) ?? {}),
+    }
     await createProviderAndFinish('antigravity', 'oauth', credentials, extra)
   } catch (error: any) {
     antigravityOAuth.error.value =
