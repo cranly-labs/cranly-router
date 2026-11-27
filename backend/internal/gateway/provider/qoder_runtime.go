@@ -3,12 +3,12 @@ package provider
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	egressprovider "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	openaiwire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
@@ -19,16 +19,15 @@ import (
 )
 
 // qoder_runtime.go constructs Qoder execution targets and publishes the
-// runtime executor with its activity callback.
-// Qoder requests use a conversation store and a lazily constructed executor
-// shared by this runtime. The activity callback is captured on the first
-// executor read, so application binding precedes request execution. Provider
-// mapping rewrites the wire model while the caller supplies its response
-// identity separately.
+// runtime executor with its activity callback. Qoder requests use a
+// conversation store and a lazily constructed executor shared by this runtime.
+// The activity callback is captured on the first executor read, so application
+// binding precedes request execution, while provider mapping rewrites the wire
+// model and leaves response identity separate.
 //
-// Targets defer credential, attribute, transport, and site-profile lookup to
-// callbacks using the provider record. A bad site can appear as Global in
-// initial metadata but still fail production client creation, while an
+// Targets defer credential, attribute, dialect, transport, and site-profile
+// lookup to callbacks using the provider record. A bad site can appear as Global
+// in initial metadata but still fail production client creation, while an
 // injected nonproduction client can bypass that creation path. The mutex
 // coordinates executor publication and callback binding inside this process;
 // callers serialize access to borrowed provider values and own selection,
@@ -74,8 +73,7 @@ type QoderRuntime struct {
 
 // NewQoderRuntime binds dependencies and uses the supplied conversation store
 // or creates one with QoderConversationTTL. Construction starts no execution;
-// provider selection, funding, and retry policy remain with the gateway
-// caller.
+// provider selection, funding, and retry policy remain with the gateway caller.
 func NewQoderRuntime(options QoderRuntimeOptions) *QoderRuntime {
 	conversations := options.Conversations
 	if conversations == nil {
@@ -99,8 +97,8 @@ func (r *QoderRuntime) BindAttemptActivity(enter func() (func(), error)) {
 func (r *QoderRuntime) Executor() *qoder.Executor {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// Capture activity and conversation dependencies exactly when publishing this
-	// executor so every subsequent caller receives the same initialized execution owner.
+	// Capture activity and conversation dependencies once when publishing this
+	// executor so every subsequent caller receives the same initialized owner.
 	if r.executor == nil {
 		r.executor = qoder.NewExecutor(qoder.ExecuteOptions{Conversations: r.conversations, Enter: r.enter})
 	}
@@ -108,11 +106,101 @@ func (r *QoderRuntime) Executor() *qoder.Executor {
 }
 
 // PrepareQoderTarget returns the shared executor and one attempt input with
-// mapped model, stream flag, and platform target. Its responseModel remains
-// the caller identity used by output, while the wire body applies provider
-// mapping.
-func (r *QoderRuntime) PrepareQoderTarget(metadata qoder.RequestMetadata, value *provider.Record, body []byte, wire protocol.ProtocolID, responseModel string) (upstream.Executor, upstream.AttemptInput) {
-	return r.Executor(), upstream.AttemptInput{Protocol: wire, Body: mapQoderRequestModel(value, body), ResponseModel: responseModel, Stream: qoder.GjsonBool(body, "stream"), Target: r.Target(metadata, value)}
+// legacy Responses ingress normalized, provider model mapped, stream flag
+// extracted, and cached attribute and ConversionDialect resolvers bound onto
+// Target. Normalization failures stay recorded on Target.IngressError so
+// Executor.Execute surfaces them as local RequestError rejections.
+func (r *QoderRuntime) PrepareQoderTarget(
+	metadata qoder.RequestMetadata,
+	value *provider.Record,
+	body []byte,
+	wire protocol.ProtocolID,
+	responseModel string,
+) (upstream.Executor, upstream.AttemptInput) {
+	preparedBody := body
+	var ingressErr error
+	if wire == protocol.ProtocolOpenAIResponses {
+		normalized, changed, normErr := NormalizeOpenAIResponsesLegacyIngress(body)
+		if normErr != nil {
+			ingressErr = normErr
+		} else if changed {
+			preparedBody = normalized
+		}
+	}
+
+	preMappedModel, _ := qoder.ExtractTopLevelModelJSON(preparedBody)
+	preMappedEffort := requeststate.ExtractRoutingReasoningEffort(preparedBody, wire)
+	mappedBody := mapQoderRequestModel(value, preparedBody, preMappedModel, preMappedEffort)
+	stream := qoder.ExtractTopLevelStreamJSON(mappedBody)
+
+	target := r.Target(metadata, value)
+	target.IngressError = ingressErr
+
+	// Synchronize per-attempt attribute resolution under cacheMu so Target.Dialect
+	// and Target.Attributes reuse one resolved snapshot for the same model and wire
+	// protocol without querying ModelAttributeService twice.
+	var (
+		cacheMu    sync.Mutex
+		hasCached  bool
+		cachedMod  string
+		cachedWire protocol.ProtocolID
+		cachedRes  modelrules.Resolution
+	)
+	baseAttrResolver := target.Attributes
+	resolveCachedAttributes := func(ctx context.Context, model string, clientWire protocol.ProtocolID) (modelrules.Resolution, error) {
+		cacheMu.Lock()
+		if hasCached && cachedMod == model && cachedWire == clientWire {
+			res := cachedRes
+			cacheMu.Unlock()
+			return res, nil
+		}
+		cacheMu.Unlock()
+
+		res, err := baseAttrResolver(ctx, model, clientWire)
+		if err != nil {
+			return modelrules.Resolution{}, err
+		}
+		cacheMu.Lock()
+		hasCached = true
+		cachedMod = model
+		cachedWire = clientWire
+		cachedRes = res
+		cacheMu.Unlock()
+		return res, nil
+	}
+
+	target.Attributes = resolveCachedAttributes
+	target.Dialect = func(ctx context.Context, model string, clientWire protocol.ProtocolID) (convert.Dialect, error) {
+		baseRes, err := resolveCachedAttributes(ctx, model, clientWire)
+		if err != nil {
+			return convert.Dialect{}, err
+		}
+		adjusted := baseRes.ForRequest(ModelRequestState(mappedBody))
+		execTarget := NewExecutionProvider(value)
+		effortCtx := ctx
+		if effortCtx == nil {
+			effortCtx = context.Background()
+		}
+		if preMappedEffort != "" && requeststate.RoutingReasoningEffortFromContext(effortCtx) == "" {
+			effortCtx = requeststate.WithRoutingReasoningEffort(effortCtx, preMappedEffort)
+		}
+		dialect := ConversionDialect(effortCtx, execTarget, adjusted, protocol.ProtocolQoderChat)
+		// Recheck effort_model_mapping against the pre-provider-mapped model when no
+		// RoutePlan was attached to ctx so direct attempts strip consumed effort too.
+		if !dialect.StripEffort && preMappedModel != "" && preMappedModel != model &&
+			ExecutionModelPolicy(execTarget).ShouldStripWireEffort(effortCtx, preMappedModel) {
+			dialect.StripEffort = true
+		}
+		return dialect, nil
+	}
+
+	return r.Executor(), upstream.AttemptInput{
+		Protocol:      wire,
+		Body:          mappedBody,
+		ResponseModel: responseModel,
+		Stream:        stream,
+		Target:        target,
+	}
 }
 
 // Target binds provider metadata plus callbacks for attributes, session
@@ -188,8 +276,7 @@ func (r *QoderRuntime) ObserveQoderFailure(ctx context.Context, value *provider.
 
 // qoderRuntimeSite parses the provider credential site using Qoder platform
 // rules. A nil record returns Global with an error, allowing callers to choose
-// metadata recovery while execution still reports missing provider
-// configuration.
+// metadata recovery while execution still reports missing provider configuration.
 func qoderRuntimeSite(value *provider.Record) (qoder.Site, error) {
 	if value == nil {
 		return qoder.SiteGlobal, fmt.Errorf("qoder: provider is nil")
@@ -197,19 +284,14 @@ func qoderRuntimeSite(value *provider.Record) (qoder.Site, error) {
 	return qoder.ParseSite(value.GetCredential("site"))
 }
 
-// mapQoderRequestModel applies one nonempty effort-aware provider mapping to a
-// Qoder request model. Nil or non-Qoder records, empty bodies/models, and
-// unchanged mappings return the supplied bytes; successful mapping uses the
-// protocol byte replacement helper.
-func mapQoderRequestModel(value *provider.Record, body []byte) []byte {
-	if value == nil || !value.IsQoder() || len(body) == 0 {
+// mapQoderRequestModel applies one nonempty effort-aware provider model mapping
+// using jsontext-extracted model and protocol-aware reasoning effort without
+// decoding through map[string]any or gjson. Nil or non-Qoder records, empty
+// bodies or models, and unchanged target names return body untouched.
+func mapQoderRequestModel(value *provider.Record, body []byte, model, effort string) []byte {
+	if value == nil || !value.IsQoder() || len(body) == 0 || model == "" {
 		return body
 	}
-	model := strings.TrimSpace(qoder.GjsonString(body, "model"))
-	if model == "" {
-		return body
-	}
-	effort := requeststate.ExtractRoutingReasoningEffort(body, "")
 	mapped, matched, _ := provider.ResolveMappedModelForEffort(
 		provider.ResolveModelMapping(value, provideradapter.ModelDefaults()),
 		provider.ResolveEffortModelMapping(value),

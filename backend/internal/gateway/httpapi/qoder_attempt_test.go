@@ -47,19 +47,12 @@ import (
 // client-disconnect writers verify that tail usage remains available even when
 // output cannot continue.
 
-// Qoder wire fixtures carry cached-token accounting and XML, JSON or DSML tool
-// text through the production parser and converters.
+// Qoder wire fixtures carry cached-token accounting and XML or JSON tool text
+// through the production parser and converters.
 const (
 	qoderCachedUsageSSEForTest    = "data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":66637,\\\"completion_tokens\\\":6,\\\"total_tokens\\\":66643,\\\"prompt_tokens_details\\\":{\\\"cached_tokens\\\":66612,\\\"cacheable_tokens\\\":19},\\\"completion_tokens_details\\\":{\\\"reasoning_tokens\\\":0}}}\"}\n\n"
 	qoderXMLToolCallFixture       = `<tool_call>Read<arg_value><arg_key>file_path</arg_key><arg_value>/workspace/campus-navigation/README.md</arg_value></tool_call>`
 	qoderJSONShellToolCallFixture = `<tool_call>{"name":"shell","arguments":{"command":"pwd","description":"Print working directory"}}</tool_call>`
-
-	qoderDSMLToolCallFixture = `<｜｜DSML｜｜tool_calls>
-<｜｜DSML｜｜invoke name="Bash">
-<｜｜DSML｜｜parameter name="command" string="true">ls -la</｜｜DSML｜｜parameter>
-<｜｜DSML｜｜parameter name="description" string="true">List root files</｜｜DSML｜｜parameter>
-</｜｜DSML｜｜invoke>
-</｜｜DSML｜｜tool_calls>`
 )
 
 // qoderContextClientFixture exposes the execution context through a supplied
@@ -97,35 +90,13 @@ type blockingQoderClientStub struct {
 	nextError   bool              // one-shot malformed later response
 }
 
-// qoderTrackingReadCloser records whether conversion closes its fixture input
-// reader.
-type qoderTrackingReadCloser struct {
-	*strings.Reader // underlying fixture string reader
-	// closed is set by Close and inspected after synchronous conversion returns;
-	// the fixture supplies no synchronization for concurrent close/read
-	// observation.
-	closed bool // observed fixture close flag
-}
-
-// qoderAnthropicStreamEventForTest pairs a fixture event name with decoded
-// JSON data.
-type qoderAnthropicStreamEventForTest struct {
-	// Event and Data belong to one blank-line-delimited fixture block. Event keeps
-	// its latest event-space label; object data lines reuse Data within that block,
-	// while the next block starts with nil decoded data.
-	Event string         // Anthropic SSE event name
-	Data  map[string]any // decoded Anthropic event object
-}
-
-// qoderFailingHTTPWriter injects serial body-write failure after a configured
-// delegation allowance.
-type qoderFailingHTTPWriter struct {
-	gin.ResponseWriter // delegated Gin headers and writes
-	// failAfter and writes govern serial failure injection. Permitted calls
-	// increment writes before delegation, even if the embedded writer then fails;
-	// later calls fail directly once the attempt allowance is consumed.
-	failAfter int // delegated write attempt allowance
-	writes    int // delegated write attempt count
+// qoderIRHealthRecorder counts SetRateLimited and SetOverloaded calls during Qoder IR tests.
+type qoderIRHealthRecorder struct {
+	// mu serializes concurrent health-observer callbacks and test reads across
+	// rateLimited and overloaded so asynchronous cooldown writes stay race-free.
+	mu          sync.Mutex // lock guarding rateLimited and overloaded
+	rateLimited int        // count of SetRateLimited invocations
+	overloaded  int        // count of SetOverloaded invocations
 }
 
 // assertQoderContextCapabilityForTest checks model input capacity and optional
@@ -203,7 +174,7 @@ func TestQoderForwardContextDetachesStreamingFromClientCancellation(t *testing.T
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
 			body := []byte(`{"model":"auto","stream":` + strconv.FormatBool(stream) + `,"messages":[{"role":"user","content":"hi"}]}`)
-			result, err := ForwardQoderAttempt(ctx, c, fixture.Runtime, value, body, protocolcore.ProtocolOpenAIChatCompletions)
+			result, err := forwardQoderAttempt(ctx, c, fixture.Runtime, value, body, protocolcore.ProtocolOpenAIChatCompletions, false)
 			require.Equal(t, 1, calls)
 			if stream {
 				require.NoError(t, err)
@@ -226,7 +197,7 @@ func TestQoderForwardPartialResult(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	result, err := ForwardQoderAttempt(c.Request.Context(), c, s.Runtime, a, []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`), protocolcore.ProtocolOpenAIChatCompletions)
+	result, err := forwardQoderAttempt(c.Request.Context(), c, s.Runtime, a, []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`), protocolcore.ProtocolOpenAIChatCompletions, false)
 	if err == nil || !strings.Contains(rec.Body.String(), "served") {
 		t.Fatalf("fixture did not reach post-output failure: %v", err)
 	}
@@ -248,7 +219,7 @@ func TestQoderCanceledBeforeForward(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	_, err := ForwardQoderAttempt(ctx, c, s.Runtime, a, []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`), protocolcore.ProtocolOpenAIChatCompletions)
+	_, err := forwardQoderAttempt(ctx, c, s.Runtime, a, []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`), protocolcore.ProtocolOpenAIChatCompletions, false)
 	if len(client.Requests) != 0 || !errors.Is(err, context.Canceled) {
 		t.Fatalf("already canceled request starts %d upstream inference(s); err=%v", len(client.Requests), err)
 	}
@@ -289,7 +260,7 @@ func TestQoderGatewayAllowsExplicitPreviewCompatibilityMapping(t *testing.T) {
 	}
 	body := []byte(`{"model":"qwen3.8-max-preview","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 
-	result, err := ForwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions)
+	result, err := forwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions, false)
 
 	require.NoError(t, err)
 	require.Equal(t, "qwen3.8-max-preview", result.Model)
@@ -315,7 +286,7 @@ func TestQoderGatewayForwardUsesOriginalModelAfterGroupMapping(t *testing.T) {
 			path: "/v1/chat/completions",
 			body: []byte(`{"model":"qmodel","messages":[{"role":"user","content":"hi"}],"stream":false}`),
 			call: func(ctx context.Context, svc *gatewaytestkit.QoderFixture, c *gin.Context, provider *providercore.Record, body []byte, responseModel string) (*forwardcore.MessagesResult, error) {
-				return ForwardQoderAttempt(ctx, c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions, responseModel)
+				return forwardQoderAttempt(ctx, c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions, false, responseModel)
 			},
 		},
 		{
@@ -323,7 +294,7 @@ func TestQoderGatewayForwardUsesOriginalModelAfterGroupMapping(t *testing.T) {
 			path: "/v1/responses",
 			body: []byte(`{"model":"qmodel","input":"hi","stream":false}`),
 			call: func(ctx context.Context, svc *gatewaytestkit.QoderFixture, c *gin.Context, provider *providercore.Record, body []byte, responseModel string) (*forwardcore.MessagesResult, error) {
-				return ForwardQoderAttempt(ctx, c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIResponses, responseModel)
+				return forwardQoderAttempt(ctx, c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIResponses, false, responseModel)
 			},
 		},
 		{
@@ -331,7 +302,7 @@ func TestQoderGatewayForwardUsesOriginalModelAfterGroupMapping(t *testing.T) {
 			path: "/v1/messages",
 			body: []byte(`{"model":"qmodel","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"stream":false}`),
 			call: func(ctx context.Context, svc *gatewaytestkit.QoderFixture, c *gin.Context, provider *providercore.Record, body []byte, responseModel string) (*forwardcore.MessagesResult, error) {
-				return ForwardQoderAttempt(ctx, c, svc.Runtime, provider, body, protocolcore.ProtocolAnthropicMessages, responseModel)
+				return forwardQoderAttempt(ctx, c, svc.Runtime, provider, body, protocolcore.ProtocolAnthropicMessages, false, responseModel)
 			},
 		},
 	}
@@ -500,8 +471,10 @@ func TestQoderGatewayChatCompletionsLegacyFunctionCallNoneClearsTools(t *testing
 
 	require.False(t, result.Stream)
 	upstream := qoderLastUpstreamPayloadForTest(t, client)
+	params := qoderFixtureValue[map[string]any](t, upstream["parameters"])
+	require.Equal(t, "none", params["tool_choice"])
 	tools := qoderFixtureValue[[]any](t, upstream["tools"])
-	require.Empty(t, tools)
+	require.Len(t, tools, 1)
 }
 
 // TestQoderGatewayMessagesMapsUpstreamToolNameToDeclaredAnthropicTool returns
@@ -778,7 +751,7 @@ func TestQoderGatewayDoesNotCommitConversationOnUpstreamFailure(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	_, err := ForwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions)
+	_, err := forwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions, false)
 	require.Error(t, err)
 
 	client.Err = nil
@@ -826,7 +799,7 @@ func TestQoderGatewayReservesConversationAfterUpstreamAcceptsBeforeStreamComplet
 	// independently; join forwarding after pipe completion before reading its error.
 	go func() {
 		defer wg.Done()
-		_, firstErr = ForwardQoderAttempt(context.Background(), firstCtx, svc.Runtime, provider, body1, protocolcore.ProtocolAnthropicMessages)
+		_, firstErr = forwardQoderAttempt(context.Background(), firstCtx, svc.Runtime, provider, body1, protocolcore.ProtocolAnthropicMessages, false)
 	}()
 	client.waitForCalls(1)
 
@@ -886,7 +859,7 @@ func TestQoderGatewayDoesNotCommitFailedPostToolStreamAsComplete(t *testing.T) {
 	// independently; join forwarding after pipe completion before reading its error.
 	go func() {
 		defer wg.Done()
-		_, firstErr = ForwardQoderAttempt(context.Background(), firstCtx, svc.Runtime, provider, body1, protocolcore.ProtocolAnthropicMessages)
+		_, firstErr = forwardQoderAttempt(context.Background(), firstCtx, svc.Runtime, provider, body1, protocolcore.ProtocolAnthropicMessages, false)
 	}()
 	client.waitForCalls(1)
 
@@ -899,7 +872,7 @@ func TestQoderGatewayDoesNotCommitFailedPostToolStreamAsComplete(t *testing.T) {
 	failedCtx, _ := gin.CreateTestContext(failedRec)
 	failedCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body2))
 	failedCtx.Request.Header.Set("User-Agent", "claude-cli/2.1.177 (external, cli)")
-	_, failedErr := ForwardQoderAttempt(context.Background(), failedCtx, svc.Runtime, provider, body2, protocolcore.ProtocolAnthropicMessages)
+	_, failedErr := forwardQoderAttempt(context.Background(), failedCtx, svc.Runtime, provider, body2, protocolcore.ProtocolAnthropicMessages, false)
 	require.Error(t, failedErr)
 
 	retryPayload := qoderForwardMessagesForTest(t, svc, provider, "", body2, qoderHeader("User-Agent", "claude-cli/2.1.177 (external, cli)"))
@@ -962,7 +935,7 @@ func TestQoderGatewayRollsBackAcceptedConversationOnStreamParseFailure(t *testin
 	failedCtx, _ := gin.CreateTestContext(failedRec)
 	failedCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body2))
 	failedCtx.Request.Header.Set("User-Agent", "claude-cli/2.1.177 (external, cli)")
-	_, failedErr := ForwardQoderAttempt(context.Background(), failedCtx, svc.Runtime, provider, body2, protocolcore.ProtocolAnthropicMessages)
+	_, failedErr := forwardQoderAttempt(context.Background(), failedCtx, svc.Runtime, provider, body2, protocolcore.ProtocolAnthropicMessages, false)
 	require.Error(t, failedErr)
 
 	client.Body = "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"}}]}\"}\n\n" +
@@ -1394,7 +1367,7 @@ func TestQoderGatewayUsageComesFromUpstreamSSE(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
-	result, err := ForwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolAnthropicMessages)
+	result, err := forwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolAnthropicMessages, false)
 
 	require.NoError(t, err)
 	require.Equal(t, 1234, result.Usage.InputTokens)
@@ -1422,14 +1395,12 @@ func TestQoderGatewayBuildsClientVisibleOpenAIUsageWithUpstreamTotals(t *testing
 	require.Equal(t, int64(6), gjson.Get(response, "usage.completion_tokens").Int())
 	require.Equal(t, int64(66643), gjson.Get(response, "usage.total_tokens").Int())
 	require.Equal(t, int64(66612), gjson.Get(response, "usage.prompt_tokens_details.cached_tokens").Int())
-	require.Equal(t, int64(19), gjson.Get(response, "usage.prompt_tokens_details.cacheable_tokens").Int())
 	require.Equal(t, int64(0), gjson.Get(response, "usage.completion_tokens_details.reasoning_tokens").Int())
 }
 
 // TestQoderGatewayOpenAIUsageKeepsUpstreamPromptWhenCachedExceedsPrompt
 // reports cached tokens greater than total prompt tokens. Internal uncached
-// input must clamp to zero while client Chat prompt/total values retain their
-// upstream observations.
+// input clamps to zero while client Chat prompt_tokens reflects CacheRead (15).
 func TestQoderGatewayOpenAIUsageKeepsUpstreamPromptWhenCachedExceedsPrompt(t *testing.T) {
 	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
 	client.Body = "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"}}]}\"}\n\n" +
@@ -1441,17 +1412,17 @@ func TestQoderGatewayOpenAIUsageKeepsUpstreamPromptWhenCachedExceedsPrompt(t *te
 
 	require.Equal(t, 0, result.Usage.InputTokens)
 	require.Equal(t, 15, result.Usage.CacheReadInputTokens)
-	require.Equal(t, int64(10), gjson.Get(response, "usage.prompt_tokens").Int())
+	require.Equal(t, int64(15), gjson.Get(response, "usage.prompt_tokens").Int())
 	require.Equal(t, int64(6), gjson.Get(response, "usage.completion_tokens").Int())
-	require.Equal(t, int64(16), gjson.Get(response, "usage.total_tokens").Int())
+	require.Equal(t, int64(21), gjson.Get(response, "usage.total_tokens").Int())
 	require.Equal(t, int64(15), gjson.Get(response, "usage.prompt_tokens_details.cached_tokens").Int())
 	require.False(t, gjson.Get(response, "usage.cache_creation_input_tokens").Exists())
 }
 
 // TestQoderGatewayBuildsClientVisibleAnthropicUsageWithCacheRead converts
 // cached upstream usage into Messages output. Internal and client input must
-// expose the uncached portion separately from cache reads, with no invented
-// cache-creation bucket.
+// expose the uncached portion separately from cache reads, with zero
+// cache-creation tokens.
 func TestQoderGatewayBuildsClientVisibleAnthropicUsageWithCacheRead(t *testing.T) {
 	provider, svc, client := gatewaytestkit.NewDefaultQoderFixture()
 	client.Body = "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"}}]}\"}\n\n" +
@@ -1467,7 +1438,7 @@ func TestQoderGatewayBuildsClientVisibleAnthropicUsageWithCacheRead(t *testing.T
 	require.Equal(t, int64(25), gjson.Get(response, "usage.input_tokens").Int())
 	require.Equal(t, int64(66612), gjson.Get(response, "usage.cache_read_input_tokens").Int())
 	require.Equal(t, int64(6), gjson.Get(response, "usage.output_tokens").Int())
-	require.False(t, gjson.Get(response, "usage.cache_creation_input_tokens").Exists())
+	require.Zero(t, gjson.Get(response, "usage.cache_creation_input_tokens").Int())
 }
 
 // TestQoderGatewayDoesNotSubtractPreviousUsageOnFullReplay replays a
@@ -1700,7 +1671,7 @@ func TestQoderGatewayStreamsDeltaUsageToOpenAIClientOnReusedConversation(t *test
 		"model":"auto",
 		"prompt_cache_key":"openai-stream-usage-delta-session",
 		"messages":[{"role":"user","content":"run pwd"}],
-		"tools":` + qoderLargeToolsJSONForTest() + `,
+		"tools":[{"type":"function","function":{"name":"bash","description":"Run shell","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}}],
 		"stream":true,
 		"stream_options":{"include_usage":true}
 	}`)
@@ -1709,12 +1680,12 @@ func TestQoderGatewayStreamsDeltaUsageToOpenAIClientOnReusedConversation(t *test
 		"prompt_cache_key":"openai-stream-usage-delta-session",
 		"messages":[
 			{"role":"user","content":"run pwd"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":{"cmd":"pwd"}}}]},
+			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"pwd\"}"}}]},
 			{"role":"tool","tool_call_id":"call_1","name":"bash","content":"/repo"},
 			{"role":"assistant","content":"done"},
 			{"role":"user","content":"continue"}
 		],
-		"tools":` + qoderLargeToolsJSONForTest() + `,
+		"tools":[{"type":"function","function":{"name":"bash","description":"Run shell","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}}],
 		"stream":true,
 		"stream_options":{"include_usage":true}
 	}`)
@@ -1785,32 +1756,6 @@ func TestQoderGatewayAnthropicConversationAfterToolResultKeepsReducingPayload(t 
 	require.GreaterOrEqual(t, len(client.BodyAt(1)), len(client.BodyAt(0)))
 }
 
-// TestQoderGatewayDoesNotAttachAmbiguousArgumentDeltaToParallelToolCall
-// buffers two identified tool calls followed by an unassociated argument
-// fragment. Both identities must survive with empty arguments, and the
-// ambiguous fragment must not appear in client output.
-func TestQoderGatewayDoesNotAttachAmbiguousArgumentDeltaToParallelToolCall(t *testing.T) {
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolType: "function", ToolName: "read"},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, ToolCallID: "call_2", ToolType: "function", ToolName: "write"},
-		{Type: "tool_call_delta", Arguments: `{"path":"lost"}`},
-		{IsDone: true},
-	}
-
-	body, err := qoder.BuildQoderOpenAICompletion("auto", events)
-	require.NoError(t, err)
-
-	require.Equal(t, "tool_calls", gjson.GetBytes(body, "choices.0.finish_reason").String())
-	require.Equal(t, int64(2), gjson.GetBytes(body, "choices.0.message.tool_calls.#").Int())
-	require.Equal(t, "call_1", gjson.GetBytes(body, "choices.0.message.tool_calls.0.id").String())
-	require.Equal(t, "read", gjson.GetBytes(body, "choices.0.message.tool_calls.0.function.name").String())
-	require.Empty(t, gjson.GetBytes(body, "choices.0.message.tool_calls.0.function.arguments").String())
-	require.Equal(t, "call_2", gjson.GetBytes(body, "choices.0.message.tool_calls.1.id").String())
-	require.Equal(t, "write", gjson.GetBytes(body, "choices.0.message.tool_calls.1.function.name").String())
-	require.Empty(t, gjson.GetBytes(body, "choices.0.message.tool_calls.1.function.arguments").String())
-	require.NotContains(t, string(body), "lost")
-}
-
 // TestQoderGatewayForwardChatCompletionsHonorsCanceledContext forwards Chat
 // input under a canceled client context. The attempt must return
 // context.Canceled and leave the response writer untouched so outer
@@ -1838,7 +1783,7 @@ func TestQoderGatewayForwardChatCompletionsHonorsCanceledContext(t *testing.T) {
 	}})
 	svc := gatewaytestkit.NewQoderFixture(tokenSource, nil, nil)
 
-	_, err := ForwardQoderAttempt(ctx, c, svc.Runtime, provider, []byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}]}`), protocolcore.ProtocolOpenAIChatCompletions)
+	_, err := forwardQoderAttempt(ctx, c, svc.Runtime, provider, []byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}]}`), protocolcore.ProtocolOpenAIChatCompletions, false)
 
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, c.Writer.Written())
@@ -1911,7 +1856,7 @@ func qoderForwardChatCompletionsResultAndBodyForTest(t *testing.T, svc *gatewayt
 	for _, header := range headers {
 		c.Request.Header.Set(header.key, header.value)
 	}
-	result, err := ForwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions)
+	result, err := forwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions, false)
 	require.NoError(t, err)
 	return result, rec.Body.String()
 }
@@ -1968,7 +1913,7 @@ func qoderForwardMessagesResultAndBodyForTest(t *testing.T, svc *gatewaytestkit.
 	if strings.EqualFold(strings.TrimSpace(c.Request.Header.Get("X-Test-Claude-Code-Context")), "true") {
 		c.Request = c.Request.WithContext(requeststate.SetClaudeCodeClient(c.Request.Context(), true))
 	}
-	result, err := ForwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolAnthropicMessages)
+	result, err := forwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolAnthropicMessages, false)
 	require.NoError(t, err)
 	return result, rec.Body.String()
 }
@@ -1988,7 +1933,7 @@ func qoderForwardResponsesResultAndBodyForTest(t *testing.T, svc *gatewaytestkit
 			c.Request.Header.Set(header.key, header.value)
 		}
 	}
-	result, err := ForwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIResponses)
+	result, err := forwardQoderAttempt(context.Background(), c, svc.Runtime, provider, body, protocolcore.ProtocolOpenAIResponses, false)
 	require.NoError(t, err)
 	return result, rec.Body.String()
 }
@@ -2279,1699 +2224,6 @@ func TestQoderGatewayNonStreamingReadDoesNotCommitResponseBeforeError(t *testing
 	require.False(t, c.Writer.Written())
 }
 
-// TestQoderPartialUsageOnError writes content and usage before failure through
-// all three protocol converters. Each must return the upstream error with
-// observed partial usage and output, preserving served accounting despite
-// failure.
-func TestQoderPartialUsageOnError(t *testing.T) {
-	body := qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "served"}}}}) + qoderWrappedSSELineForTest(t, map[string]any{"usage": map[string]any{"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}}) + qoderWrappedErrorSSELineForTest(t, 502, map[string]any{"code": "500", "message": "local fixture upstream failure"})
-	writers := map[string]func(context.Context, *gin.Context, *http.Response) (*qoder.QoderStreamResult, error){
-		"chat": func(ctx context.Context, c *gin.Context, r *http.Response) (*qoder.QoderStreamResult, error) {
-			return qoder.WriteQoderOpenAIStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", r)
-		},
-		"messages": func(ctx context.Context, c *gin.Context, r *http.Response) (*qoder.QoderStreamResult, error) {
-			return qoder.WriteQoderAnthropicStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", r)
-		},
-		"responses": func(ctx context.Context, c *gin.Context, r *http.Response) (*qoder.QoderStreamResult, error) {
-			return qoder.WriteQoderResponsesStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", r)
-		},
-	}
-	for name, write := range writers {
-		t.Run(name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			result, err := write(context.Background(), c, &http.Response{Body: io.NopCloser(strings.NewReader(body))})
-			if err == nil {
-				t.Fatal("fixture must produce upstream error")
-			}
-			if !strings.Contains(rec.Body.String(), "served") {
-				t.Fatal("fixture must emit real output")
-			}
-			if result == nil {
-				t.Fatalf("observed input=12 output=3 before upstream error but result=nil; written=%d", rec.Body.Len())
-			}
-			if result.Usage.InputTokens != 12 || result.Usage.OutputTokens != 3 || !result.HasOutput {
-				t.Fatalf("lost partial result: %+v", result)
-			}
-		})
-	}
-}
-
-// Close marks the fixture reader closed and returns no error.
-func (r *qoderTrackingReadCloser) Close() error {
-	r.closed = true
-	return nil
-}
-
-// qoderNoIndexNamedParallelToolCallEventsForTest returns three complete named
-// calls without reported indexes and a DONE event.
-func qoderNoIndexNamedParallelToolCallEventsForTest() []qoder.SSEEvent {
-	return []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolName: "Bash", Arguments: `{"command":"pwd && date \"+%Y-%m-%d %H:%M:%S\" && uname -srm","description":"Show current dir, time, system info"}`},
-		{Type: "tool_call_delta", ToolName: "Bash", Arguments: `{"command":"ls -la","description":"List files in current directory"}`},
-		{Type: "tool_call_delta", ToolName: "glob", Arguments: `{"pattern":"**/*.md"}`},
-		{IsDone: true},
-	}
-}
-
-// qoderNoIndexNamedParallelToolCallsWrappedSSEForTest returns wrapped parallel
-// call JSON with no indexes. Its payload keeps each complete argument object
-// separate, then appends wrapped DONE for the production parser fixture.
-func qoderNoIndexNamedParallelToolCallsWrappedSSEForTest(t *testing.T) string {
-	t.Helper()
-	return qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-		map[string]any{"delta": map[string]any{"tool_calls": []any{
-			map[string]any{"type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"command":"pwd && date \"+%Y-%m-%d %H:%M:%S\" && uname -srm","description":"Show current dir, time, system info"}`}},
-			map[string]any{"type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"command":"ls -la","description":"List files in current directory"}`}},
-			map[string]any{"type": "function", "function": map[string]any{"name": "glob", "arguments": `{"pattern":"**/*.md"}`}},
-		}}},
-	}}) +
-		"data: {\"body\":\"[DONE]\"}\n\n"
-}
-
-// qoderRepeatedIndexNamedParallelToolCallEventsForTest returns three distinct
-// named calls reusing reported index zero before DONE.
-func qoderRepeatedIndexNamedParallelToolCallEventsForTest() []qoder.SSEEvent {
-	return []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolName: "Bash", Arguments: `{"command":"pwd","description":"Print working directory"}`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolName: "Bash", Arguments: `{"command":"printf OPENCODE_PARALLEL_OK","description":"Print parallel OK string"}`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolName: "glob", Arguments: `{"pattern":"docs/*.md"}`},
-		{IsDone: true},
-	}
-}
-
-// qoderRepeatedIndexNamedParallelToolCallsWrappedSSEForTest returns three
-// wrapped call deltas reusing index zero. Each carries a complete named
-// argument object, letting production parsing distinguish separate calls
-// before the appended DONE.
-func qoderRepeatedIndexNamedParallelToolCallsWrappedSSEForTest(t *testing.T) string {
-	t.Helper()
-	return qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-		map[string]any{"delta": map[string]any{"tool_calls": []any{
-			map[string]any{"index": 0, "type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"command":"pwd","description":"Print working directory"}`}},
-		}}},
-	}}) +
-		qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-			map[string]any{"delta": map[string]any{"tool_calls": []any{
-				map[string]any{"index": 0, "type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"command":"printf OPENCODE_PARALLEL_OK","description":"Print parallel OK string"}`}},
-			}}},
-		}}) +
-		qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-			map[string]any{"delta": map[string]any{"tool_calls": []any{
-				map[string]any{"index": 0, "type": "function", "function": map[string]any{"name": "glob", "arguments": `{"pattern":"docs/*.md"}`}},
-			}}},
-		}}) +
-		"data: {\"body\":\"[DONE]\"}\n\n"
-}
-
-// TestQoderGatewayResponsesStreamCompletedOutputIncludesTextMessage streams
-// text through wrapped Qoder input into Responses. Its completed response must
-// include the joined text message and its client-facing output item metadata.
-func TestQoderGatewayResponsesStreamCompletedOutputIncludesTextMessage(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{Body: io.NopCloser(bytes.NewBufferString(
-		qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-			map[string]any{"delta": map[string]any{"content": "Hello "}},
-		}}) +
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"content": "world"}},
-			}}) +
-			"data: {\"body\":\"[DONE]\"}\n\n"))}
-
-	result, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "deepseek-v4-pro", resp)
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	completed := qoderResponsesCompletedEventForTest(t, rec.Body.String())
-	require.Len(t, completed.Get("response.output").Array(), 1)
-	require.Equal(t, "message", completed.Get("response.output.0.type").String())
-	require.Equal(t, "assistant", completed.Get("response.output.0.role").String())
-	require.Equal(t, "completed", completed.Get("response.output.0.status").String())
-	require.Equal(t, "output_text", completed.Get("response.output.0.content.0.type").String())
-	require.Equal(t, "Hello world", completed.Get("response.output.0.content.0.text").String())
-}
-
-// TestQoderGatewayResponsesStreamClosesUpstreamBody passes a tracked reader
-// into streaming Responses conversion. The response writer must finish without
-// error and the upstream body’s close flag must be set after conversion.
-func TestQoderGatewayResponsesStreamClosesUpstreamBody(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	body := &qoderTrackingReadCloser{Reader: strings.NewReader(
-		qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-			map[string]any{"delta": map[string]any{"content": "ok"}},
-		}}) +
-			"data: {\"body\":\"[DONE]\"}\n\n",
-	)}
-	resp := &http.Response{Body: body}
-
-	_, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "deepseek-v4-pro", resp)
-	require.NoError(t, err)
-	require.True(t, body.closed)
-}
-
-// TestQoderGatewayOpenAIStreamUsageRequiresIncludeUsage streams wrapped text
-// and usage with default Chat options. Internal input/output usage must remain
-// available while no client usage member is emitted without explicit
-// inclusion.
-func TestQoderGatewayOpenAIStreamUsageRequiresIncludeUsage(t *testing.T) {
-	respBody := qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-		map[string]any{"delta": map[string]any{"content": "ok"}},
-	}}) +
-		qoderWrappedSSELineForTest(t, map[string]any{
-			"usage": map[string]any{
-				"prompt_tokens":     12,
-				"completion_tokens": 3,
-				"total_tokens":      15,
-			},
-		}) +
-		"data: {\"body\":\"[DONE]\"}\n\n"
-
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{Body: io.NopCloser(strings.NewReader(respBody))}
-
-	result, err := qoder.WriteQoderOpenAIStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp)
-	require.NoError(t, err)
-	require.Equal(t, 12, result.Usage.InputTokens)
-	require.Equal(t, 3, result.Usage.OutputTokens)
-	require.NotContains(t, rec.Body.String(), `"usage"`)
-}
-
-// TestQoderGatewayOpenAIStreamUsageChunkShapeWhenIncluded enables client Chat
-// usage on a wrapped stream. Output must include a usage chunk with empty
-// choices and the supplied input/output token values.
-func TestQoderGatewayOpenAIStreamUsageChunkShapeWhenIncluded(t *testing.T) {
-	respBody := qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-		map[string]any{"delta": map[string]any{"content": "ok"}},
-	}}) +
-		qoderWrappedSSELineForTest(t, map[string]any{
-			"usage": map[string]any{
-				"prompt_tokens":     12,
-				"completion_tokens": 3,
-				"total_tokens":      15,
-			},
-		}) +
-		"data: {\"body\":\"[DONE]\"}\n\n"
-
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{Body: io.NopCloser(strings.NewReader(respBody))}
-
-	_, err := qoder.WriteQoderOpenAIStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp, qoder.QoderOpenAIStreamIncludeUsage(true))
-	require.NoError(t, err)
-	body := rec.Body.String()
-	require.Contains(t, body, `"usage"`)
-	require.Contains(t, body, `"choices":[]`)
-	require.Contains(t, body, `"prompt_tokens":12`)
-	require.Contains(t, body, `"completion_tokens":3`)
-}
-
-// TestQoderGatewayStreamClientDisconnectStillCollectsUsage fails client body
-// writes after initial output for Chat, Messages and Responses. Each converter
-// must return measured tail usage and output evidence without turning the
-// simulated disconnect into a forwarding error.
-func TestQoderGatewayStreamClientDisconnectStillCollectsUsage(t *testing.T) {
-	respBody := qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-		map[string]any{"delta": map[string]any{"content": "ok"}},
-	}}) +
-		qoderWrappedSSELineForTest(t, map[string]any{
-			"usage": map[string]any{
-				"prompt_tokens":     12,
-				"completion_tokens": 3,
-				"total_tokens":      15,
-			},
-		}) +
-		"data: {\"body\":\"[DONE]\"}\n\n"
-
-	tests := []struct {
-		name  string                                                                                // protocol or mapping case label
-		write func(context.Context, *gin.Context, *http.Response) (*qoder.QoderStreamResult, error) // selected protocol response writer
-	}{
-		{
-			name: "openai chat completions",
-			write: func(ctx context.Context, c *gin.Context, resp *http.Response) (*qoder.QoderStreamResult, error) {
-				return qoder.WriteQoderOpenAIStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp)
-			},
-		},
-		{
-			name: "anthropic messages",
-			write: func(ctx context.Context, c *gin.Context, resp *http.Response) (*qoder.QoderStreamResult, error) {
-				return qoder.WriteQoderAnthropicStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp)
-			},
-		},
-		{
-			name: "responses",
-			write: func(ctx context.Context, c *gin.Context, resp *http.Response) (*qoder.QoderStreamResult, error) {
-				return qoder.WriteQoderResponsesStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-
-			c.Writer = &qoderFailingHTTPWriter{ResponseWriter: c.Writer, failAfter: 1}
-			resp := &http.Response{Body: io.NopCloser(strings.NewReader(respBody))}
-
-			result, err := tt.write(context.Background(), c, resp)
-
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.True(t, result.HasOutput)
-			require.Equal(t, 12, result.Usage.InputTokens)
-			require.Equal(t, 3, result.Usage.OutputTokens)
-		})
-	}
-}
-
-// TestQoderGatewayStreamWritersDoNotWriteBeforeUpstreamError supplies an
-// initial wrapped agent-limit failure to all protocol writers. Each must
-// return that classified error without a result or any written client bytes,
-// preserving failover eligibility.
-func TestQoderGatewayStreamWritersDoNotWriteBeforeUpstreamError(t *testing.T) {
-	// Wrapped agent-limit reset fields use Unix epoch milliseconds.
-	errorLine := qoderWrappedErrorSSELineForTest(t, http.StatusTooManyRequests, map[string]any{
-		"code":                "115",
-		"message":             "agent limit",
-		"agentLimitResetTime": time.Date(2026, 7, 12, 7, 28, 9, 0, time.UTC).UnixMilli(),
-	})
-
-	tests := []struct {
-		name  string                                                                                // protocol or mapping case label
-		write func(context.Context, *gin.Context, *http.Response) (*qoder.QoderStreamResult, error) // selected protocol response writer
-	}{
-		{
-			name: "openai chat completions",
-			write: func(ctx context.Context, c *gin.Context, resp *http.Response) (*qoder.QoderStreamResult, error) {
-				return qoder.WriteQoderOpenAIStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "qwen3.7-plus", resp)
-			},
-		},
-		{
-			name: "anthropic messages",
-			write: func(ctx context.Context, c *gin.Context, resp *http.Response) (*qoder.QoderStreamResult, error) {
-				return qoder.WriteQoderAnthropicStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "qwen3.7-plus", resp)
-			},
-		},
-		{
-			name: "responses",
-			write: func(ctx context.Context, c *gin.Context, resp *http.Response) (*qoder.QoderStreamResult, error) {
-				return qoder.WriteQoderResponsesStreamResponse(ctx, upstreamcore.NewOutputContext(NewResponseSink(c)), "qwen3.7-plus", resp)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			resp := &http.Response{Body: io.NopCloser(strings.NewReader(errorLine))}
-
-			result, err := tt.write(context.Background(), c, resp)
-			require.Error(t, err)
-			require.Nil(t, result)
-			var apiErr *qoder.APIError
-			require.ErrorAs(t, err, &apiErr)
-			require.True(t, apiErr.IsAgentLimit())
-			require.Equal(t, -1, c.Writer.Size(), "handler failover depends on no bytes being written before the upstream error")
-			require.Empty(t, rec.Body.String())
-		})
-	}
-}
-
-// TestQoderGatewayResponsesStreamMapsReasoningDelta streams reasoning
-// fragments before answer text. Responses events and completed output must
-// retain joined reasoning followed by the answer message and their appropriate
-// item types.
-func TestQoderGatewayResponsesStreamMapsReasoningDelta(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{Body: io.NopCloser(bytes.NewBufferString(
-		qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-			map[string]any{"delta": map[string]any{"reasoning_content": "think "}},
-		}}) +
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"reasoning_content": "first"}},
-			}}) +
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"content": "answer"}},
-			}}) +
-			"data: {\"body\":\"[DONE]\"}\n\n"))}
-
-	result, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "deepseek-v4-pro", resp)
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	events := qoderResponsesStreamEventsForTest(t, rec.Body.String())
-	var sawReasoningAdded, sawReasoningDelta, sawReasoningDone bool
-	for _, event := range events {
-		switch event.Get("type").String() {
-		case "response.output_item.added":
-			if event.Get("item.type").String() == "reasoning" {
-				sawReasoningAdded = true
-			}
-		case "response.reasoning_summary_text.delta":
-			if event.Get("delta").String() == "think " || event.Get("delta").String() == "first" {
-				sawReasoningDelta = true
-			}
-		case "response.output_item.done":
-			if event.Get("item.type").String() == "reasoning" && event.Get("item.summary.0.text").String() == "think first" {
-				sawReasoningDone = true
-			}
-		}
-	}
-	require.True(t, sawReasoningAdded, rec.Body.String())
-	require.True(t, sawReasoningDelta, rec.Body.String())
-	require.True(t, sawReasoningDone, rec.Body.String())
-
-	completed := qoderResponsesCompletedEventForTest(t, rec.Body.String())
-	require.Equal(t, "reasoning", completed.Get("response.output.0.type").String())
-	require.Equal(t, "think first", completed.Get("response.output.0.summary.0.text").String())
-	require.Equal(t, "message", completed.Get("response.output.1.type").String())
-	require.Equal(t, "answer", completed.Get("response.output.1.content.0.text").String())
-}
-
-// TestQoderGatewayResponsesStreamAllowsTextAfterReasoningInterleave streams
-// text, reasoning and more text in that order. Completed Responses output must
-// preserve three corresponding items rather than lose or merge text across the
-// reasoning boundary.
-func TestQoderGatewayResponsesStreamAllowsTextAfterReasoningInterleave(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{Body: io.NopCloser(bytes.NewBufferString(
-		qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-			map[string]any{"delta": map[string]any{"content": "first"}},
-		}}) +
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"reasoning_content": "think"}},
-			}}) +
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"content": "second"}},
-			}}) +
-			"data: {\"body\":\"[DONE]\"}\n\n"))}
-
-	result, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "deepseek-v4-pro", resp)
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	completed := qoderResponsesCompletedEventForTest(t, rec.Body.String())
-	require.Equal(t, "message", completed.Get("response.output.0.type").String())
-	require.Equal(t, "first", completed.Get("response.output.0.content.0.text").String())
-	require.Equal(t, "reasoning", completed.Get("response.output.1.type").String())
-	require.Equal(t, "think", completed.Get("response.output.1.summary.0.text").String())
-	require.Equal(t, "message", completed.Get("response.output.2.type").String())
-	require.Equal(t, "second", completed.Get("response.output.2.content.0.text").String())
-}
-
-// TestQoderGatewayResponsesStreamCompletedOutputIncludesFunctionCalls streams
-// one mapped Bash function call through Responses. Completed output must
-// retain call identity, declared lowercase name, valid JSON arguments and
-// completed item status.
-func TestQoderGatewayResponsesStreamCompletedOutputIncludesFunctionCalls(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{Body: io.NopCloser(bytes.NewBufferString(
-		qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-			map[string]any{"delta": map[string]any{"tool_calls": []any{
-				map[string]any{"index": 0, "id": "call_1", "type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"command":"pwd"}`}},
-			}}},
-		}}) +
-			"data: {\"body\":\"[DONE]\"}\n\n"))}
-
-	result, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "deepseek-v4-pro", resp, qoder.QoderResponsesStreamToolNameMapper(qoder.QoderDeclaredToolNameMapper([]any{map[string]any{"type": "function", "name": "bash"}})))
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	completed := qoderResponsesCompletedEventForTest(t, rec.Body.String())
-	require.Len(t, completed.Get("response.output").Array(), 1)
-	require.Equal(t, "function_call", completed.Get("response.output.0.type").String())
-	require.Equal(t, "call_1", completed.Get("response.output.0.call_id").String())
-	require.Equal(t, "bash", completed.Get("response.output.0.name").String())
-	require.Equal(t, "completed", completed.Get("response.output.0.status").String())
-	require.JSONEq(t, `{"command":"pwd"}`, completed.Get("response.output.0.arguments").String())
-}
-
-// TestQoderGatewayWritesResponsesStreamKeepsNoIndexNamedParallelFunctionCalls
-// streams three named calls with no indexes, including repeated names.
-// Responses output must keep three separate items and valid argument objects
-// without concatenating unrelated JSON.
-func TestQoderGatewayWritesResponsesStreamKeepsNoIndexNamedParallelFunctionCalls(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(qoderNoIndexNamedParallelToolCallsWrappedSSEForTest(t))),
-	}
-
-	result, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	events := qoderResponsesStreamEventsForTest(t, rec.Body.String())
-	addedNames := make([]string, 0)
-	argsDone := make([]string, 0)
-	for _, event := range events {
-		switch event.Get("type").String() {
-		case "response.output_item.added":
-			if event.Get("item.type").String() == "function_call" {
-				addedNames = append(addedNames, event.Get("item.name").String())
-			}
-		case "response.function_call_arguments.done":
-			arguments := event.Get("arguments").String()
-			require.NotContains(t, arguments, `}{`)
-			argsDone = append(argsDone, arguments)
-		}
-	}
-	require.Equal(t, []string{"Bash", "Bash", "glob"}, addedNames)
-	require.Len(t, argsDone, 3)
-	require.JSONEq(t, `{"command":"pwd && date \"+%Y-%m-%d %H:%M:%S\" && uname -srm","description":"Show current dir, time, system info"}`, argsDone[0])
-	require.JSONEq(t, `{"command":"ls -la","description":"List files in current directory"}`, argsDone[1])
-	require.JSONEq(t, `{"pattern":"**/*.md"}`, argsDone[2])
-}
-
-// TestQoderGatewayWritesResponsesStreamKeepsRepeatedIndexNamedParallelFunctionCalls
-// streams distinct named calls that all report index zero. Responses output
-// must retain three separate names and argument objects rather than combine
-// the reused-index calls.
-func TestQoderGatewayWritesResponsesStreamKeepsRepeatedIndexNamedParallelFunctionCalls(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(qoderRepeatedIndexNamedParallelToolCallsWrappedSSEForTest(t))),
-	}
-
-	result, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	events := qoderResponsesStreamEventsForTest(t, rec.Body.String())
-	addedNames := make([]string, 0)
-	argsDone := make([]string, 0)
-	for _, event := range events {
-		switch event.Get("type").String() {
-		case "response.output_item.added":
-			if event.Get("item.type").String() == "function_call" {
-				addedNames = append(addedNames, event.Get("item.name").String())
-			}
-		case "response.function_call_arguments.done":
-			arguments := event.Get("arguments").String()
-			require.NotContains(t, arguments, `}{`)
-			argsDone = append(argsDone, arguments)
-		}
-	}
-	require.Equal(t, []string{"Bash", "Bash", "glob"}, addedNames)
-	require.Len(t, argsDone, 3)
-	require.JSONEq(t, `{"command":"pwd","description":"Print working directory"}`, argsDone[0])
-	require.JSONEq(t, `{"command":"printf OPENCODE_PARALLEL_OK","description":"Print parallel OK string"}`, argsDone[1])
-	require.JSONEq(t, `{"pattern":"docs/*.md"}`, argsDone[2])
-}
-
-// TestQoderGatewayWritesResponsesStreamDoesNotReserveOutputIndexForTypeOnlyPlaceholder
-// starts with a type-only tool placeholder before a real call. Responses must
-// assign output index zero to the real named call instead of reserving an
-// empty item.
-func TestQoderGatewayWritesResponsesStreamDoesNotReserveOutputIndexForTypeOnlyPlaceholder(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"tool_calls": []any{
-					map[string]any{"type": "function"},
-				}}},
-			}}) +
-				qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-					map[string]any{"delta": map[string]any{"tool_calls": []any{
-						map[string]any{"type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"command":"pwd"}`}},
-					}}},
-				}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n")),
-	}
-
-	result, err := qoder.WriteQoderResponsesStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	events := qoderResponsesStreamEventsForTest(t, rec.Body.String())
-	for _, event := range events {
-		if event.Get("type").String() != "response.output_item.added" || event.Get("item.type").String() != "function_call" {
-			continue
-		}
-		require.Equal(t, int64(0), event.Get("output_index").Int(), event.Raw)
-		require.Equal(t, "Bash", event.Get("item.name").String())
-		return
-	}
-	t.Fatalf("function_call output_item.added not found in %s", rec.Body.String())
-}
-
-// TestQoderGatewayWritesOpenAIStream converts typed text and reasoning
-// fixtures to Chat output. It must emit assistant/text deltas and stop plus
-// DONE while omitting the hidden reasoning text.
-func TestQoderGatewayWritesOpenAIStream(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "reasoning_delta", Text: "hidden thought"},
-		{Type: "text_delta", Text: "Hel"},
-		{Type: "text_delta", Text: "lo"},
-		{Type: "usage", PromptTokens: 12, CompletionTokens: 34, TotalTokens: 46, HasUsage: true},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"delta":{"role":"assistant"}`)
-	require.Contains(t, rec.Body.String(), `"delta":{"content":"Hel"}`)
-	require.NotContains(t, rec.Body.String(), "hidden thought")
-	require.Contains(t, rec.Body.String(), `"finish_reason":"stop"`)
-	require.Contains(t, rec.Body.String(), "data: [DONE]\n\n")
-}
-
-// TestQoderGatewayWritesOpenAIToolCallsStream converts split arguments for one
-// named tool call. Chat chunks must retain its index, ID and lowercase name
-// while carrying both fragments and tool_calls completion.
-func TestQoderGatewayWritesOpenAIToolCallsStream(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolType: "function", ToolName: "bash"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `{"cmd":`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `"pwd"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"tool_calls"`)
-	require.Contains(t, body, `"index":0`)
-	require.Contains(t, body, `"id":"call_1"`)
-	require.Contains(t, body, `"name":"bash"`)
-	require.Contains(t, body, `"arguments":"{\"cmd\":"`)
-	require.Contains(t, body, `"arguments":"\"pwd\"}"`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-}
-
-// TestQoderGatewayWritesOpenAIToolCallsStreamSkipsEmptyArgumentPlaceholder
-// supplies an empty-object placeholder before real tool arguments. Chat must
-// emit the complete argument object without prefixing it with the placeholder
-// or duplicating JSON objects.
-func TestQoderGatewayWritesOpenAIToolCallsStreamSkipsEmptyArgumentPlaceholder(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolType: "function", ToolName: "Bash", Arguments: `{}`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", Arguments: `{"command":"pwd"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"tool_calls"`)
-	require.Contains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"arguments":"{\"command\":\"pwd\"}"`)
-	require.NotContains(t, body, `"arguments":"{}"`)
-	require.NotContains(t, body, `"arguments":"{}{\"command\"`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-}
-
-// TestQoderGatewayWritesOpenAIToolCallsStreamSkipsTypeOnlyPlaceholderChunk
-// starts with a tool type lacking call data. Every emitted tool_calls array
-// must contain an entry, and the body must include the named call, its
-// arguments and tool_calls completion.
-func TestQoderGatewayWritesOpenAIToolCallsStreamSkipsTypeOnlyPlaceholderChunk(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolType: "function"},
-		{Type: "tool_call_delta", ToolCallID: "call_1", ToolType: "function", ToolName: "Bash", Arguments: `{"command":"pwd"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	chunks := qoderOpenAIStreamChunksForTest(t, rec.Body.String())
-	for _, chunk := range chunks {
-		toolCalls := gjson.GetBytes(chunk, "choices.0.delta.tool_calls")
-		if toolCalls.Exists() {
-			require.NotEqual(t, int64(0), toolCalls.Get("#").Int(), string(chunk))
-		}
-	}
-	body := rec.Body.String()
-	require.Contains(t, body, `"tool_calls"`)
-	require.Contains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"arguments":"{\"command\":\"pwd\"}"`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-}
-
-// TestQoderGatewayWritesOpenAIToolCallsStreamMergesIndexDriftForSameCall
-// changes the reported index while continuing one call ID. Chat must keep that
-// call on index zero while emitting both argument fragments, with no chunk
-// assigned index one.
-func TestQoderGatewayWritesOpenAIToolCallsStreamMergesIndexDriftForSameCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolType: "function", ToolName: "bash"},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, ToolCallID: "call_1", Arguments: `{"cmd":`},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, Arguments: `"pwd"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"id":"call_1"`)
-	require.Contains(t, body, `"name":"bash"`)
-	require.Contains(t, body, `"arguments":"{\"cmd\":"`)
-	require.Contains(t, body, `"arguments":"\"pwd\"}"`)
-	require.NotContains(t, body, `"index":1`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-}
-
-// TestQoderGatewayWritesOpenAIToolCallsStreamKeepsParallelCallIndexes
-// interleaves arguments for two identified tool calls. Chat output must attach
-// each argument object to the corresponding stable index rather than
-// cross-associate parallel calls.
-func TestQoderGatewayWritesOpenAIToolCallsStreamKeepsParallelCallIndexes(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolType: "function", ToolName: "read"},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, ToolCallID: "call_2", ToolType: "function", ToolName: "write"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `{"path":"a"}`},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, Arguments: `{"path":"b"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	chunks := qoderOpenAIStreamChunksForTest(t, rec.Body.String())
-	toolDeltas := make([]map[string]any, 0)
-	for _, chunk := range chunks {
-		rawDeltas := gjson.GetBytes(chunk, "choices.0.delta.tool_calls").Array()
-		for _, rawDelta := range rawDeltas {
-			var delta map[string]any
-			require.NoError(t, json.Unmarshal([]byte(rawDelta.Raw), &delta))
-			toolDeltas = append(toolDeltas, delta)
-		}
-	}
-	require.Len(t, toolDeltas, 4)
-	require.Equal(t, float64(0), toolDeltas[2]["index"])
-	require.Equal(t, `{"path":"a"}`, qoderFixtureValue[map[string]any](t, toolDeltas[2]["function"])["arguments"])
-	require.Equal(t, float64(1), toolDeltas[3]["index"])
-	require.Equal(t, `{"path":"b"}`, qoderFixtureValue[map[string]any](t, toolDeltas[3]["function"])["arguments"])
-}
-
-// TestQoderGatewayWritesOpenAIToolCallsStreamDropsAmbiguousParallelArgumentDelta
-// follows two parallel calls with an unassociated argument fragment. Chat must
-// retain both call IDs, omit the fragment and emit no tool chunk assigned
-// index two.
-func TestQoderGatewayWritesOpenAIToolCallsStreamDropsAmbiguousParallelArgumentDelta(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolType: "function", ToolName: "read"},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, ToolCallID: "call_2", ToolType: "function", ToolName: "write"},
-		{Type: "tool_call_delta", Arguments: `{"path":"lost"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"id":"call_1"`)
-	require.Contains(t, body, `"id":"call_2"`)
-	require.NotContains(t, body, "lost")
-	require.NotContains(t, body, `"index":2`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-}
-
-// TestQoderGatewayWritesOpenAIStreamParsesXMLTextToolCall feeds XML-style tool
-// text through Chat conversion. Output must contain the Read function and
-// valid file-path arguments with tool completion, while removing raw tool
-// tags.
-func TestQoderGatewayWritesOpenAIStreamParsesXMLTextToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "text_delta", Text: qoderXMLToolCallFixture},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"tool_calls"`)
-	require.Contains(t, body, `"name":"Read"`)
-	require.Contains(t, body, `"arguments":"{\"file_path\":\"/workspace/campus-navigation/README.md\"}"`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-	require.NotContains(t, body, "<tool_call>")
-	require.NotContains(t, body, "arg_key")
-	require.NotContains(t, body, "arg_value")
-}
-
-// TestQoderGatewayWritesOpenAIStreamParsesDSMLTextToolCall feeds DSML
-// invocation text through Chat conversion. Output must contain Bash with
-// parsed command/description arguments and tool completion, without leaking
-// DSML or invoke markup.
-func TestQoderGatewayWritesOpenAIStreamParsesDSMLTextToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "text_delta", Text: qoderDSMLToolCallFixture},
-		{IsDone: true},
-	}
-
-	err := writeQoderOpenAIEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"tool_calls"`)
-	require.Contains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"arguments":"{\"command\":\"ls -la\",\"description\":\"List root files\"}"`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-	require.NotContains(t, body, "DSML")
-	require.NotContains(t, body, "invoke")
-}
-
-// TestQoderGatewayWritesAnthropicStream converts typed text and reasoning
-// fixtures into Messages events. It must expose thinking blocks/deltas, text
-// content and a complete message lifecycle through message_stop.
-func TestQoderGatewayWritesAnthropicStream(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "reasoning_delta", Text: "hidden thought"},
-		{Type: "text_delta", Text: "Hi"},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", events)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "event: message_start")
-	require.Contains(t, body, "event: content_block_delta")
-	require.Contains(t, body, `"type":"thinking"`)
-	require.Contains(t, body, `"type":"thinking_delta"`)
-	require.Contains(t, body, `"thinking":"hidden thought"`)
-	require.Contains(t, body, `"text":"Hi"`)
-	require.Contains(t, body, "event: message_stop")
-}
-
-// TestQoderGatewayWritesAnthropicStreamParsesXMLTextToolCall feeds XML-style
-// tool text through Messages conversion. A Read tool_use block and JSON delta
-// must replace raw tags and end with the tool_use stop reason.
-func TestQoderGatewayWritesAnthropicStreamParsesXMLTextToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "text_delta", Text: qoderXMLToolCallFixture},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"type":"tool_use"`)
-	require.Contains(t, body, `"name":"Read"`)
-	require.Contains(t, body, `"type":"input_json_delta"`)
-	require.Contains(t, body, `"partial_json":"{\"file_path\":\"/workspace/campus-navigation/README.md\"}"`)
-	require.Contains(t, body, `"stop_reason":"tool_use"`)
-	require.NotContains(t, body, "<tool_call>")
-	require.NotContains(t, body, "arg_key")
-	require.NotContains(t, body, "arg_value")
-}
-
-// TestQoderGatewayWritesAnthropicStreamParsesDSMLTextToolCall feeds DSML
-// invocation text through Messages conversion. Bash tool arguments must
-// preserve command and description, with tool_use completion and no raw
-// DSML/invoke markup.
-func TestQoderGatewayWritesAnthropicStreamParsesDSMLTextToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "text_delta", Text: qoderDSMLToolCallFixture},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"type":"tool_use"`)
-	require.Contains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"partial_json":"{\"command\":\"ls -la\",\"description\":\"List root files\"}"`)
-	require.Contains(t, body, `"stop_reason":"tool_use"`)
-	require.NotContains(t, body, "DSML")
-	require.NotContains(t, body, "invoke")
-}
-
-// TestQoderGatewayWritesAnthropicStreamParsesJSONTextToolCall feeds JSON tool
-// text using shell through Messages conversion. It must normalize to Bash with
-// valid command/description input instead of misreading the encoded object as
-// a tool name.
-func TestQoderGatewayWritesAnthropicStreamParsesJSONTextToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "text_delta", Text: qoderJSONShellToolCallFixture},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"type":"tool_use"`)
-	require.Contains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"type":"input_json_delta"`)
-	require.Contains(t, body, `"partial_json":"{\"command\":\"pwd\",\"description\":\"Print working directory\"}"`)
-	require.Contains(t, body, `"stop_reason":"tool_use"`)
-	require.NotContains(t, body, `"name":"{\"name\"`)
-	require.NotContains(t, body, "No such tool")
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStream converts one complete argument
-// object for a named tool call. Messages must emit its tool_use block and
-// complete JSON input, followed by block closure and tool-use message completion.
-func TestQoderGatewayWritesAnthropicToolUseStream(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallID: "call_1", ToolName: "bash", Arguments: `{"cmd":"pwd"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, "event: content_block_start")
-	require.Contains(t, body, `"type":"tool_use"`)
-	require.Contains(t, body, `"id":"call_1"`)
-	require.Contains(t, body, `"name":"bash"`)
-	require.Contains(t, body, "event: content_block_delta")
-	require.Contains(t, body, `"type":"input_json_delta"`)
-	require.Contains(t, body, `"partial_json":"{\"cmd\":\"pwd\"}"`)
-	require.Contains(t, body, "event: content_block_stop")
-	require.Contains(t, body, `"stop_reason":"tool_use"`)
-	require.Contains(t, body, "event: message_stop")
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStreamKeepsSplitArgumentsInOneBlock
-// splits one tool argument object into successive typed events. Messages must
-// emit one tool block and one complete input JSON delta rather than split the
-// call into blocks.
-func TestQoderGatewayWritesAnthropicToolUseStreamKeepsSplitArgumentsInOneBlock(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolName: "bash"},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, Arguments: `{"cmd":`},
-		{Type: "tool_call_delta", Arguments: `"pwd"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Equal(t, 1, strings.Count(body, `"type":"tool_use"`))
-	require.Equal(t, 1, strings.Count(body, `"type":"input_json_delta"`))
-	require.Contains(t, body, `"partial_json":"{\"cmd\":\"pwd\"}"`)
-	require.Contains(t, body, `"stop_reason":"tool_use"`)
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStreamDoesNotFinalizeEmptyObjectPlaceholder
-// supplies an empty input placeholder before full named arguments. Messages
-// must preserve the call identity and one valid complete delta without
-// emitting placeholder input or an empty name.
-func TestQoderGatewayWritesAnthropicToolUseStreamDoesNotFinalizeEmptyObjectPlaceholder(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallID: "toolu_1", ToolType: "function", ToolName: "Bash", Arguments: `{}`},
-		{Type: "tool_call_delta", ToolType: "function", Arguments: `{"command":"printf cc-single-20260617","description":"Print single nonce"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Equal(t, 1, strings.Count(body, `"type":"tool_use"`), body)
-	require.Equal(t, 1, strings.Count(body, `"type":"input_json_delta"`), body)
-	streamEvents := qoderAnthropicStreamEventsForTest(t, body)
-	var toolBlock map[string]any
-	var partialJSON string
-	for _, event := range streamEvents {
-		if event.Event == "content_block_start" {
-			block, _ := event.Data["content_block"].(map[string]any)
-			if block["type"] == "tool_use" {
-				toolBlock = block
-			}
-		}
-		if event.Event == "content_block_delta" {
-			delta, _ := event.Data["delta"].(map[string]any)
-			if delta["type"] == "input_json_delta" {
-				partialJSON = qoderFixtureValue[string](t, delta["partial_json"])
-			}
-		}
-	}
-	require.Equal(t, "toolu_1", toolBlock["id"])
-	require.Equal(t, "Bash", toolBlock["name"])
-	require.JSONEq(t, `{"command":"printf cc-single-20260617","description":"Print single nonce"}`, partialJSON)
-	require.NotContains(t, body, `"partial_json":"{}"`)
-	require.NotContains(t, body, `"name":""`)
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStreamSkipsTypeOnlyPlaceholder
-// supplies only a tool-type placeholder without actual call identity or
-// arguments. Messages must omit tool blocks/deltas and finish the turn
-// normally rather than invent tool use.
-func TestQoderGatewayWritesAnthropicToolUseStreamSkipsTypeOnlyPlaceholder(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolType: "function"},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.NotContains(t, body, `"type":"tool_use"`)
-	require.NotContains(t, body, `"type":"input_json_delta"`)
-	require.Contains(t, body, `"stop_reason":"end_turn"`)
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStreamKeepsNoIndexNamedParallelToolCalls
-// supplies three named parallel calls without indexes. Messages must retain
-// three names and separate valid input objects with tool-use completion,
-// avoiding merged unrelated JSON.
-func TestQoderGatewayWritesAnthropicToolUseStreamKeepsNoIndexNamedParallelToolCalls(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", qoderNoIndexNamedParallelToolCallEventsForTest())
-	require.NoError(t, err)
-
-	streamEvents := qoderAnthropicStreamEventsForTest(t, rec.Body.String())
-	toolNames := make([]string, 0)
-	inputDeltas := make([]string, 0)
-	for _, event := range streamEvents {
-		switch event.Event {
-		case "content_block_start":
-			block, _ := event.Data["content_block"].(map[string]any)
-			if block["type"] == "tool_use" {
-				toolNames = append(toolNames, qoderFixtureValue[string](t, block["name"]))
-			}
-		case "content_block_delta":
-			delta, _ := event.Data["delta"].(map[string]any)
-			if delta["type"] == "input_json_delta" {
-				partial := qoderFixtureValue[string](t, delta["partial_json"])
-				require.NotContains(t, partial, `}{`)
-				inputDeltas = append(inputDeltas, partial)
-			}
-		}
-	}
-	require.Equal(t, []string{"Bash", "Bash", "glob"}, toolNames)
-	require.Len(t, inputDeltas, 3)
-	require.JSONEq(t, `{"command":"pwd && date \"+%Y-%m-%d %H:%M:%S\" && uname -srm","description":"Show current dir, time, system info"}`, inputDeltas[0])
-	require.JSONEq(t, `{"command":"ls -la","description":"List files in current directory"}`, inputDeltas[1])
-	require.JSONEq(t, `{"pattern":"**/*.md"}`, inputDeltas[2])
-	require.Contains(t, rec.Body.String(), `"stop_reason":"tool_use"`)
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStreamKeepsRepeatedIndexNamedParallelToolCalls
-// supplies three distinct named calls sharing index zero. Messages must
-// preserve separate tool blocks and arguments rather than concatenate each
-// reused-index object into the previous call.
-func TestQoderGatewayWritesAnthropicToolUseStreamKeepsRepeatedIndexNamedParallelToolCalls(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", qoderRepeatedIndexNamedParallelToolCallEventsForTest())
-	require.NoError(t, err)
-
-	streamEvents := qoderAnthropicStreamEventsForTest(t, rec.Body.String())
-	toolNames := make([]string, 0)
-	inputDeltas := make([]string, 0)
-	for _, event := range streamEvents {
-		switch event.Event {
-		case "content_block_start":
-			block, _ := event.Data["content_block"].(map[string]any)
-			if block["type"] == "tool_use" {
-				toolNames = append(toolNames, qoderFixtureValue[string](t, block["name"]))
-			}
-		case "content_block_delta":
-			delta, _ := event.Data["delta"].(map[string]any)
-			if delta["type"] == "input_json_delta" {
-				partial := qoderFixtureValue[string](t, delta["partial_json"])
-				require.NotContains(t, partial, `}{`)
-				inputDeltas = append(inputDeltas, partial)
-			}
-		}
-	}
-	require.Equal(t, []string{"Bash", "Bash", "glob"}, toolNames)
-	require.Len(t, inputDeltas, 3)
-	require.JSONEq(t, `{"command":"pwd","description":"Print working directory"}`, inputDeltas[0])
-	require.JSONEq(t, `{"command":"printf OPENCODE_PARALLEL_OK","description":"Print parallel OK string"}`, inputDeltas[1])
-	require.JSONEq(t, `{"pattern":"docs/*.md"}`, inputDeltas[2])
-	require.Contains(t, rec.Body.String(), `"stop_reason":"tool_use"`)
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStreamKeepsSameIndexNewIDSplitArgumentsAligned
-// changes call IDs while reusing an index and splitting arguments. Messages
-// must retain three named calls with their correct full objects, without empty
-// names or merged JSON.
-func TestQoderGatewayWritesAnthropicToolUseStreamKeepsSameIndexNewIDSplitArgumentsAligned(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "reasoning_delta", Text: "thinking"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolType: "function", ToolName: "bash"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolType: "function"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `{"command":"pwd`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `"}`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_2", ToolType: "function", ToolName: "bash"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolType: "function"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `{"command":"printf OPENCODE_`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `PARALLEL_OK"}`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_3", ToolType: "function", ToolName: "glob"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolType: "function"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `{"pattern":"docs/*.md`},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", events)
-	require.NoError(t, err)
-
-	streamEvents := qoderAnthropicStreamEventsForTest(t, rec.Body.String())
-	toolNames := make([]string, 0)
-	inputDeltas := make([]string, 0)
-	for _, event := range streamEvents {
-		switch event.Event {
-		case "content_block_start":
-			block, _ := event.Data["content_block"].(map[string]any)
-			if block["type"] == "tool_use" {
-				toolNames = append(toolNames, qoderFixtureValue[string](t, block["name"]))
-				require.NotEmpty(t, block["id"], rec.Body.String())
-			}
-		case "content_block_delta":
-			delta, _ := event.Data["delta"].(map[string]any)
-			if delta["type"] == "input_json_delta" {
-				inputDeltas = append(inputDeltas, qoderFixtureValue[string](t, delta["partial_json"]))
-			}
-		}
-	}
-	require.Equal(t, []string{"bash", "bash", "glob"}, toolNames)
-	require.Len(t, inputDeltas, 3)
-	require.JSONEq(t, `{"command":"pwd"}`, inputDeltas[0])
-	require.JSONEq(t, `{"command":"printf OPENCODE_PARALLEL_OK"}`, inputDeltas[1])
-	require.JSONEq(t, `{"pattern":"docs/*.md"}`, inputDeltas[2])
-	require.NotContains(t, rec.Body.String(), `"name":""`)
-	require.NotContains(t, rec.Body.String(), `}{`)
-}
-
-// TestQoderGatewayWritesAnthropicToolUseStreamKeepsParallelCallIndexes
-// interleaves two identified tool calls and their arguments. Each Messages
-// JSON delta must belong to its open tool block, with both indexes closed
-// after their respective input.
-func TestQoderGatewayWritesAnthropicToolUseStreamKeepsParallelCallIndexes(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, ToolCallID: "call_1", ToolName: "read"},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, ToolCallID: "call_2", ToolName: "write"},
-		{Type: "tool_call_delta", ToolCallIndex: 0, HasToolCallIndex: true, Arguments: `{"path":"a"}`},
-		{Type: "tool_call_delta", ToolCallIndex: 1, HasToolCallIndex: true, Arguments: `{"path":"b"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Equal(t, 2, strings.Count(body, `"type":"tool_use"`))
-	require.Contains(t, body, `"id":"call_1"`)
-	require.Contains(t, body, `"id":"call_2"`)
-	streamEvents := qoderAnthropicStreamEventsForTest(t, body)
-	inputDeltas := make(map[int]string)
-	openToolBlocks := make(map[int]bool)
-	for _, event := range streamEvents {
-		if event.Event == "content_block_start" {
-			block, _ := event.Data["content_block"].(map[string]any)
-			if block["type"] == "tool_use" {
-				openToolBlocks[int(qoderFixtureValue[float64](t, event.Data["index"]))] = true
-			}
-			continue
-		}
-		if event.Event == "content_block_stop" {
-			delete(openToolBlocks, int(qoderFixtureValue[float64](t, event.Data["index"])))
-			continue
-		}
-		if event.Event != "content_block_delta" {
-			continue
-		}
-		delta, _ := event.Data["delta"].(map[string]any)
-		if delta["type"] != "input_json_delta" {
-			continue
-		}
-		index := int(qoderFixtureValue[float64](t, event.Data["index"]))
-		require.True(t, openToolBlocks[index], "input delta must be inside an open tool_use block")
-		inputDeltas[index] = qoderFixtureValue[string](t, delta["partial_json"])
-	}
-	require.Equal(t, `{"path":"a"}`, inputDeltas[0])
-	require.Equal(t, `{"path":"b"}`, inputDeltas[1])
-	require.Empty(t, openToolBlocks)
-}
-
-// TestQoderGatewayStreamsResponseWithoutPrebuffering passes an in-memory
-// wrapped text stream through Chat conversion. Output must contain
-// assistant/text chunks and DONE with HTTP 200, while returned usage remains
-// zero because this fixture supplies no usage report.
-func TestQoderGatewayStreamsResponseWithoutPrebuffering(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			"data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"Hi\\\"}}]}\"}\n\n" +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderOpenAIStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp)
-	require.NoError(t, err)
-	require.Equal(t, upstreamcore.TokenUsage{}, result.Usage)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"delta":{"role":"assistant"}`)
-	require.Contains(t, rec.Body.String(), `"delta":{"content":"Hi"}`)
-	require.NotContains(t, rec.Body.String(), "hidden thought")
-	require.Contains(t, rec.Body.String(), "data: [DONE]\n\n")
-}
-
-// TestQoderGatewayStreamsOpenAIResponseParsesXMLTextToolCall parses wrapped
-// XML tool text into streaming Chat output. It must expose Read and valid
-// file-path arguments with tool completion, remove markup and leave unreported
-// usage zero.
-func TestQoderGatewayStreamsOpenAIResponseParsesXMLTextToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"content": qoderXMLToolCallFixture}},
-			}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderOpenAIStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp)
-	require.NoError(t, err)
-	require.Equal(t, upstreamcore.TokenUsage{}, result.Usage)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"tool_calls"`)
-	require.Contains(t, body, `"name":"Read"`)
-	require.Contains(t, body, `"arguments":"{\"file_path\":\"/workspace/campus-navigation/README.md\"}"`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-	require.NotContains(t, body, "<tool_call>")
-	require.NotContains(t, body, "arg_key")
-	require.NotContains(t, body, "arg_value")
-}
-
-// TestQoderGatewayStreamsOpenAIResponseMapsToolNameToDeclaredOpenAITool
-// streams upstream Bash with a lowercase client declaration. Output must
-// expose bash with tool_calls completion and no upstream spelling, while
-// absent usage remains zero.
-func TestQoderGatewayStreamsOpenAIResponseMapsToolNameToDeclaredOpenAITool(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"tool_calls": []any{
-					map[string]any{"index": 0, "id": "call_1", "type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"command":"pwd"}`}},
-				}}},
-			}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-	tools := []any{map[string]any{
-		"type": "function",
-		"function": map[string]any{
-			"name":       "bash",
-			"parameters": map[string]any{"type": "object"},
-		},
-	}}
-
-	result, err := qoder.WriteQoderOpenAIStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp, qoder.QoderOpenAIStreamToolNameMapper(qoder.QoderDeclaredToolNameMapper(tools)))
-	require.NoError(t, err)
-	require.Equal(t, upstreamcore.TokenUsage{}, result.Usage)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"tool_calls"`)
-	require.Contains(t, body, `"name":"bash"`)
-	require.NotContains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"finish_reason":"tool_calls"`)
-}
-
-// TestQoderGatewayStreamsAnthropicResponseMapsThinking streams wrapped
-// reasoning and text through Messages output. Thinking blocks/deltas and text
-// must survive through message_stop, with zero returned usage when no report
-// exists.
-func TestQoderGatewayStreamsAnthropicResponseMapsThinking(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			"data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"reasoning_content\\\":\\\"hidden thought\\\"}}]}\"}\n\n" +
-				"data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"Hi\\\"}}]}\"}\n\n" +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.Equal(t, upstreamcore.TokenUsage{}, result.Usage)
-	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "event: message_start")
-	require.Contains(t, body, "event: content_block_delta")
-	require.Contains(t, body, `"type":"thinking"`)
-	require.Contains(t, body, `"type":"thinking_delta"`)
-	require.Contains(t, body, `"thinking":"hidden thought"`)
-	require.Contains(t, body, `"text":"Hi"`)
-	require.Contains(t, body, "event: message_stop")
-}
-
-// TestQoderGatewayStreamsAnthropicResponseParsesXMLTextToolCall streams
-// wrapped XML tool text through Messages conversion. Read tool_use and parsed
-// file-path input must replace markup and preserve tool completion without
-// invented usage.
-func TestQoderGatewayStreamsAnthropicResponseParsesXMLTextToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"content": "<tool_call>Re"}},
-			}}) +
-				qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-					map[string]any{"delta": map[string]any{"content": "ad<arg_value><arg_key>file_path</arg_key><arg_value>/workspace/campus-navigation/README.md</arg_value></tool_call>"}},
-				}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.Equal(t, upstreamcore.TokenUsage{}, result.Usage)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"type":"tool_use"`)
-	require.Contains(t, body, `"name":"Read"`)
-	require.Contains(t, body, `"partial_json":"{\"file_path\":\"/workspace/campus-navigation/README.md\"}"`)
-	require.Contains(t, body, `"stop_reason":"tool_use"`)
-	require.NotContains(t, body, "<tool_call>")
-	require.NotContains(t, body, "arg_key")
-	require.NotContains(t, body, "arg_value")
-}
-
-// TestQoderGatewayStreamsAnthropicResponseMapsFlatToolCallInput supplies flat
-// structured tool-call input through the wrapped parser. Messages must retain
-// call ID and Bash identity with valid command JSON and tool-use completion.
-func TestQoderGatewayStreamsAnthropicResponseMapsFlatToolCallInput(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"tool_calls": []any{
-					map[string]any{"tool_call_id": "call_1", "name": "Bash", "arguments": map[string]any{"command": "pwd"}},
-				}}},
-			}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.Equal(t, upstreamcore.TokenUsage{}, result.Usage)
-
-	streamEvents := qoderAnthropicStreamEventsForTest(t, rec.Body.String())
-	var toolStart map[string]any
-	var partialJSON string
-	for _, event := range streamEvents {
-		switch event.Event {
-		case "content_block_start":
-			block, _ := event.Data["content_block"].(map[string]any)
-			if block["type"] == "tool_use" {
-				toolStart = block
-			}
-		case "content_block_delta":
-			delta, _ := event.Data["delta"].(map[string]any)
-			if delta["type"] == "input_json_delta" {
-				partialJSON += qoderFixtureValue[string](t, delta["partial_json"])
-			}
-		}
-	}
-	require.NotNil(t, toolStart)
-	require.Equal(t, "call_1", toolStart["id"])
-	require.Equal(t, "Bash", toolStart["name"])
-	require.JSONEq(t, `{"command":"pwd"}`, partialJSON)
-	require.Contains(t, rec.Body.String(), `"stop_reason":"tool_use"`)
-}
-
-// TestQoderGatewayWritesAnthropicResponseKeepsNoIndexNamedParallelToolCalls
-// parses wrapped parallel calls with names but no indexes. Messages must
-// retain three tool identities and separate input objects without merged JSON,
-// ending with tool-use completion.
-func TestQoderGatewayWritesAnthropicResponseKeepsNoIndexNamedParallelToolCalls(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(qoderNoIndexNamedParallelToolCallsWrappedSSEForTest(t))),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.True(t, result.HasOutput)
-
-	streamEvents := qoderAnthropicStreamEventsForTest(t, rec.Body.String())
-	toolNames := make([]string, 0)
-	inputDeltas := make([]string, 0)
-	for _, event := range streamEvents {
-		switch event.Event {
-		case "content_block_start":
-			block, _ := event.Data["content_block"].(map[string]any)
-			if block["type"] == "tool_use" {
-				toolNames = append(toolNames, qoderFixtureValue[string](t, block["name"]))
-			}
-		case "content_block_delta":
-			delta, _ := event.Data["delta"].(map[string]any)
-			if delta["type"] == "input_json_delta" {
-				partial := qoderFixtureValue[string](t, delta["partial_json"])
-				require.NotContains(t, partial, `}{`)
-				inputDeltas = append(inputDeltas, partial)
-			}
-		}
-	}
-	require.Equal(t, []string{"Bash", "Bash", "glob"}, toolNames)
-	require.Len(t, inputDeltas, 3)
-	require.JSONEq(t, `{"command":"pwd && date \"+%Y-%m-%d %H:%M:%S\" && uname -srm","description":"Show current dir, time, system info"}`, inputDeltas[0])
-	require.JSONEq(t, `{"command":"ls -la","description":"List files in current directory"}`, inputDeltas[1])
-	require.JSONEq(t, `{"pattern":"**/*.md"}`, inputDeltas[2])
-	require.Contains(t, rec.Body.String(), `"stop_reason":"tool_use"`)
-}
-
-// TestQoderGatewayStreamsAnthropicResponseReplacesEmptyToolArguments streams
-// an empty argument placeholder followed by complete input. Messages must
-// expose the complete command/description object without concatenating it to
-// the earlier empty object.
-func TestQoderGatewayStreamsAnthropicResponseReplacesEmptyToolArguments(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"tool_calls": []any{
-					map[string]any{"id": "call_1", "type": "function", "function": map[string]any{"name": "Bash", "arguments": "{}"}},
-				}}},
-			}}) +
-				qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-					map[string]any{"delta": map[string]any{"tool_calls": []any{
-						map[string]any{"id": "call_1", "type": "function", "function": map[string]any{"arguments": map[string]any{"command": "pwd", "description": "Print working directory"}}},
-					}}},
-				}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.Equal(t, upstreamcore.TokenUsage{}, result.Usage)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"type":"input_json_delta"`)
-	require.Contains(t, body, `"partial_json":"{\"command\":\"pwd\",\"description\":\"Print working directory\"}"`)
-	require.NotContains(t, body, `"partial_json":"{}{\"command\"`)
-}
-
-// TestQoderGatewayStreamsAnthropicResponseRejectsMalformedToolArguments
-// supplies malformed wrapped tool arguments to Messages conversion. The writer
-// must return a descriptive malformed-arguments error and no stream result
-// rather than accepting invalid JSON input.
-func TestQoderGatewayStreamsAnthropicResponseRejectsMalformedToolArguments(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"tool_calls": []any{
-					map[string]any{"id": "call_1", "type": "function", "function": map[string]any{"name": "Bash", "arguments": `{"cmd":`}},
-				}}},
-			}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.Contains(t, err.Error(), "malformed qoder tool arguments")
-}
-
-// TestQoderGatewayStreamsAnthropicResponseCompletesEmptyContentBlock supplies
-// usage and DONE without semantic content. Messages must emit an empty text
-// block with normal closure, end_turn and message_stop while retaining
-// measured input usage.
-func TestQoderGatewayStreamsAnthropicResponseCompletesEmptyContentBlock(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			"data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":8,\\\"completion_tokens\\\":0,\\\"total_tokens\\\":8}}\"}\n\n" +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.Equal(t, 8, result.Usage.InputTokens)
-
-	body := rec.Body.String()
-	require.Contains(t, body, "event: message_start")
-	require.Contains(t, body, "event: content_block_start")
-	require.Contains(t, body, `"content_block":{"text":"","type":"text"}`)
-	require.Contains(t, body, "event: content_block_stop")
-	require.Contains(t, body, `"stop_reason":"end_turn"`)
-	require.Contains(t, body, "event: message_stop")
-}
-
-// TestQoderGatewayStreamsAnthropicResponseCompletesOnEOFWithoutDone ends a
-// usage-only wrapped stream at EOF without DONE. Messages must emit an empty
-// text lifecycle and exactly one message_stop while retaining the upstream
-// input count.
-func TestQoderGatewayStreamsAnthropicResponseCompletesOnEOFWithoutDone(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			"data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":8,\\\"completion_tokens\\\":0,\\\"total_tokens\\\":8}}\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-	require.NoError(t, err)
-	require.Equal(t, 8, result.Usage.InputTokens)
-
-	body := rec.Body.String()
-	require.Contains(t, body, "event: message_start")
-	require.Contains(t, body, "event: content_block_start")
-	require.Contains(t, body, `"content_block":{"text":"","type":"text"}`)
-	require.Contains(t, body, "event: content_block_stop")
-	require.Contains(t, body, "event: message_delta")
-	require.Contains(t, body, `"stop_reason":"end_turn"`)
-	require.Contains(t, body, "event: message_stop")
-	require.Equal(t, 1, strings.Count(body, "event: message_stop"))
-}
-
-// TestQoderGatewayWritesAnthropicStreamNormalizesExecuteBashToolCall supplies
-// execute_bash tool text through typed conversion. Messages output must
-// normalize its name to Bash and preserve valid command arguments without
-// exposing the original tool spelling.
-func TestQoderGatewayWritesAnthropicStreamNormalizesExecuteBashToolCall(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	events := []qoder.SSEEvent{
-		{Type: "tool_call_delta", ToolCallID: "call_1", ToolName: "execute_bash", Arguments: `{"cmd":"pwd"}`},
-		{IsDone: true},
-	}
-
-	err := writeQoderAnthropicEvents(t, upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", events)
-	require.NoError(t, err)
-
-	body := rec.Body.String()
-	require.Contains(t, body, `"type":"tool_use"`)
-	require.Contains(t, body, `"name":"Bash"`)
-	require.Contains(t, body, `"partial_json":"{\"command\":\"pwd\"}"`)
-	require.NotContains(t, body, `"name":"execute_bash"`)
-}
-
-// TestQoderGatewayStreamsOpenAIUsageForBillingAndClientWhenRequested enables
-// Chat client usage on wrapped upstream input. Returned billing counts and the
-// empty-choices client usage chunk must retain measured input/output totals
-// before DONE.
-func TestQoderGatewayStreamsOpenAIUsageForBillingAndClientWhenRequested(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			"data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"Hi\\\"}}]}\"}\n\n" +
-				"data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":5,\\\"completion_tokens\\\":6,\\\"total_tokens\\\":11}}\"}\n\n" +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderOpenAIStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp, qoder.QoderOpenAIStreamIncludeUsage(true))
-
-	require.NoError(t, err)
-	require.Equal(t, 5, result.Usage.InputTokens)
-	require.Equal(t, 6, result.Usage.OutputTokens)
-	body := rec.Body.String()
-	require.Contains(t, body, `"usage":`)
-	require.Contains(t, body, `"prompt_tokens":5`)
-	require.Contains(t, body, `"completion_tokens":6`)
-	require.Contains(t, body, `"total_tokens":11`)
-	usageChunk := qoderOpenAIUsageChunkForTest(t, body)
-	require.Len(t, usageChunk.Get("choices").Array(), 0, usageChunk.Raw)
-	require.Contains(t, body, "data: [DONE]\n\n")
-}
-
-// TestQoderGatewayStreamsOpenAIUsageForBillingWithoutClientChunkByDefault
-// streams measured usage without client inclusion options. Returned accounting
-// must retain input/output counts while client chunks omit usage and still
-// contain text plus DONE.
-func TestQoderGatewayStreamsOpenAIUsageForBillingWithoutClientChunkByDefault(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			qoderWrappedSSELineForTest(t, map[string]any{"choices": []any{
-				map[string]any{"delta": map[string]any{"content": "Hi"}},
-			}}) +
-				qoderWrappedSSELineForTest(t, map[string]any{"usage": map[string]any{
-					"prompt_tokens":     5,
-					"completion_tokens": 6,
-					"total_tokens":      11,
-				}}) +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderOpenAIStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "auto", resp)
-
-	require.NoError(t, err)
-	require.Equal(t, 5, result.Usage.InputTokens)
-	require.Equal(t, 6, result.Usage.OutputTokens)
-	body := rec.Body.String()
-	require.NotContains(t, body, `"usage":`)
-	require.Contains(t, body, `"delta":{"content":"Hi"}`)
-	require.Contains(t, body, "data: [DONE]\n\n")
-}
-
-// TestQoderGatewayStreamsAnthropicUsageForBillingAndClient streams measured
-// input and output usage into Messages. Both returned accounting and client
-// usage must retain those values, with the normal message_stop event
-// completing output.
-func TestQoderGatewayStreamsAnthropicUsageForBillingAndClient(t *testing.T) {
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	resp := &http.Response{
-		Body: io.NopCloser(bytes.NewBufferString(
-			"data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"Hi\\\"}}]}\"}\n\n" +
-				"data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":8,\\\"completion_tokens\\\":9,\\\"total_tokens\\\":17}}\"}\n\n" +
-				"data: {\"body\":\"[DONE]\"}\n\n",
-		)),
-	}
-
-	result, err := qoder.WriteQoderAnthropicStreamResponse(context.Background(), upstreamcore.NewOutputContext(NewResponseSink(c)), "claude-opus-4-6", resp)
-
-	require.NoError(t, err)
-	require.Equal(t, 8, result.Usage.InputTokens)
-	require.Equal(t, 9, result.Usage.OutputTokens)
-	body := rec.Body.String()
-	require.Contains(t, body, `"usage":`)
-	require.Contains(t, body, `"input_tokens":8`)
-	require.Contains(t, body, `"output_tokens":9`)
-	require.Contains(t, body, "event: message_stop")
-}
-
-// qoderOpenAIStreamChunksForTest returns valid JSON chunks from fixture
-// data-space fields. Empty data, DONE and other lines are ignored; malformed
-// selected JSON fails the test, and callers supply this fixed fixture layout.
-func qoderOpenAIStreamChunksForTest(t *testing.T, stream string) [][]byte {
-	t.Helper()
-	// Select only data-space fixture lines and ignore transport sentinels before
-	// validating JSON, so chunk assertions inspect client objects rather than SSE
-	// framing.
-	chunks := make([][]byte, 0)
-	for block := range strings.SplitSeq(stream, "\n\n") {
-		for line := range strings.SplitSeq(block, "\n") {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
-			if data == "" || data == "[DONE]" {
-				continue
-			}
-			require.True(t, gjson.Valid(data), "invalid SSE JSON data: %s", data)
-			chunks = append(chunks, []byte(data))
-		}
-	}
-	return chunks
-}
-
 // qoderWrappedSSELineForTest encodes a JSON object as the string-valued body
 // of a Qoder wrapper. Marshal failures abort the test; the returned data-space
 // frame includes its blank separator for production parsing.
@@ -3997,38 +2249,6 @@ func qoderWrappedErrorSSELineForTest(t *testing.T, statusCode int, inner map[str
 	})
 	require.NoError(t, err)
 	return "data: " + string(wrapper) + "\n\n"
-}
-
-// qoderOpenAIUsageChunkForTest finds the first valid fixture JSON chunk
-// containing usage. It ignores empty, DONE, malformed and unsupported lines,
-// but fails the test when no selected usage chunk exists.
-func qoderOpenAIUsageChunkForTest(t *testing.T, body string) gjson.Result {
-	t.Helper()
-	// Skip unsupported or invalid fixture lines while finding usage; the required
-	// usage result still fails explicitly when no usable client chunk contains
-	// that member.
-	for frame := range strings.SplitSeq(body, "\n\n") {
-		frame = strings.TrimSpace(frame)
-		if frame == "" {
-			continue
-		}
-		for line := range strings.SplitSeq(frame, "\n") {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
-			if data == "" || data == "[DONE]" || !gjson.Valid(data) {
-				continue
-			}
-			chunk := gjson.Parse(data)
-			if chunk.Get("usage").Exists() {
-				return chunk
-			}
-		}
-	}
-	t.Fatalf("OpenAI usage chunk not found in %s", body)
-	return gjson.Result{}
 }
 
 // qoderResponsesStreamEventsForTest returns JSON from supported Responses
@@ -4062,73 +2282,6 @@ func qoderResponsesStreamEventsForTest(t *testing.T, body string) []gjson.Result
 	return events
 }
 
-// qoderResponsesCompletedEventForTest returns the first decoded
-// response.completed fixture event. Its absence fails the test rather than
-// supplying a usable empty result, so callers can assert terminal response
-// contents.
-func qoderResponsesCompletedEventForTest(t *testing.T, body string) gjson.Result {
-	t.Helper()
-	for _, event := range qoderResponsesStreamEventsForTest(t, body) {
-		if event.Get("type").String() == "response.completed" {
-			return event
-		}
-	}
-	t.Fatalf("response.completed event not found in %s", body)
-	return gjson.Result{}
-}
-
-// qoderAnthropicStreamEventsForTest pairs named fixture frames with decoded
-// data-space JSON. Callers supply event-space/data-space serialization;
-// malformed selected data fails the test and frames without an event name are
-// omitted.
-//
-// Each blank-line block starts empty event/data state, keeping neighboring frames
-// separate. Data lines are decoded individually rather than joined: object
-// lines reuse the map and retain keys a later object does not overwrite, while
-// JSON null clears it. Supported frame order remains available for tool-block
-// lifecycle assertions; callers use the general SSE parser for other layouts.
-func qoderAnthropicStreamEventsForTest(t *testing.T, stream string) []qoderAnthropicStreamEventForTest {
-	t.Helper()
-	// Start independent decoded state for every fixture frame, keeping tool block
-	// names and JSON data associated with their own blank-line-delimited event.
-	events := make([]qoderAnthropicStreamEventForTest, 0)
-	for block := range strings.SplitSeq(stream, "\n\n") {
-		block = strings.TrimSpace(block)
-		if block == "" {
-			continue
-		}
-		event := qoderAnthropicStreamEventForTest{}
-		for line := range strings.SplitSeq(block, "\n") {
-			line = strings.TrimSpace(line)
-			switch {
-			case strings.HasPrefix(line, "event: "):
-				event.Event = strings.TrimSpace(strings.TrimPrefix(line, "event: "))
-			case strings.HasPrefix(line, "data: "):
-				// Tool-block fixtures emit one object per frame. Decode that data line
-				// independently so its block name and index remain available to the
-				// lifecycle assertions; multiple object lines would reuse this map.
-				require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data: "))), &event.Data))
-			}
-		}
-		if event.Event != "" {
-			events = append(events, event)
-		}
-	}
-	return events
-}
-
-// Write delegates serial body writes until the configured attempt allowance is
-// exhausted. Later calls return zero bytes with a fixture error; each
-// permitted call increments writes before delegation, even if the embedded
-// writer subsequently returns an error.
-func (w *qoderFailingHTTPWriter) Write(p []byte) (int, error) {
-	if w.writes >= w.failAfter {
-		return 0, errors.New("write failed")
-	}
-	w.writes++
-	return w.ResponseWriter.Write(p)
-}
-
 // qoderFixtureValue returns the supplied decoded fixture value as T. A failed
 // type assertion aborts the test, so callers use it before inspecting concrete
 // map, slice or scalar fixture values.
@@ -4137,89 +2290,6 @@ func qoderFixtureValue[T any](t *testing.T, raw any) T {
 	value, ok := raw.(T)
 	require.True(t, ok, "unexpected decoded fixture type: %T", raw)
 	return value
-}
-
-// qoderEventResponse encodes typed event fixtures into HTTP 200 wrapped Qoder
-// SSE for the production parser. DONE emits an unwrapped sentinel; HasUsage
-// takes precedence over event type and preserves explicit zero token
-// observations. Unsupported ordinary event types fail the test.
-//
-// Text and reasoning occupy distinct delta fields, while tool deltas carry
-// identity, name and argument text with index included only when explicitly
-// observed. Optional prompt/completion detail pointers retain their
-// corresponding usage buckets. Wrapping the JSON through the shared fixture
-// encoder exercises the same split representation that the production reader
-// must recover.
-func qoderEventResponse(t *testing.T, events []qoder.SSEEvent) *http.Response {
-	t.Helper()
-	// Encode fixture meaning into wrapped wire JSON before production parsing;
-	// usage presence, optional indexes and distinct reasoning fields must survive
-	// that representation.
-	var body strings.Builder
-	for _, event := range events {
-		if event.IsDone {
-			_, _ = body.WriteString("data: [DONE]\n\n")
-			continue
-		}
-		inner := map[string]any{}
-		if event.HasUsage {
-			usage := map[string]any{"prompt_tokens": event.PromptTokens, "completion_tokens": event.CompletionTokens, "total_tokens": event.TotalTokens}
-			if d := event.UsageDetails.PromptTokensDetails; d != nil {
-				usage["prompt_tokens_details"] = map[string]any{"cached_tokens": d.CachedTokens, "cacheable_tokens": d.CacheableTokens}
-			}
-			if d := event.UsageDetails.CompletionTokensDetails; d != nil {
-				usage["completion_tokens_details"] = map[string]any{"reasoning_tokens": d.ReasoningTokens}
-			}
-			inner["usage"] = usage
-		} else {
-			delta := map[string]any{}
-			switch event.Type {
-			case "text_delta":
-				delta["content"] = event.Text
-			case "reasoning_delta":
-				delta["reasoning_content"] = event.Text
-			case "tool_call_delta":
-				tool := map[string]any{"id": event.ToolCallID, "type": event.ToolType, "function": map[string]any{"name": event.ToolName, "arguments": event.Arguments}}
-				if event.HasToolCallIndex {
-					tool["index"] = event.ToolCallIndex
-				}
-				delta["tool_calls"] = []any{tool}
-			default:
-				t.Fatalf("unsupported event fixture %q", event.Type)
-			}
-			inner["choices"] = []any{map[string]any{"delta": delta}}
-		}
-		_, _ = body.WriteString(qoderWrappedSSELineForTest(t, inner))
-	}
-	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body.String()))}
-}
-
-// writeQoderOpenAIEvents sends typed fixtures through production Chat parsing
-// and conversion using the test context. Client usage is always enabled and
-// supplied tool mappers are appended in order; the converter owns the fixture
-// response body.
-func writeQoderOpenAIEvents(t *testing.T, c *upstreamcore.OutputContext, model string, events []qoder.SSEEvent, mappers ...qoder.QoderToolNameMapper) error {
-	t.Helper()
-	options := []qoder.QoderOpenAIStreamResponseOption{qoder.QoderOpenAIStreamIncludeUsage(true)}
-	for _, mapper := range mappers {
-		options = append(options, qoder.QoderOpenAIStreamToolNameMapper(mapper))
-	}
-	_, err := qoder.WriteQoderOpenAIStreamResponse(t.Context(), c, model, qoderEventResponse(t, events), options...)
-	return err
-}
-
-// writeQoderAnthropicEvents sends typed fixtures through production Messages
-// parsing and conversion using the test context. Supplied tool-name mappers
-// are appended in order, and the converter owns closing the constructed
-// response body.
-func writeQoderAnthropicEvents(t *testing.T, c *upstreamcore.OutputContext, model string, events []qoder.SSEEvent, mappers ...qoder.QoderToolNameMapper) error {
-	t.Helper()
-	var options []qoder.QoderAnthropicStreamResponseOption
-	for _, mapper := range mappers {
-		options = append(options, qoder.QoderAnthropicStreamToolNameMapper(mapper))
-	}
-	_, err := qoder.WriteQoderAnthropicStreamResponse(t.Context(), c, model, qoderEventResponse(t, events), options...)
-	return err
 }
 
 // TestQoderThinkingFlowsThroughAllEndpoints varies CN/global models and
@@ -4315,7 +2385,7 @@ func TestQoderThinkingFlowsThroughAllEndpoints(t *testing.T) {
 			name:           "global qwen 38 anthropic messages",
 			site:           qoder.SiteGlobal,
 			endpoint:       "messages",
-			body:           `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"type":"enabled"},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
+			body:           `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
 			wantEnabled:    true,
 			wantEffort:     "medium",
 			wantEffortPath: true,
@@ -4342,7 +2412,7 @@ func TestQoderThinkingFlowsThroughAllEndpoints(t *testing.T) {
 			name:           "cn qwen 38 anthropic messages",
 			site:           qoder.SiteCN,
 			endpoint:       "messages",
-			body:           `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"budget_tokens":1},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
+			body:           `{"model":"qwen3.8-max","max_tokens":1024,"thinking":{"type":"enabled","budget_tokens":1},"messages":[{"role":"user","content":"hello"}],"stream":true}`,
 			wantEnabled:    true,
 			wantEffort:     "xhigh",
 			wantEffortPath: true,
@@ -4379,11 +2449,11 @@ func TestQoderThinkingFlowsThroughAllEndpoints(t *testing.T) {
 			var err error
 			switch tt.endpoint {
 			case "chat":
-				_, err = ForwardQoderAttempt(context.Background(), c, service.Runtime, provider, []byte(tt.body), protocolcore.ProtocolOpenAIChatCompletions)
+				_, err = forwardQoderAttempt(context.Background(), c, service.Runtime, provider, []byte(tt.body), protocolcore.ProtocolOpenAIChatCompletions, false)
 			case "responses":
-				_, err = ForwardQoderAttempt(context.Background(), c, service.Runtime, provider, []byte(tt.body), protocolcore.ProtocolOpenAIResponses)
+				_, err = forwardQoderAttempt(context.Background(), c, service.Runtime, provider, []byte(tt.body), protocolcore.ProtocolOpenAIResponses, false)
 			case "messages":
-				_, err = ForwardQoderAttempt(context.Background(), c, service.Runtime, provider, []byte(tt.body), protocolcore.ProtocolAnthropicMessages)
+				_, err = forwardQoderAttempt(context.Background(), c, service.Runtime, provider, []byte(tt.body), protocolcore.ProtocolAnthropicMessages, false)
 			default:
 				t.Fatalf("unexpected endpoint %q", tt.endpoint)
 			}
@@ -4433,7 +2503,7 @@ func TestQoderThinkingUsesProviderMappedRouteKey(t *testing.T) {
 		"stream":true
 	}`)
 
-	result, err := ForwardQoderAttempt(context.Background(), c, service.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions)
+	result, err := forwardQoderAttempt(context.Background(), c, service.Runtime, provider, body, protocolcore.ProtocolOpenAIChatCompletions, false)
 	require.NoError(t, err)
 	require.Equal(t, "qmodel_38max", result.UpstreamModel)
 	payload := qoderLastUpstreamPayloadForTest(t, client)
@@ -4485,4 +2555,258 @@ func TestMixedGroupQoderValidationRetainsClientError(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "unsupported_response_state")
 	require.True(t, IsResponseCommitted(c))
 	require.Zero(t, client.BodyCount())
+}
+
+// TestUnifiedTextExecutor_QoderIRConversionRoutingAndFailover exercises
+// UnifiedTextExecutor across Messages, Responses
+// (including legacy messages ingress), Chat, and Cursor input-shaped Chat. It
+// verifies local 400 capability rejections without health penalties, pre-output
+// UpstreamFailoverError promotion on switchable errors, and untimed terminal
+// SSE error emission on already-committed event streams.
+func TestUnifiedTextExecutor_QoderIRConversionRoutingAndFailover(t *testing.T) {
+	newIRRuntime := func(customClient qoder.StreamClient) (*providercore.Record, *gatewaytestkit.QoderFixture, *gatewaytestkit.QoderClient, *qoderIRHealthRecorder) {
+		row, fixture, client := gatewaytestkit.NewDefaultQoderFixture()
+		health := &qoderIRHealthRecorder{}
+		streamClient := qoder.StreamClient(client)
+		if customClient != nil {
+			streamClient = customClient
+		}
+		fixture.Runtime = gatewayprovider.NewQoderRuntime(gatewayprovider.QoderRuntimeOptions{
+			Tokens:        fixture.Tokens,
+			Client:        streamClient,
+			Conversations: qoder.NewQoderConversationStore(qoder.QoderConversationTTL),
+			Health:        health,
+		})
+		return row, fixture, client, health
+	}
+
+	t.Run("routes Messages, legacy Responses messages, Chat, and Cursor input Chat through IR conversion", func(t *testing.T) {
+		cases := []struct {
+			name         string
+			path         string
+			source       protocolcore.ProtocolID
+			body         string
+			wantContains string
+		}{
+			{
+				name:         "anthropic messages stream",
+				path:         "/v1/messages",
+				source:       protocolcore.ProtocolAnthropicMessages,
+				body:         `{"model":"claude-opus-4-6","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`,
+				wantContains: `"type":"message_start"`,
+			},
+			{
+				name:         "responses legacy messages ingress buffered",
+				path:         "/v1/responses",
+				source:       protocolcore.ProtocolOpenAIResponses,
+				body:         `{"model":"ultimate","stream":false,"messages":[{"role":"user","content":"hi legacy"}]}`,
+				wantContains: `"object":"response"`,
+			},
+			{
+				name:         "chat completions buffered",
+				path:         "/v1/chat/completions",
+				source:       protocolcore.ProtocolOpenAIChatCompletions,
+				body:         `{"model":"auto","stream":false,"messages":[{"role":"user","content":"hi chat"}]}`,
+				wantContains: `"object":"chat.completion"`,
+			},
+			{
+				name:         "cursor input chat stream",
+				path:         "/v1/chat/completions",
+				source:       protocolcore.ProtocolOpenAIChatCompletions,
+				body:         `{"model":"auto","stream":true,"input":[{"type":"message","role":"user","content":"hi cursor"}]}`,
+				wantContains: `"object":"chat.completion.chunk"`,
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				row, fixture, client, _ := newIRRuntime(nil)
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, tc.path, bytes.NewReader([]byte(tc.body)))
+
+				executor := UnifiedTextExecutor{
+					Qoder: fixture.Runtime,
+				}
+				res, err := executor.native(t.Context(), c, gatewayprovider.NewExecutionProvider(row), []byte(tc.body), tc.source)
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				require.Equal(t, http.StatusOK, rec.Code)
+				require.Contains(t, rec.Body.String(), tc.wantContains)
+				require.Equal(t, 1, client.BodyCount())
+			})
+		}
+	})
+
+	t.Run("local RequestError returns HTTP 400 MODEL_CAPABILITY_UNSUPPORTED without upstream dispatch or health penalty", func(t *testing.T) {
+		row, fixture, client, health := newIRRuntime(nil)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+		executor := UnifiedTextExecutor{
+			Qoder: fixture.Runtime,
+		}
+		res, err := executor.native(t.Context(), c, gatewayprovider.NewExecutionProvider(row), []byte(`{"model":"ultimate","input":"test","store":true}`), protocolcore.ProtocolOpenAIResponses)
+		require.Nil(t, resultOrNilForQoderIRTest(res))
+		require.True(t, routing.IsModelAttributeError(err))
+		require.True(t, qoder.IsRequestError(err))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "unsupported_response_state")
+		require.Zero(t, client.BodyCount())
+		require.Zero(t, health.totalCalls())
+		_, hasStatus := c.Get(OpsUpstreamStatusCodeKey)
+		_, hasMessage := c.Get(OpsUpstreamErrorMessageKey)
+		require.False(t, hasStatus)
+		require.False(t, hasMessage)
+	})
+
+	t.Run("pre-semantic switchable errors promote to UpstreamFailoverError without committing downstream bytes", func(t *testing.T) {
+		for _, tc := range []struct {
+			name           string
+			sseLine        string
+			wantClientCode int
+		}{
+			{
+				name:           "agent limit 115 maps to 429 client status",
+				sseLine:        qoderWrappedErrorSSELineForTest(t, 502, map[string]any{"code": "115", "message": "Agent limit reached"}),
+				wantClientCode: http.StatusTooManyRequests,
+			},
+			{
+				name:           "entitlement denied 112 maps to 403 client status",
+				sseLine:        qoderWrappedErrorSSELineForTest(t, 403, map[string]any{"code": "112", "message": "Model entitlement denied"}),
+				wantClientCode: http.StatusForbidden,
+			},
+			{
+				name:           "upstream 502 maps to 502 client status",
+				sseLine:        qoderWrappedErrorSSELineForTest(t, 502, map[string]any{"code": "500", "message": "Gateway error"}),
+				wantClientCode: http.StatusBadGateway,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				row, fixture, client, _ := newIRRuntime(nil)
+				client.Body = tc.sseLine
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+				executor := UnifiedTextExecutor{
+					Qoder: fixture.Runtime,
+				}
+				res, err := executor.native(t.Context(), c, gatewayprovider.NewExecutionProvider(row), []byte(`{"model":"ultimate","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`), protocolcore.ProtocolAnthropicMessages)
+				require.Nil(t, res)
+				var failoverErr *forwardcore.UpstreamFailoverError
+				require.ErrorAs(t, err, &failoverErr)
+				require.Equal(t, capability.PlatformQoder, failoverErr.Platform)
+				require.Equal(t, tc.wantClientCode, failoverErr.ClientStatusCode)
+				require.Empty(t, rec.Body.String())
+				require.False(t, c.Writer.Written())
+			})
+		}
+	})
+
+	t.Run("keepalive-committed SSE streams receive untimed protocol terminal error on local or non-switchable failures", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			path         string
+			source       protocolcore.ProtocolID
+			body         string
+			sseBody      string
+			wantText     string
+			wantLocal400 bool
+		}{
+			{
+				name:         "responses local rejection on committed SSE emits response.failed",
+				path:         "/v1/responses",
+				source:       protocolcore.ProtocolOpenAIResponses,
+				body:         `{"model":"ultimate","stream":true,"input":"hi","store":true}`,
+				wantText:     `"type":"response.failed"`,
+				wantLocal400: true,
+			},
+			{
+				name:         "messages local rejection on committed SSE emits anthropic error event and marks response committed",
+				path:         "/v1/messages",
+				source:       protocolcore.ProtocolAnthropicMessages,
+				body:         `{"model":"ultimate","max_tokens":64,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":"hi"}]}`,
+				wantText:     `"type":"error"`,
+				wantLocal400: true,
+			},
+			{
+				name:     "messages non-switchable 401 on committed SSE emits anthropic error event",
+				path:     "/v1/messages",
+				source:   protocolcore.ProtocolAnthropicMessages,
+				body:     `{"model":"ultimate","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`,
+				sseBody:  qoderWrappedErrorSSELineForTest(t, 401, map[string]any{"code": "101", "message": "Invalid signature"}),
+				wantText: `"type":"error"`,
+			},
+			{
+				name:     "chat non-switchable 401 on committed SSE emits generic error event",
+				path:     "/v1/chat/completions",
+				source:   protocolcore.ProtocolOpenAIChatCompletions,
+				body:     `{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
+				sseBody:  qoderWrappedErrorSSELineForTest(t, 401, map[string]any{"code": "101", "message": "Invalid signature"}),
+				wantText: "event: error",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				row, fixture, client, health := newIRRuntime(nil)
+				if tc.sseBody != "" {
+					client.Body = tc.sseBody
+				}
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, tc.path, nil)
+				c.Writer.Header().Set("Content-Type", "text/event-stream")
+				c.Writer.WriteHeader(http.StatusOK)
+				c.Writer.WriteHeaderNow()
+
+				executor := UnifiedTextExecutor{
+					Qoder: fixture.Runtime,
+				}
+				res, err := executor.native(t.Context(), c, gatewayprovider.NewExecutionProvider(row), []byte(tc.body), tc.source)
+				require.Nil(t, res)
+				require.Error(t, err)
+				require.Equal(t, http.StatusOK, rec.Code)
+				require.Contains(t, rec.Body.String(), tc.wantText)
+				require.True(t, TerminalSSEDelivered(c))
+				require.True(t, IsResponseCommitted(c), "committed SSE terminal error must mark response committed so outer OtherFailure skips duplicate fallback and schedule penalty")
+				if tc.wantLocal400 {
+					require.True(t, routing.IsModelAttributeError(err))
+					require.True(t, qoder.IsRequestError(err))
+					require.Zero(t, client.BodyCount())
+					require.Zero(t, health.totalCalls())
+					_, hasStatus := c.Get(OpsUpstreamStatusCodeKey)
+					require.False(t, hasStatus)
+				}
+			})
+		}
+	})
+}
+
+// SetRateLimited increments r.rateLimited under r.mu when health observation records a cooldown.
+func (r *qoderIRHealthRecorder) SetRateLimited(context.Context, int64, time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rateLimited++
+	return nil
+}
+
+// SetOverloaded increments r.overloaded under r.mu when health observation records provider overload.
+func (r *qoderIRHealthRecorder) SetOverloaded(context.Context, int64, time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.overloaded++
+	return nil
+}
+
+// totalCalls returns the sum of rateLimited and overloaded calls recorded so far.
+func (r *qoderIRHealthRecorder) totalCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rateLimited + r.overloaded
+}
+
+// resultOrNilForQoderIRTest returns res directly so nil assertions read clearly.
+func resultOrNilForQoderIRTest(res *forwardcore.OpenAIResult) *forwardcore.OpenAIResult {
+	return res
 }

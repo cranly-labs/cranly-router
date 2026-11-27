@@ -12,7 +12,8 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	groktestkit "github.com/TokenFlux/TokenRouter/internal/upstream/grok/testkit"
 )
@@ -38,7 +39,7 @@ func TestPatchGrokResponsesBodyPreservesGrokShellFunctionOutputImages(t *testing
 		]
 	}`)
 
-	patched, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	patched, _, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.6", convert.Dialect{})
 	require.NoError(t, err)
 	require.Equal(t, "function_call_output", gjson.GetBytes(patched, "input.1.type").String())
 	require.Equal(t, "Read image file: /tmp/example.png", gjson.GetBytes(patched, "input.1.output").String())
@@ -65,7 +66,7 @@ func TestPatchGrokResponsesBodyPreservesGrok105StructuredFunctionOutputImages(t 
 		]
 	}`)
 
-	patched, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	patched, _, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.6", convert.Dialect{})
 	require.NoError(t, err)
 	require.Equal(t, "Read image file: /tmp/example.png", gjson.GetBytes(patched, "input.1.output").String())
 	require.Equal(t, "input_image", gjson.GetBytes(patched, "input.2.content.1.type").String())
@@ -90,8 +91,9 @@ func TestPatchGrokResponsesBodyFlattensNamespaceTools(t *testing.T) {
 		"tool_choice": {"type": "function", "namespace": "functions", "name": "inner"}
 	}`)
 
-	patched, mapping, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.3")
+	patched, mapping, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.3", convert.Dialect{})
 	require.NoError(t, err)
+	require.NotNil(t, mapping)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.3", gjson.GetBytes(patched, "model").String())
 	require.Len(t, gjson.GetBytes(patched, "tools").Array(), 3)
@@ -101,7 +103,7 @@ func TestPatchGrokResponsesBodyFlattensNamespaceTools(t *testing.T) {
 	require.Equal(t, "inner", gjson.GetBytes(patched, "tools.0.name").String())
 	require.Equal(t, "inner", gjson.GetBytes(patched, "tool_choice.name").String())
 	require.False(t, gjson.GetBytes(patched, "tool_choice.namespace").Exists())
-	require.Equal(t, bridge.ResponsesNamespaceName{Name: "inner"}, mapping.NamespaceTools["inner"])
+	require.Equal(t, convert.NamespacedName{Name: "inner"}, mapping.NamespaceTools["inner"])
 }
 
 // TestSanitizeGrokResponsesToolsRemovesDeferredFlagsWithToolSearch supplies an
@@ -168,7 +170,7 @@ func TestPatchGrokResponsesBodySimplifiesTypedInvalidRootUnion(t *testing.T) {
 		}]
 	}`)
 
-	patched, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	patched, _, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.6", convert.Dialect{})
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.False(t, gjson.GetBytes(patched, "metadata").Exists())
@@ -283,7 +285,7 @@ func TestPatchGrokResponsesBodyPromotesCodexAdditionalTools(t *testing.T) {
 		]
 	}`)
 
-	patched, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.5")
+	patched, _, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.5", convert.Dialect{})
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
@@ -308,13 +310,14 @@ func TestPatchGrokResponsesBodyPromotesCodexAdditionalTools(t *testing.T) {
 	require.Equal(t, "hello", gjson.GetBytes(patched, "input.1.content.0.text").String())
 }
 
-// TestPatchGrokResponsesBodyWithClientToolsReplaysUndeclaredHistory supplies
+// TestPatchGrokResponsesBodyWithToolMapReplaysUndeclaredHistory supplies
 // retained MCP history after its declaration disappears. Grok preparation keeps
 // the call and result paired without adding that historical tool to callable state.
-func TestPatchGrokResponsesBodyWithClientToolsReplaysUndeclaredHistory(t *testing.T) {
+func TestPatchGrokResponsesBodyWithToolMapReplaysUndeclaredHistory(t *testing.T) {
 	body := []byte(`{"model":"grok","input":[{"type":"function_call","namespace":"mcp__cua_proxy","name":"js","call_id":"old","arguments":"{}"},{"type":"function_call_output","call_id":"old","output":"ok"}],"tools":[{"type":"tool_search"}]}`)
-	patched, mapping, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	patched, mapping, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.6", convert.Dialect{})
 	require.NoError(t, err)
+	require.NotNil(t, mapping)
 	require.Equal(t, "mcp__cua_proxy__js", gjson.GetBytes(patched, "input.0.name").String())
 	require.False(t, gjson.GetBytes(patched, "input.0.namespace").Exists())
 	require.Equal(t, "old", gjson.GetBytes(patched, "input.1.call_id").String())
@@ -323,16 +326,17 @@ func TestPatchGrokResponsesBodyWithClientToolsReplaysUndeclaredHistory(t *testin
 	require.NotContains(t, mapping.NamespaceTools, "mcp__cua_proxy__js")
 }
 
-// TestPatchGrokResponsesBodyWithClientToolsLowersCodexProtocol uses the shared
+// TestPatchGrokResponsesBodyWithToolMapLowersCodexProtocol uses the shared
 // custom, search and namespace replay fixture. It asserts matching restoration
 // maps, function declarations and choice, serialized call arguments/outputs,
 // qualified names and removal of client-only protocol fields.
-func TestPatchGrokResponsesBodyWithClientToolsLowersCodexProtocol(t *testing.T) {
+func TestPatchGrokResponsesBodyWithToolMapLowersCodexProtocol(t *testing.T) {
 	t.Parallel()
 
 	body := groktestkit.ClientToolsRequest(false)
-	patched, mapping, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.5")
+	patched, mapping, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.5", convert.Dialect{})
 	require.NoError(t, err)
+	require.NotNil(t, mapping)
 	require.True(t, json.Valid(patched))
 	require.True(t, mapping.CustomTools["apply_patch"])
 	require.True(t, mapping.ToolSearch)
@@ -370,11 +374,11 @@ func TestPatchGrokResponsesBodyWithClientToolsLowersCodexProtocol(t *testing.T) 
 	require.False(t, gjson.GetBytes(patched, "input.4.namespace").Exists())
 }
 
-// TestPatchGrokResponsesBodyWithClientToolsLowersDiscoveredToolsOutput supplies
+// TestPatchGrokResponsesBodyWithToolMapLowersDiscoveredToolsOutput supplies
 // namespaced declarations discovered by a prior client search. Patching must add
 // flattened functions and restoration mappings while retaining the discovered
 // namespace payload as serialized function output with matching call IDs.
-func TestPatchGrokResponsesBodyWithClientToolsLowersDiscoveredToolsOutput(t *testing.T) {
+func TestPatchGrokResponsesBodyWithToolMapLowersDiscoveredToolsOutput(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{
@@ -392,11 +396,12 @@ func TestPatchGrokResponsesBodyWithClientToolsLowersDiscoveredToolsOutput(t *tes
 		]
 	}`)
 
-	patched, mapping, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.5")
+	patched, mapping, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.5", convert.Dialect{})
 	require.NoError(t, err)
+	require.NotNil(t, mapping)
 	require.True(t, mapping.ToolSearch)
-	require.Equal(t, bridge.ResponsesNamespaceName{Namespace: "multi_agent_v1", Name: "spawn_agent"}, mapping.NamespaceTools["multi_agent_v1__spawn_agent"])
-	require.Equal(t, bridge.ResponsesNamespaceName{Namespace: "multi_agent_v1", Name: "wait_agent"}, mapping.NamespaceTools["multi_agent_v1__wait_agent"])
+	require.Equal(t, convert.NamespacedName{Namespace: "multi_agent_v1", Name: "spawn_agent"}, mapping.NamespaceTools["multi_agent_v1__spawn_agent"])
+	require.Equal(t, convert.NamespacedName{Namespace: "multi_agent_v1", Name: "wait_agent"}, mapping.NamespaceTools["multi_agent_v1__wait_agent"])
 	output := gjson.GetBytes(patched, "input.1.output").String()
 	require.JSONEq(t, `[
 		{"type":"namespace","name":"codex_app","tools":[{"type":"function","name":"load_workspace_dependencies","parameters":{"type":"object","properties":{},"additionalProperties":false}}]},
@@ -421,11 +426,11 @@ func TestPatchGrokResponsesBodyWithClientToolsLowersDiscoveredToolsOutput(t *tes
 	}`, string(patched))
 }
 
-// TestPatchGrokResponsesBodyWithClientToolsRewritesEveryToolChoice compares
+// TestPatchGrokResponsesBodyWithToolMapRewritesEveryToolChoice compares
 // custom, search and namespace function selections. Each choice must become the
 // matching function name/type, and the namespace selection must lose its
 // separate namespace field.
-func TestPatchGrokResponsesBodyWithClientToolsRewritesEveryToolChoice(t *testing.T) {
+func TestPatchGrokResponsesBodyWithToolMapRewritesEveryToolChoice(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -474,7 +479,7 @@ func TestPatchGrokResponsesBodyWithClientToolsRewritesEveryToolChoice(t *testing
 				"tool_choice":%s
 			}`, tt.choice))
 
-			patched, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.5")
+			patched, _, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.5", convert.Dialect{})
 			require.NoError(t, err)
 			require.Equal(t, tt.wantType, gjson.GetBytes(patched, "tool_choice.type").String())
 			require.Equal(t, tt.wantName, gjson.GetBytes(patched, "tool_choice.name").String())
@@ -485,19 +490,19 @@ func TestPatchGrokResponsesBodyWithClientToolsRewritesEveryToolChoice(t *testing
 	}
 }
 
-// TestPatchGrokResponsesBodyWithClientToolsRejectsTrailingJSONDocument appends
+// TestPatchGrokResponsesBodyWithToolMapRejectsTrailingJSONDocument appends
 // another object after an otherwise usable request. Preparation must report
-// invalid JSON, return no patched body and leave the custom-tool mapping empty.
-func TestPatchGrokResponsesBodyWithClientToolsRejectsTrailingJSONDocument(t *testing.T) {
+// invalid JSON, return no patched body and leave the returned ToolMap nil.
+func TestPatchGrokResponsesBodyWithToolMapRejectsTrailingJSONDocument(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{"model":"grok","input":"hello","tools":[{"type":"custom","name":"apply_patch"}]} {"ignored":true}`)
-	patched, mapping, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.5")
+	patched, mapping, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithToolMap(body, "grok-4.5", convert.Dialect{})
 
 	require.Error(t, err)
 	require.Contains(t, strings.ToLower(err.Error()), "invalid json")
 	require.Nil(t, patched)
-	require.Empty(t, mapping.CustomTools)
+	require.Nil(t, mapping)
 }
 
 // mustMarshalJSONForTest encodes a string as JSON for nested expected-response
@@ -584,4 +589,55 @@ func TestQualifiedGrokReasoningKeepsCapabilityBounds(t *testing.T) {
 		require.False(t, gjson.GetBytes(body, "reasoning.effort").Exists())
 		require.Equal(t, model, gjson.GetBytes(body, "model").String())
 	}
+}
+
+// TestPatchGrokResponsesBodyWithToolMap_LowersToolsPreservesPatchesAndCompacts
+// sends custom, tool_search, namespace, and additional_tools declarations with
+// Grok-unsupported controls through PatchGrokResponsesBodyWithToolMap. It
+// verifies lowered function schemas, base wire stripping, and Compact summary compatibility.
+func TestPatchGrokResponsesBodyWithToolMap_LowersToolsPreservesPatchesAndCompacts(t *testing.T) {
+	codec := BodyCodec{NewID: uuid.NewString}
+	body := []byte(`{
+		"model":"client-grok",
+		"prompt_cache_retention":"24h",
+		"safety_identifier":"user_1",
+		"metadata":{"trace":"abc"},
+		"tools":[
+			{"type":"custom","name":"exec","description":"Run shell"},
+			{"type":"tool_search","execution":"client"},
+			{"type":"web_search","external_web_access":true}
+		],
+		"input":[
+			{"type":"additional_tools","tools":[
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"run db"}]}
+		]
+	}`)
+
+	patched, toolMap, _, err := codec.PatchGrokResponsesBodyWithToolMap(body, "grok-4.5", convert.Dialect{
+		Tools: ir.ToolSupportFunction | ir.ToolSupportHostedWebSearch,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, toolMap)
+	require.True(t, toolMap.HasRestorations())
+	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
+	require.False(t, gjson.GetBytes(patched, "prompt_cache_retention").Exists())
+	require.False(t, gjson.GetBytes(patched, "safety_identifier").Exists())
+	require.False(t, gjson.GetBytes(patched, "metadata").Exists())
+	require.NotContains(t, string(patched), "external_web_access")
+	require.Equal(t, "function", gjson.GetBytes(patched, "tools.0.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(patched, "tools.0.name").String())
+	require.Equal(t, "function", gjson.GetBytes(patched, "tools.1.type").String())
+	require.Equal(t, "tool_search", gjson.GetBytes(patched, "tools.1.name").String())
+	require.Equal(t, "web_search", gjson.GetBytes(patched, "tools.2.type").String())
+	require.Equal(t, "function", gjson.GetBytes(patched, "tools.3.type").String())
+	require.Equal(t, "db__query", gjson.GetBytes(patched, "tools.3.name").String())
+	require.Len(t, gjson.GetBytes(patched, "input").Array(), 1)
+
+	compactBody, err := codec.BuildGrokCompactRequestBody(patched)
+	require.NoError(t, err)
+	require.Equal(t, "none", gjson.GetBytes(compactBody, "tool_choice").String())
+	require.False(t, gjson.GetBytes(compactBody, "stream").Bool())
+	require.False(t, gjson.GetBytes(compactBody, "store").Bool())
 }

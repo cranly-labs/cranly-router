@@ -1,0 +1,126 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_upstream_sse_quirks",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Normalized quirky upstream SSE "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "frames cleanly."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Normalized quirky upstream SSE frames cleanly."
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_gem_quirk_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_region_health"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"region\":\"us-east\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_gem_quirk_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_region_health"
+        },
+        "arguments": "{\"region\":\"us-east\"}",
+        "token": {
+          "data": "gem_sig_quirk_step_1"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 2,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_gem_quirk_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_region_health"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 2,
+    "delta": {
+      "arguments": "{\"region\":\"eu-west\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 26,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 18
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 2,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_gem_quirk_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_region_health"
+        },
+        "arguments": "{\"region\":\"eu-west\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "lab": {
+      "name": "TokenRouter Lab",
+      "apiKey": "${{API_KEY_ENV}}",
+      "baseUrl": "{{BASE_URL}}/v1",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "{{CHAT_MODEL}}",
+          "name": "Lab OpenAI Chat",
+          "api": "openai-completions",
+          "baseUrl": "{{BASE_URL}}/v1",
+          "reasoning": {{REASONING_ENABLED}},
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        },
+        {
+          "id": "{{RESPONSES_MODEL}}",
+          "name": "Lab OpenAI Responses",
+          "api": "openai-responses",
+          "baseUrl": "{{BASE_URL}}/v1",
+          "reasoning": {{REASONING_ENABLED}},
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        },
+        {
+          "id": "{{MESSAGES_MODEL}}",
+          "name": "Lab Anthropic Messages",
+          "api": "anthropic-messages",
+          "baseUrl": "{{BASE_URL}}",
+          "reasoning": {{REASONING_ENABLED}},
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        },
+        {
+          "id": "{{GEMINI_MODEL}}",
+          "name": "Lab Google Gemini",
+          "api": "google-generative-ai",
+          "baseUrl": "{{BASE_URL}}/v1beta",
+          "reasoning": {{REASONING_ENABLED}},
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}

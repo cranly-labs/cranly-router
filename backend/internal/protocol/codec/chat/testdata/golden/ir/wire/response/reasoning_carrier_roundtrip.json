@@ -1,0 +1,29 @@
+{
+  "id": "chatcmpl_reasoning_carrier_roundtrip",
+  "model": "deepseek-reasoner",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Both replica lag (45ms) and 3-voter quorum on db-east-1 satisfy failover safety thresholds."
+        ]
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Cluster db-east-1 is ready for planned failover: replication lag is 45ms and all 3 quorum voters are healthy."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 132,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 64,
+    "reasoning": 28
+  }
+}

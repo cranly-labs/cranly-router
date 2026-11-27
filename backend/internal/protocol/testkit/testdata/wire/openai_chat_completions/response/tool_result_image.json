@@ -1,0 +1,27 @@
+{
+  "id": "chatcmpl_tool_result_image",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The latency_p99 panel shows a flat 12 ms baseline with no spike."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 96,
+    "completion_tokens": 16,
+    "total_tokens": 112,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

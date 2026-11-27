@@ -1,0 +1,33 @@
+{
+  "id": "resp_structured_output",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_structured_output_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "{\"service\":\"edge-gateway\",\"healthy\":true,\"error_rate\":0.0015,\"open_incidents\":[]}"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 96,
+    "output_tokens": 24,
+    "total_tokens": 120,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

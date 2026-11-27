@@ -1,0 +1,21 @@
+{
+  "id": "resp_upstream_sse_quirks",
+  "model": "gpt-5",
+  "created_at": 1760002200,
+  "parts": [
+    {
+      "kind": "text",
+      "id": "msg_upstream_sse_quirks_out",
+      "text": "Normalized quirky upstream SSE frames cleanly."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 26,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 10
+  }
+}

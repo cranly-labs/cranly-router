@@ -27,6 +27,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -1167,7 +1168,7 @@ func TestGatewayServiceAnthropicCompatibilityForwardersUseFinalOAuthModel(t *tes
 			path: "/v1/chat/completions",
 			body: []byte(`{"model":"group-model","messages":[{"role":"user","content":"hello"}],"stream":false}`),
 			call: func(svc *gatewayhttp.MessagesExecutor, ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte) error {
-				_, err := svc.ForwardAsChatCompletions(ctx, c, provider, body, nil)
+				_, err := svc.ForwardConverted(ctx, c, provider, protocolcore.ProtocolOpenAIChatCompletions, body)
 				return err
 			},
 		},
@@ -1176,7 +1177,7 @@ func TestGatewayServiceAnthropicCompatibilityForwardersUseFinalOAuthModel(t *tes
 			path: "/v1/responses",
 			body: []byte(`{"model":"group-model","input":"hello","stream":false}`),
 			call: func(svc *gatewayhttp.MessagesExecutor, ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte) error {
-				_, err := svc.ForwardAsResponses(ctx, c, provider, body, nil)
+				_, err := svc.ForwardConverted(ctx, c, provider, protocolcore.ProtocolOpenAIResponses, body)
 				return err
 			},
 		},
@@ -1583,9 +1584,9 @@ func TestMaxReasoningPricing_AnthropicForwardReportsOutboundEffort(t *testing.T)
 				var result *forwardcore.MessagesResult
 				var err error
 				if protocol == "responses" {
-					result, err = svc.ForwardAsResponses(c.Request.Context(), c, provider, []byte(`{"model":"claude-fable-5-1","input":"hi","reasoning":{"effort":"`+effort+`"}}`), nil)
+					result, err = svc.ForwardConverted(c.Request.Context(), c, provider, protocolcore.ProtocolOpenAIResponses, []byte(`{"model":"claude-fable-5-1","input":"hi","reasoning":{"effort":"`+effort+`"}}`))
 				} else {
-					result, err = svc.ForwardAsChatCompletions(c.Request.Context(), c, provider, []byte(`{"model":"claude-fable-5-1","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"`+effort+`"}`), nil)
+					result, err = svc.ForwardConverted(c.Request.Context(), c, provider, protocolcore.ProtocolOpenAIChatCompletions, []byte(`{"model":"claude-fable-5-1","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"`+effort+`"}`))
 				}
 				require.NoError(t, err)
 				require.NotNil(t, result.ReasoningEffort)
@@ -1662,9 +1663,9 @@ func TestAnthropicConversionPreservesResponseModel(t *testing.T) {
 					require.NoError(t, err)
 					var result *forwardcore.MessagesResult
 					if wire == "responses" {
-						result, err = executor.ForwardAsResponses(c.Request.Context(), c, target, body, nil)
+						result, err = executor.ForwardConverted(c.Request.Context(), c, target, protocolcore.ProtocolOpenAIResponses, body)
 					} else {
-						result, err = executor.ForwardAsChatCompletions(c.Request.Context(), c, target, body, nil)
+						result, err = executor.ForwardConverted(c.Request.Context(), c, target, protocolcore.ProtocolOpenAIChatCompletions, body)
 					}
 					require.NoError(t, err)
 					require.NotNil(t, result)
@@ -1754,9 +1755,9 @@ func TestGatewayService_ForceClaude1hCache_ConversionRewritesOAuthMimicOnly(t *t
 
 				var err error
 				if proto.name == "responses" {
-					_, err = executor.ForwardAsResponses(ctx, c, target, proto.body, nil)
+					_, err = executor.ForwardConverted(ctx, c, target, protocolcore.ProtocolOpenAIResponses, proto.body)
 				} else {
-					_, err = executor.ForwardAsChatCompletions(ctx, c, target, proto.body, nil)
+					_, err = executor.ForwardConverted(ctx, c, target, protocolcore.ProtocolOpenAIChatCompletions, proto.body)
 				}
 				require.NoError(t, err)
 				return transport.lastBody

@@ -1,0 +1,45 @@
+{
+  "id": "chatcmpl_tools_search",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_search_2",
+            "type": "function",
+            "function": {
+              "name": "tool_search",
+              "arguments": "{\"query\":\"slack notify\",\"limit\":3}"
+            }
+          },
+          {
+            "id": "call_inc_2",
+            "type": "function",
+            "function": {
+              "name": "pager__list_incidents",
+              "arguments": "{\"severity\":\"sev2\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 148,
+    "completion_tokens": 36,
+    "total_tokens": 184,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

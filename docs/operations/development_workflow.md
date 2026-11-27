@@ -70,15 +70,16 @@ docker compose -f deploy/docker-compose.dev.yml up --build
 
 - 分层隔离：核心不依赖旧实现、框架或存储实现；HTTP 适配层经用例访问数据，不直连数据库。上游平台互不导入；技术包不反向读取完整 config 或业务 service；旧包路径和 `legacybridge` 全局禁止。
 - 装配边界：`app` 负责装配，`bootstrap` 与 `lifecycle` 保持独立范围；`setup` 仅入口文件引用精简 bootstrap；业务模块不能反向依赖 `app`。综合设置新增字段时在静态参与者中声明唯一所有者以保持原子保存，提交后应用失败需显式标记已持久化。
-- 纯包白名单：`protocol` 等纯角色共用明确的标准库白名单（内存解析、编码、同步、测试和调用方流接口），文件或 HTTP 测试按单文件许可且不继承。`ipmatch` 与 `urlpolicy` 额外允许 `net` 地址类型。arch-go v2 将 `golang.org/x` 视为标准库，适配层第三方库须显式许可；`io`/`net` 副作用仍需人工审查。
+- 纯包白名单：`protocol` 等纯角色共用明确的标准库白名单（内存解析、编码、`encoding/json/v2` 与 `jsontext`、同步、测试和调用方流接口），文件或 HTTP 测试按单文件许可且不继承。`ipmatch` 与 `urlpolicy` 额外允许 `net` 地址类型；arch-go v2 将 `golang.org/x` 视为标准库，适配层第三方库须显式许可。
+- 协议子包与测试夹具：`protocol` 下子包须在 `leafDependencies` 登记内部依赖，且 `Production` 包含包自身路径供外部测试包导入。`protocol/testkit` 及其子目录先匹配 `fixture` 角色以使用 `os`、`embed` 和 `net/http`，纯包测试经它读取内嵌夹具。
 - 文件级许可：历史依赖按精确源文件和 import 登记，同目录新文件与子包不继承。规则变更须同时验证无标签和 `integration` 两个集合；删除或迁出文件后须同步移除过时许可（使用方测试会拒绝多余条目），并核对删后重建同名文件、旧文件增禁导、同目录新文件及非法子包四种场景。
-- 人工审查范围：静态检查无法发现"通过接口绕过业务用例"或"借已有 import 扩大耦合"，需在代码审查时把关。
+- 人工审查范围：静态检查无法发现 `io`/`net` 副作用、通过接口绕过业务用例或借已有 import 扩大耦合，需在代码审查时把关。
 
 同类基础能力收敛为单一默认实现，模块范围与例外许可由 `tools/architecture/policy.go` 锁定：
 
 | 能力 | 默认实现 | 受限例外与门禁 |
 | --- | --- | --- |
-| JSON 解析与改写 | `encoding/json`，安全敏感与计费用量载荷先经 `protocol/wirejson` 校验重复键与大小写冲突 | `tidwall/gjson` 与 `sjson` 仅限 `gateway`、`protocol`、`upstream` 报文层及已登记的单文件许可 |
+| JSON 解析与改写 | `encoding/json`（纯包同时允许 `encoding/json/v2` 与 `jsontext`），安全敏感与计费用量载荷先经 `protocol/wirejson` 校验重复键与大小写冲突 | `tidwall/gjson` 与 `sjson` 仅限 `gateway`、`protocol`、`upstream` 报文层及已登记的单文件许可 |
 | 出站 HTTP 客户端 | `infra/httpclient` 共享标准库连接池 | `imroc/req/v3` 仅限共享浏览器指纹池与已登记的 Cloudflare 站点客户端，详见[上游出站传输安全](upstream_transport_security.md) |
 | WebSocket 与配置解码 | `coder/websocket`、`gopkg.in/yaml.v3` | 架构门禁拒绝引入同类替代库 |
 | 后端生产日志 | `infra/telemetry/logging`（Zap）与 `log/slog` | `internal/` 非测试文件禁止直接导入标准库 `log`（`telemetry/logging/logger.go` 桥接除外） |
@@ -213,7 +214,8 @@ make -C backend generate
 | 开发 | 局部命令 | 改动所在的包或组件 |
 | 推送 | `pre-push` hook，等同 `make check` | 按改动文件选择的快检，在当前工作区执行 |
 | CI | `.github/workflows/ci.yml` | 全量 lint、单元、集成、前端、构建和脚本检查 |
-| 本地全量 | `make verify` | 与 CI 相同的检查，需要 Docker |
+| 协议实验室 | `.github/workflows/protocol-lab.yml`、`make test-clientlab` | 协议、网关、上游或实验室改动触发的 PR、每晚定时和手动运行真实 CLI 客户端测试 |
+| 本地全量 | `make verify` | 与 `ci.yml` 相同的检查，需要 Docker |
 
 ### 测试分层与夹具
 
@@ -229,12 +231,38 @@ make -C backend generate
 - E2E 与线上探针：`e2e` 标签测试（`backend/tests/integration`，`make test-e2e`）从环境变量读地址和凭据，未配置时仅验证编译。
 - 真实上游开关：调用线上供应商的测试默认跳过，分别由 `OPENAI_API_KEY`、`QODER_RUN_REAL_API_TESTS`、`QODER_RUN_LOCAL_AUTH_TESTS` 和 `TLSFINGERPRINT_NETWORK_TESTS` 开启。
 - 跨模块测试布局：`tests/integration/pricing_contract` 属无库单元测试；身份注册和批量任务在 SQLite/miniredis 验规则，事务和并发走 PG/Redis 集成测试；`team/postgres` 同包验有序更新，sqlmock 须登记关闭预期。
-- 网关与用量夹具：网关协议测试复用 `gateway/httpapi`、`protocol/openai` 和 `gateway/testkit`；用量测试显式指定 Calendar 验证时区回退、夏令时和清理错误链。
+- 网关与用量夹具：网关协议测试复用 `gateway/httpapi`、`protocol/openai`、`gateway/testkit`、`protocol/testkit` 和 `protocol/testkit/mockupstream`；用量测试显式指定 Calendar 验证时区回退、夏令时和清理错误链。
 - 容器夹具生命周期：
   - `postgrescontainer.Suite`（identity、promotion）在测试进程内复用 PG 容器：模板库执行全量迁移后关闭连接，单测克隆独立库并用 `DROP DATABASE ... WITH (FORCE)` 清理（失败即单测失败），`TestMain` 回收容器；迁移、恢复与实例级测试使用独立容器。
   - `rediscontainer.Run` 启动独立容器并等待监听及启动日志，上限 1 分钟（覆盖库默认 10 秒以容纳 Docker 并发启动），支持调用方提前取消。
   - 清理顺序：Testcontainers 启动出错时也可能返回非空容器，须先登记容器清理再处理错误，随后登记客户端/连接池清理使其先于容器关闭。清理使用独立有界 background context（`t.Context()` 此时已取消）；`TestMain` 在内部 runner 返回后设置退出码以保证 defer 执行，清理失败令测试失败；保持 Ryuk 开启。
 - 虚拟时间与退避：纯内存重试与超时使用 `testing/synctest` 推进虚拟时间；网络测试用本地服务加短退避，退避递增和上限单独单测。
+
+<a id="protocol_conversion_testing"></a>
+### 协议转换测试与缺陷回归
+
+协议转换与网关兼容路由按 T1 到 T6 分六层验证。T1 到 T5 为无标签单元测试，无需 Docker 与外网；T6 驱动真实 CLI 客户端子进程，默认跳过，推送前快检 `tools/check_changed.py` 不启动 T6。
+
+| 层 | 名称 | 位置 | 验证内容 | 运行时机 |
+| --- | --- | --- | --- | --- |
+| T1 | IR 与 SSE 单元测试 | `internal/protocol/ir`、`internal/protocol/sse` | 中间表示校验、顺序化器、累加器、`trc1:` 信封与 SSE 增量读写（含任意切分 fuzz） | 每次 `make test-go` |
+| T2 | 编解码器一致性 | `internal/protocol/codec/*`、`protocol/testkit` | 单协议请求/响应/流编解码、往返不动点定律、SSE 流语法、严格请求规则与解码器 fuzz 种子 | 每次 `make test-go` |
+| T3 | 跨协议转换矩阵 | `internal/protocol/convert`、`protocol/testkit` | 场景乘转换路线的严格请求规则、`Loss` 语义摘要对账、字节确定性、断流收尾、用量一致与多轮重放定律 | 每次 `make test-go` |
+| T4 | 录制语料回放与普查 | `internal/protocol/{codec/*,convert}`、`protocol/testkit/testdata/corpus` | 清洗入库的真实客户端请求与上游流通过全部定律、未建模字段普查快照（`golden/census`）及密钥与体积检查 | 每次 `make test-go` |
+| T5 | 网关路由场景测试 | `internal/app`（`TestProtocolLab*`、`TestStage7*`） | 完整网关路由配 `testkit/mockupstream`，验证 `routes.txt` 全路线选路、前导帧暂存切号、保活、中途断流、错误格式、转换与原生多轮切换及结算用量 | 每次 `make test-go` |
+| T6 | 客户端实验室 | `internal/app`（`TestClientLab*`）、`tools/clientlab` | 真实 Codex CLI、Claude Code 与 `pi` 子进程连入进程内网关和脚本化或代理上游 | 路径触发 PR、每晚、手动（`make test-clientlab`） |
+
+- 黄金快照：通过环境变量 `TOKENROUTER_UPDATE_GOLDEN=1` 控制 `testkit.Golden` 写回（不注册自定义 `-update` 参数，避免跨包 `go test` 因未知参数失败）。
+- T6 脚本模式：`make test-clientlab` 先在 `tools/clientlab` 执行 `npm ci` 安装锁定的 CLI 版本，再以 `TOKENROUTER_CLIENTLAB=1` 运行默认 `scripted` 模式，全程确定且无外网请求。
+- 语料录制与清洗：设置 `TOKENROUTER_CLIENTLAB_MODE=record` 把客户端原始请求写入 `.gitignore` 忽略的 `testdata/corpus/_incoming/`，再用 `cmd/corpus import` 脱敏入库并经 `verify` 检查密钥与 15 MiB 上限。
+- T6 线上金丝雀：`TOKENROUTER_CLIENTLAB_MODE=live` 经 `mockupstream` 代理真实供应商；测试强制校验 `TOKENROUTER_CLIENTLAB_CONTAINER=1`，仅允许在 `tools/clientlab/Dockerfile` 一次性非特权容器内运行。
+
+线上或 T6 发现协议转换缺陷时，按以下顺序补充回归保护：
+
+1. 先把触发问题的请求或上游流整理成夹具：能用协议无关场景表达的放入 `scenarios/`，依赖真实报文细节的经清洗放入 `corpus/`。
+2. 上游拒绝请求时在 `protocol/testkit` 的严格请求校验器补充规则；客户端解析失败时在流语法校验器补充规则。
+3. 先运行测试确认现有定律在新夹具上失败，再修改实现代码。
+4. 除非问题确实无法用夹具加定律表达，否则不单独编写一次性的内联 JSON 断言。
 
 ### 推送前快检
 
@@ -269,7 +297,8 @@ make -C backend generate
 | `scripts` | 在 macOS 上执行 `make test-scripts`，覆盖系统自带的 Bash 3.2 |
 | `installer` | `make test-installer`，Linux 安装器依赖 Bash 4+ 和 `sha256sum` |
 
-- CI 缓存：`.github/actions/setup-go` 分 `lint`、`test`、`build` 三组缓存（键含组名、`go.sum` 与 `.golangci-version` 哈希、SHA），`main` push 成功保存，`go-integration` 复用 `test` 组；pnpm 缓存由 `actions/setup-node` 管理。
+- CI 缓存：`.github/actions/setup-go` 分 `lint`、`test`、`build` 三组缓存（键含组名、`go.sum` 与 `.golangci-version` 哈希、SHA），`main` push 成功保存，`go-integration` 与 `protocol-lab` 复用 `test` 组；pnpm 和 npm 缓存由 `actions/setup-node` 管理。
+- 协议实验室 CI：`protocol-lab.yml` 在 `protocol`、`gateway`、`upstream`、`app/*lab*` 或 `tools/clientlab` 改动的 PR、每晚定时和手动触发时运行：`pinned` 跑锁文件版本，`latest` 仅在定时与手动时跑最新或指定版本且不阻塞合并。
 - 本地全量：`make verify` 依次执行 lint、test-tools、test、test-integration、build、test-embed、test-scripts 和 test-installer（遇错即停），需 Docker、PG 18 客户端、`golangci-lint` 和 Python 3.10+（macOS 用 Ubuntu 24.04 容器跑安装器测试）。
 
 常用局部验证命令：
@@ -279,6 +308,12 @@ make -C backend generate
 (cd backend && go test ./internal/provider/... ./internal/routing/...)
 (cd backend && go test -tags=integration ./internal/usage/postgres/...)
 make lint-go
+
+# 协议转换、黄金快照与客户端实验室
+(cd backend && go test ./internal/protocol/...)
+(cd backend && TOKENROUTER_UPDATE_GOLDEN=1 go test ./internal/protocol/...)
+(cd backend && go test ./internal/app -run 'TestProtocolLab' -count=1)
+make test-clientlab
 
 # 前端静态检查、测试与完整构建
 make lint-frontend
@@ -298,9 +333,9 @@ make security
 | 资金与结算 | 真实 PostgreSQL 事务验证回滚、持久化去重、8/10 位精度与 Redis 用户锁交错（SQLite/mock 不可替代） |
 | 身份与鉴权 | SDK 校验、令牌消费和认证缓存需单元测试加 PG/Redis 集成测试 |
 | 用量与观测 | 真实队列、事务、取消事件和查询次数证据，仅编译或跳过无效 |
-| 上游平台 | 分别验证 HTTP 提交、语义输出、可重试窗口和已观测用量（本地 HTTP/TLS/WS/存储夹具不代替真实供应商验证） |
+| 上游平台 | 分别验证 HTTP 提交、语义输出、可重试窗口和已观测用量；涉及协议转换或非标准线格式时同步覆盖 `protocol/testkit` 定律与脱敏录制语料，本地夹具不代替真实供应商验证 |
 | 通知、站点、审核、搜索 | 真实 SMTP/TLS 夹具、页面文件访问边界、PG 审核回滚、Redis 预占释放、配置交错与有界关闭 |
-| 网关 | 核对实际输出、HTTP 提交和重试窗口；对完成队列、模型快照、WS/Live、规则发布跑定向 `-race`；共享第三方全局设置的顶层测试可分开执行并保留日志 |
+| 网关 | 核对实际输出、HTTP 提交和重试窗口，协议选路、回退与流转换改动须通过 `TestProtocolLab` 与 `make test-clientlab`；对完成队列、模型快照、WS/Live、规则发布跑定向 `-race`；共享第三方全局设置的顶层测试可分开执行并保留日志 |
 | 创作台与批量图片 | 真实 PG 验证写任务表失败回滚与旧请求 ID 重放；本地夹具代替收费生成；分别验证元数据、输出保存（失败不重调上游）和资金变化，临时 Redis 故障不直接判结果丢失 |
 | 调度 | 兼容报文验证存储格式；核对实际资源数量以验证取得、故障放行、重复释放、锁过期继任和取消 |
 | 纯规则与目录 | 直接传值测试规则，并在调用方验证平台选择、失败取消和热更新；组合测试对照前端 fixture 校验完整管理员目录 JSON、25 项顺序与 TS 类型，禁改夹具掩盖差异 |

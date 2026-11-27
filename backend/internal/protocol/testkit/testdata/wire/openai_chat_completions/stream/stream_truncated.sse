@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl_stream_truncated","object":"chat.completion.chunk","created":1760002050,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Inspecting edge-gateway health now."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_stream_truncated","object":"chat.completion.chunk","created":1760002050,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_stream_truncated_1","type":"function","function":{"name":"check_gateway_health","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_stream_truncated","object":"chat.completion.chunk","created":1760002050,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"service\":\"edge-"}}]},"finish_reason":null}]}
+

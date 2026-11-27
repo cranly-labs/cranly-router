@@ -1,0 +1,61 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 512,
+  "tools": [
+    {
+      "type": "web_search",
+      "search_context_size": "medium"
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Check the Go 1.26 release date first."
+        }
+      ]
+    },
+    {
+      "id": "ws_go126_1",
+      "type": "web_search_call",
+      "action": {
+        "type": "search",
+        "query": "Go 1.26 release date"
+      }
+    },
+    {
+      "id": "msg_go126_1",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Go 1.26 was released in February 2026.",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://go.dev/doc/devel/release",
+              "title": "Go Release History",
+              "start_index": 0,
+              "end_index": 38
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Now search for the Go 1.27 encoding/json/v2 release notes and summarize its status."
+        }
+      ]
+    }
+  ]
+}

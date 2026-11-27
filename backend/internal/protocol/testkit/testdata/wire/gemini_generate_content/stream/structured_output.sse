@@ -1,0 +1,6 @@
+data: {"responseId":"gem_structured_output","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"{\"service\":\"edge-gateway\","}]}}]}
+
+data: {"responseId":"gem_structured_output","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"\"healthy\":true,\"error_rate\":0.0015,"}]}}]}
+
+data: {"responseId":"gem_structured_output","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"\"open_incidents\":[]}"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":96,"candidatesTokenCount":24,"totalTokenCount":120}}
+

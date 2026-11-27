@@ -1,0 +1,108 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto"
+  },
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "check_replica_lag",
+      "description": "Read replication lag metrics for a database cluster.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "Cluster ID"
+          }
+        },
+        "required": [
+          "cluster"
+        ]
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "check_quorum",
+      "description": "Check voter quorum health for a database cluster.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "Cluster ID"
+          }
+        },
+        "required": [
+          "cluster"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Inspect replica lag on db-east-1 and check failover readiness."
+        }
+      ]
+    },
+    {
+      "id": "rs_rt_anth_1",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Query replication lag metrics on db-east-1."
+        }
+      ],
+      "encrypted_content": "trc1:anthropic:eyJkIjoiRXFRQkNnSVlBaUpBY25kZllXNTBhRjl5YjNWdVpIUnlhWEJmYzJsblh6QXgiLCJ0IjoiRmlyc3QgcXVlcnkgcmVwbGljYXRpb24gbGFnIG1ldHJpY3Mgb24gZGItZWFzdC0xOyB2ZXJpZnkgbGFnIHN0YXlzIGJlbG93IDEwMG1zLiJ9"
+    },
+    {
+      "id": "fc_lag_east_1",
+      "type": "function_call",
+      "call_id": "call_lag_east_1",
+      "name": "check_replica_lag",
+      "arguments": "{\"cluster\":\"db-east-1\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_lag_east_1",
+      "output": "{\"cluster\":\"db-east-1\",\"lag_ms\":45}"
+    },
+    {
+      "id": "rs_rt_gem_2",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Replica lag is 45ms; now verify quorum status."
+        }
+      ],
+      "encrypted_content": "trc1:gemini:eyJkIjoiQ3BFQkNvY0JfZ2VtX3JvdW5kdHJpcF9zaWdfMDIifQ"
+    },
+    {
+      "id": "fc_quorum_east_2",
+      "type": "function_call",
+      "call_id": "call_quorum_east_2",
+      "name": "check_quorum",
+      "arguments": "{\"cluster\":\"db-east-1\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_quorum_east_2",
+      "output": "{\"cluster\":\"db-east-1\",\"quorum_healthy\":true,\"voters\":3}"
+    }
+  ]
+}

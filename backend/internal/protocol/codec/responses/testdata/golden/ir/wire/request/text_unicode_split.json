@@ -1,0 +1,16 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Reply with the multilingual greeting, family emoji, flag, waved hand, accented cafe, and rocket."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256,
+  "stream": true
+}

@@ -1,0 +1,35 @@
+{
+  "id": "resp_reasoning_carrier_native",
+  "model": "gpt-5",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "reasoning",
+      "id": "rs_nat_reply_3",
+      "reasoning": {
+        "segments": [
+          "Read timeout of 30s is below the 45s upstream SLA, while write timeout of 60s exceeds it."
+        ],
+        "summary": true,
+        "token": {
+          "data": "gAAAAABnNativeReplayReplyEnc03"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "id": "msg_nat_reply_3",
+      "text": "Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; write_timeout_s at 60s already covers the SLA."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 118,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 60,
+    "reasoning": 26
+  }
+}

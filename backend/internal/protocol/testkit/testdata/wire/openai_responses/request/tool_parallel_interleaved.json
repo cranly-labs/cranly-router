@@ -1,0 +1,56 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "stream": true,
+  "parallel_tool_calls": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "get_time",
+      "description": "Get the local time for an IANA timezone.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone identifier"
+          }
+        },
+        "required": [
+          "timezone"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Fetch weather in Tokyo and local time in Asia/Tokyo simultaneously."
+        }
+      ]
+    }
+  ]
+}

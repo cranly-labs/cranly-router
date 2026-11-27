@@ -1,0 +1,63 @@
+{
+  "model": "deepseek-reasoner",
+  "max_output_tokens": 4096,
+  "store": false,
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto"
+  },
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "fetch_build_log",
+      "description": "Fetch logs and exit metadata for a CI build job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "CI job ID"
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Inspect failed CI build job-8841 and identify the failing step."
+        }
+      ]
+    },
+    {
+      "id": "rs_enconly_plain_1",
+      "type": "reasoning",
+      "summary": [],
+      "encrypted_content": "trc1:plain:eyJ0IjoiRmV0Y2ggYnVpbGQgbG9nIGZvciBqb2ItODg0MSBmaXJzdCBzbyB3ZSBjYW4gaW5zcGVjdCB0aGUgbm9uLXplcm8gZXhpdCBjb2RlLiJ9"
+    },
+    {
+      "id": "fc_build_8841_1",
+      "type": "function_call",
+      "call_id": "call_build_8841_1",
+      "name": "fetch_build_log",
+      "arguments": "{\"job_id\":\"job-8841\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_build_8841_1",
+      "output": "{\"job_id\":\"job-8841\",\"step\":\"go-test\",\"exit_code\":1,\"error\":\"TestPoolTimeout\"}"
+    }
+  ]
+}

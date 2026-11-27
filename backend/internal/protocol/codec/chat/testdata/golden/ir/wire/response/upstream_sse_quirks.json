@@ -1,0 +1,29 @@
+{
+  "id": "chatcmpl_upstream_sse_quirks",
+  "model": "gpt-4o",
+  "created_at": 1760002200,
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Check framing edge cases first."
+        ]
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Normalized quirky upstream SSE frames cleanly."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 26,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 16,
+    "reasoning": 6
+  }
+}

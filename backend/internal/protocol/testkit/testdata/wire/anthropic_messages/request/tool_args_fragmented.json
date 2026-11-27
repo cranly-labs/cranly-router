@@ -1,0 +1,34 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "stream": true,
+  "tools": [
+    {
+      "name": "write_note",
+      "description": "Write text content to a note path.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path"
+          },
+          "text": {
+            "type": "string",
+            "description": "Note body"
+          }
+        },
+        "required": [
+          "path",
+          "text"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write notes/a.txt containing quotes, a newline, Japanese text, and a literal backslash."
+    }
+  ]
+}

@@ -1,18 +1,17 @@
 package qoder
 
 import (
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// output_observation.go classifies Qoder output frames and records downstream
-// write failures around the execution sink. Frame inspection supplements the
-// converter's semantic and terminal flags before forwarding. Failed Begin or
-// Emit calls retain disconnect evidence while the converter can continue
-// collecting upstream usage for completion.
+// output_observation.go forwards sink commitment queries and records downstream
+// write failures around the execution sink. InitialOutput and OutputState expose
+// pre-existing HTTP and content commitment to standard and deferred writers,
+// while failed Begin or Emit calls retain disconnect evidence so Execute can
+// report client disconnection after upstream usage collection finishes.
 
-// executionOutput supplements frame classification and disconnect evidence around
-// one serialized output sink.
+// executionOutput records disconnect evidence and forwards commitment queries
+// around one serialized output sink.
 type executionOutput struct {
 	sink upstream.OutputSink // downstream output sink
 
@@ -33,26 +32,16 @@ func (o *executionOutput) Begin(h upstream.OutputHead) error {
 	return err
 }
 
-// Emit supplements frame classification before forwarding the event to the sink.
-// Existing Semantic and Terminal flags remain set when inspection adds evidence.
-// A failed write retains disconnect state for the execution result and returns
-// the sink error to the stream converter.
+// Emit forwards one structured output event to the downstream sink and records
+// disconnect state when the write fails. Callers supply Semantic and Terminal
+// flags directly on event before calling Emit.
 func (o *executionOutput) Emit(event upstream.OutputEvent) error {
-	if len(event.Data) > 0 {
-		semantic, terminal := qoderOutputMeaning(event.Data)
-		event.Semantic = event.Semantic || semantic
-		event.Terminal = event.Terminal || terminal
-	}
 	err := o.sink.Emit(event)
 	if err != nil {
 		o.disconnected = true
 	}
 	return err
 }
-
-// qoderOutputMeaning delegates compatibility-frame content and terminal
-// classification to the protocol bridge.
-func qoderOutputMeaning(frame []byte) (bool, bool) { return bridge.CompatOutputMeaning(frame) }
 
 // InitialOutput returns existing sink commitment metadata when the sink exposes
 // it. Sinks lacking the optional source interface produce a zero head, so the
@@ -65,6 +54,20 @@ func (o *executionOutput) InitialOutput() upstream.OutputHead {
 		InitialOutput() upstream.OutputHead
 	}); ok {
 		return source.InitialOutput()
+	}
+	return upstream.OutputHead{}
+}
+
+// OutputState forwards live commitment metadata from o.sink without initializing
+// deferred response headers. Sinks that do not implement the optional state
+// interface return a zero OutputHead so uninitialized writers report uncommitted output.
+func (o *executionOutput) OutputState() upstream.OutputHead {
+	if state, ok := o.sink.(interface {
+		// OutputState reports current HTTP and content commitment without mutating
+		// response headers or stopping waiting keepalive heartbeats.
+		OutputState() upstream.OutputHead
+	}); ok {
+		return state.OutputState()
 	}
 	return upstream.OutputHead{}
 }

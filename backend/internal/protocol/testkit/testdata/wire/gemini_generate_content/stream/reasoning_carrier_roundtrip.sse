@@ -1,0 +1,8 @@
+data: {"responseId":"gem_reasoning_carrier_roundtrip","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Both replica lag (45ms) and 3-voter quorum on db-east-1 ","thought":true}]}}]}
+
+data: {"responseId":"gem_reasoning_carrier_roundtrip","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"satisfy failover safety thresholds.","thought":true,"thoughtSignature":"CpEBCocB_gem_roundtrip_final_03"}]}}]}
+
+data: {"responseId":"gem_reasoning_carrier_roundtrip","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Cluster db-east-1 is ready for planned failover: "}]}}]}
+
+data: {"responseId":"gem_reasoning_carrier_roundtrip","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"replication lag is 45ms and all 3 quorum voters are healthy."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":132,"candidatesTokenCount":36,"thoughtsTokenCount":28,"totalTokenCount":196}}
+

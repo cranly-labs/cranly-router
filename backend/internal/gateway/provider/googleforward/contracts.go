@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -34,10 +36,11 @@ import (
 //
 // The request-local counter and tool restoration map travel with one attempt
 // and synchronous HTTP output. Injected Gemini and Antigravity services remain
-// application-owned, while startup options control body limits and URL policy.
-// Model names, usage, image observations, and client output are separate
-// values; the result wrapper copies the outer forwarding value while retaining
-// its reference-valued fields.
+// application-owned, sharing process-local GeminiToolCalls storage for scoped
+// CallMemory bindings when wired together while falling back to runtime-local
+// stores in isolated callers. Model names, usage, image observations, and
+// client output stay separate values; the result wrapper copies the outer
+// forwarding value while retaining its reference-valued fields.
 
 // Options supplies startup limits, diagnostics, and URL policy for Google
 // forwarding.
@@ -169,6 +172,44 @@ type Output interface {
 	MappedClaudeError(*gatewayadapter.ExecutionProvider, int, string, []byte) error
 }
 
+// ConvertedOutput optionally extends Output with CommittedSSE inspection,
+// protocol-aware bounded body reading, single-pass failure mapping, and untimed
+// terminal SSE error writers for IR-converted Gemini responses.
+type ConvertedOutput interface {
+	// CommittedSSE reports whether downstream HTTP 200 text/event-stream headers
+	// have already been committed on the active response, including by waiting
+	// keepalive heartbeats. Callers check this flag before choosing HTTP JSON or
+	// terminal SSE error delivery.
+	CommittedSSE() bool
+	// ReadConvertedBody reads bounded upstream bytes using source's oversize
+	// error format and reports whether an oversize error response was already
+	// written. Callers retain ownership of closing body after this call returns.
+	ReadConvertedBody(body io.Reader, limit int64, source protocol.ProtocolID) ([]byte, bool, error)
+	// MapGeminiStreamFailure records upstream failure diagnostics once and
+	// resolves client status, type, code, and message without writing HTTP
+	// output. Custom-code misses record http_error diagnostics and resolve to a
+	// safe generic 500 api_error message.
+	MapGeminiStreamFailure(provider *gatewayadapter.ExecutionProvider, source protocol.ProtocolID, upstreamStatus int, upstreamRequestID string, body []byte, customSkipped bool) (status int, errType, code, message string, err error)
+	// MapAntigravityFailure records Antigravity upstream diagnostics and optional
+	// error-body logs once, then resolves client status, type, code, message, and
+	// diagnostic error without writing HTTP output. Messages routes evaluate
+	// administrator passthrough rules before falling back to Antigravity status defaults.
+	MapAntigravityFailure(provider *gatewayadapter.ExecutionProvider, source protocol.ProtocolID, upstreamStatus int, upstreamRequestID string, body []byte) (status int, errType, code, message string, err error)
+	// WriteConvertedError writes an uncommitted client-protocol HTTP JSON error
+	// or promotes to an untimed terminal SSE error when CommittedSSE is true.
+	// Implementations deduplicate final error delivery across retry and outer handlers.
+	WriteConvertedError(source protocol.ProtocolID, originalModel string, status int, errType, code, message string)
+	// WriteLocalTerminalError writes an untimed terminal SSE error frame in
+	// source's client protocol, emitting synthetic response.failed frames on
+	// Responses streams. Implementations deduplicate delivery so at most one
+	// terminal error reaches the client.
+	WriteLocalTerminalError(source protocol.ProtocolID, originalModel string, status int, errType, code, message string)
+	// WriteRawTerminalSSE delivers pre-encoded terminal SSE frame bytes through
+	// the untimed terminal barrier and reports whether delivery succeeded.
+	// Returning false lets callers fall back to writing onto the output sink.
+	WriteRawTerminalSSE(source protocol.ProtocolID, status int, errType, code, message string, data []byte) bool
+}
+
 // Gemini retains the services used to prepare and execute selected-provider
 // attempts.
 type Gemini struct {
@@ -190,9 +231,12 @@ type Gemini struct {
 	Transport httpclient.UpstreamTransport
 	// response header filtering policy
 	HeaderFilter *egress.CompiledHeaderFilter
-	// toolCalls binds client call IDs to Gemini metadata across requests.
-	// The zero value is ready to use for the lifetime of this runtime.
-	toolCalls session.GeminiToolCalls
+	// ToolCalls and toolCalls store destination-scoped tool-call replay bindings
+	// across turns. A non-nil ToolCalls pointer shares process-wide capacity with
+	// sibling Google runtimes, whereas nil falls back to the embedded zero-value
+	// toolCalls store for standalone callers.
+	ToolCalls *session.GeminiToolCalls // optional shared scoped tool-call store
+	toolCalls session.GeminiToolCalls  // fallback runtime-local tool-call store
 	// Enter is optional; a successful admission returns the release
 	// callback that the platform executor holds through response-body
 	// cleanup.
@@ -226,6 +270,12 @@ type Antigravity struct {
 	Gateway *gateway.RuntimeSettings
 	Routing *routing.RuntimeSettings // request-time model route settings
 	Sticky  session.GatewayCache     // session provider binding cache
+	// ToolCalls and toolCalls store destination-scoped tool-call replay bindings
+	// across turns. A non-nil ToolCalls pointer shares process-wide capacity with
+	// sibling Google runtimes, whereas nil falls back to the embedded zero-value
+	// toolCalls store for standalone callers.
+	ToolCalls *session.GeminiToolCalls // optional shared scoped tool-call store
+	toolCalls session.GeminiToolCalls  // fallback runtime-local tool-call store
 	// Enter is optional; a successful admission returns the release
 	// callback that the platform executor holds through response-body
 	// cleanup.
@@ -273,6 +323,48 @@ func (o Options) ErrorDetail(body []byte) string {
 		return ""
 	}
 	return logredact.TruncateUTF8(string(body), n)
+}
+
+// CallMemory returns a destination-scoped convert.CallMemory view backed by
+// s.ToolCalls when configured or s's embedded toolCalls store otherwise. Nil
+// receivers or scopes lacking a positive APIKeyID, positive ProviderID, or
+// non-empty Model return nil so conversion skips call-binding state cleanly.
+func (s *Gemini) CallMemory(scope session.GeminiToolScope) convert.CallMemory {
+	return s.toolCallStore().CallMemory(scope)
+}
+
+// toolCallStore selects s.ToolCalls when injected by application assembly and
+// falls back to the embedded zero-value toolCalls store on standalone runtimes.
+// Nil receivers return nil without panicking so callers can chain CallMemory safely.
+func (s *Gemini) toolCallStore() *session.GeminiToolCalls {
+	if s == nil {
+		return nil
+	}
+	if s.ToolCalls != nil {
+		return s.ToolCalls
+	}
+	return &s.toolCalls
+}
+
+// CallMemory returns a destination-scoped convert.CallMemory view backed by
+// s.ToolCalls when configured or s's embedded toolCalls store otherwise. Nil
+// receivers or scopes lacking a positive APIKeyID, positive ProviderID, or
+// non-empty Model return nil so conversion skips call-binding state cleanly.
+func (s *Antigravity) CallMemory(scope session.GeminiToolScope) convert.CallMemory {
+	return s.toolCallStore().CallMemory(scope)
+}
+
+// toolCallStore selects s.ToolCalls when injected by application assembly and
+// falls back to the embedded zero-value toolCalls store on standalone runtimes.
+// Nil receivers return nil without panicking so callers can chain CallMemory safely.
+func (s *Antigravity) toolCallStore() *session.GeminiToolCalls {
+	if s == nil {
+		return nil
+	}
+	if s.ToolCalls != nil {
+		return s.ToolCalls
+	}
+	return &s.toolCalls
 }
 
 // reverseTools delegates response tool-name restoration using this attempt

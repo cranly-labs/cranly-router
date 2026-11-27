@@ -1,0 +1,15 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Reply with nothing if no alert thresholds were breached."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 128
+  }
+}

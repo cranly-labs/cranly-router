@@ -1,0 +1,39 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Write notes/a.txt containing quotes, a newline, Japanese text, and a literal backslash."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "write_note",
+      "description": "Write text content to a note path.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "path": {
+            "type": "STRING",
+            "description": "Relative file path"
+          },
+          "text": {
+            "type": "STRING",
+            "description": "Note body"
+          }
+        },
+        "required": [
+          "path",
+          "text"
+        ]
+      }
+    }
+  ],
+  "max_output_tokens": 256
+}

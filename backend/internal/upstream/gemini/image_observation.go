@@ -5,7 +5,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	geminiwire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
 // image_observation.go counts nonempty inline image parts in Gemini candidates
@@ -56,7 +56,7 @@ func GeminiPartIsInlineImage(part gjson.Result) bool {
 	if !mimeType.Exists() {
 		mimeType = inline.Get("mime_type")
 	}
-	if !bridge.NativeIsGeminiInlineImageMIMEType(strings.ToLower(strings.TrimSpace(mimeType.String()))) {
+	if !geminiwire.NativeIsGeminiInlineImageMIMEType(strings.ToLower(strings.TrimSpace(mimeType.String()))) {
 		return false
 	}
 

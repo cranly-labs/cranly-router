@@ -1,0 +1,10 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 128,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Reply with nothing if no alert thresholds were breached."
+    }
+  ]
+}

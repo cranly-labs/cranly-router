@@ -211,6 +211,20 @@ func AppendOpenAICompatClaudeCodeTodoGuard(req *protocolopenai.ResponsesRequest)
 	return true
 }
 
+// AppendOpenAICompatClaudeCodeTodoGuardBytes inserts Claude Code task-tracking
+// guidance after leading developer messages in raw Responses JSON bytes while
+// preserving unknown fields and exact JSON tokens on existing items. Empty or
+// malformed bodies, missing input arrays, or existing current/legacy guard
+// markers return body unchanged with false.
+func AppendOpenAICompatClaudeCodeTodoGuardBytes(body []byte) ([]byte, bool) {
+	return protocolopenai.InsertResponsesLeadingDeveloperGuardBytes(
+		body,
+		OpenAICompatClaudeCodeTodoGuardText,
+		OpenAICompatClaudeCodeTodoGuardMarker,
+		legacyClaudeCodeTodoGuardMarker,
+	)
+}
+
 // AppendOpenAICompatClaudeCodeTodoGuardToRequestBody inserts guard guidance
 // after leading developer items in mutable decoded input. Nil maps, non-array
 // or empty input, and either existing marker return false.

@@ -8,9 +8,14 @@ import (
 	"net/http"
 	"time"
 
+	"go.uber.org/zap"
+
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -72,13 +77,39 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 		}
 		return nil, err
 	}
-	patchedBody, clientToolMapping, err := o.Codec.PatchGrokResponsesBodyWithClientTools(body, upstreamModel)
+	if !in.Compact && o.PrepareNativeReplay != nil {
+		// Unpack same-account trc1:xai envelopes or strip cross-account and
+		// foreign carriers before Grok body patching and cache-identity hashing.
+		rewritten, prepErr := o.PrepareNativeReplay(ctx, upstreamModel, body)
+		if prepErr != nil {
+			p.SetError(http.StatusBadRequest, prepErr.Error(), "")
+			if in.HTTPPresent {
+				p.InvalidRequest(prepErr.Error(), "input")
+			}
+			return nil, prepErr
+		}
+		body = rewritten
+	}
+	p.ClientToolMap(nil)
+	var dialect convert.Dialect
+	if o.ResolveDialect != nil {
+		dialect = o.ResolveDialect(ctx, upstreamModel, body)
+	}
+	patchedBody, clientToolMap, losses, err := o.Codec.PatchGrokResponsesBodyWithToolMap(body, upstreamModel, dialect)
 	if err != nil {
 		p.SetError(http.StatusBadRequest, err.Error(), "")
 		p.InvalidRequest(err.Error(), "tools")
-		return nil, err
+		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(err)
 	}
-	p.ClientTools(clientToolMapping)
+	if len(losses) > 0 {
+		logging.FromContext(ctx).Debug(
+			"gateway.grok_responses_tool_adaptation_losses",
+			zap.Int64("provider_id", in.ProviderID),
+			zap.String("model", upstreamModel),
+			zap.Int("loss_count", len(losses)),
+		)
+	}
+	p.ClientToolMap(clientToolMap)
 	// Emulate Compact with a Responses summary turn and wrap the result as a compaction item.
 	if in.Compact {
 		patchedBody, err = o.Codec.BuildGrokCompactRequestBody(patchedBody)
@@ -191,8 +222,8 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 			p.ObserveSuccess(ctx, resp.Header, resp.StatusCode, upstreamModel)
 			return false, nil
 		},
-		MaxLineSize: o.MaxLineSize,
-		ClientTools: clientToolMapping,
+		MaxLineSize:   o.MaxLineSize,
+		ClientToolMap: clientToolMap,
 		ReadResponse: func(resp *http.Response, input upstream.AttemptInput, _ upstream.OutputSink) (upstream.ResponsesObservation, error) {
 			if input.Stream {
 				return p.ReadStream(ctx, resp, startTime, originalModel, upstreamModel)

@@ -1,0 +1,2 @@
+data: {"responseId":"gem_tool_args_empty","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":"call_empty_str_1","name":"get_clock"},"thoughtSignature":"sig_fc_empty_1"},{"functionCall":{"id":"call_empty_obj_2","name":"get_uptime","args":{}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":44,"candidatesTokenCount":20,"totalTokenCount":64}}
+

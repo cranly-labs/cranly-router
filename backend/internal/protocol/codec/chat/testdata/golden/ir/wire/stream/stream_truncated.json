@@ -1,0 +1,75 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_stream_truncated",
+      "model": "gpt-4o",
+      "created_at": 1760002050
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Inspecting edge-gateway health now."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Inspecting edge-gateway health now."
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_stream_truncated_1",
+        "tool": {
+          "kind": "function",
+          "name": "check_gateway_health"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"service\":\"edge-"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_stream_truncated_1",
+        "tool": {
+          "kind": "function",
+          "name": "check_gateway_health"
+        },
+        "arguments": "{\"service\":\"edge-",
+        "incomplete": true
+      }
+    }
+  },
+  {
+    "kind": "error",
+    "error": {
+      "type": "stream_error",
+      "code": "stream_truncated",
+      "message": "upstream chat stream ended without finish_reason or [DONE]"
+    }
+  }
+]

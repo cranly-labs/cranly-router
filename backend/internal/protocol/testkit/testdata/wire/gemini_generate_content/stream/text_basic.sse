@@ -1,0 +1,6 @@
+data: {"responseId":"gem_text_basic","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Deterministic JSON serialization "}]}}]}
+
+data: {"responseId":"gem_text_basic","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"keeps identical inputs byte-for-byte stable, "}]}}]}
+
+data: {"responseId":"gem_text_basic","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"preserving prompt cache prefixes."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":24,"candidatesTokenCount":16,"totalTokenCount":40}}
+

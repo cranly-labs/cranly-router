@@ -1,0 +1,94 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Check warehouse stock for SKU-42 and SKU-99, then recommend reorder quantities."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "segments": [
+              "First inspect SKU-42 stock levels before querying SKU-99."
+            ],
+            "token": {
+              "data": "EqQBCgIYAiJAc2t1XzQyX3RoaW5raW5nX3NpZ190dXJuXzAx"
+            }
+          }
+        },
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "redacted": true,
+            "token": {
+              "data": "EmwKAhgCIkByZWRhY3RlZF9pbnZlbnRvcnlfZGF0YV90dXJuXzAx"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "call": {
+            "call_id": "call_inv_sku42_1",
+            "tool": {
+              "kind": "function",
+              "name": "query_inventory"
+            },
+            "arguments": "{\"sku\":\"SKU-42\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_inv_sku42_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"sku\":\"SKU-42\",\"on_hand\":4,\"reorder_point\":20}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "query_inventory",
+      "description": "Query warehouse stock counts for an SKU.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Catalog SKU code"
+          }
+        },
+        "required": [
+          "sku"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "mode": "enabled",
+    "budget_tokens": 2048
+  }
+}

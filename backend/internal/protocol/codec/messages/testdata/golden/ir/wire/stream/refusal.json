@@ -1,0 +1,58 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_refusal",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 46,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "I cannot provide instructions "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "for bypassing authentication controls or extracting active session credentials."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "I cannot provide instructions for bypassing authentication controls or extracting active session credentials."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 46,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 14
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "content_filter"
+    }
+  }
+]

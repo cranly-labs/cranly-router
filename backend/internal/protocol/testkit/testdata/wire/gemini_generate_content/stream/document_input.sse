@@ -1,0 +1,6 @@
+data: {"responseId":"gem_document_input","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"The attached PDF contains 1 page "}]}}]}
+
+data: {"responseId":"gem_document_input","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"and specifies a 99.95% monthly availability target "}]}}]}
+
+data: {"responseId":"gem_document_input","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"for regional gateway endpoints."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":420,"candidatesTokenCount":21,"totalTokenCount":441}}
+

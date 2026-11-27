@@ -1,0 +1,39 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "parallel_tool_calls": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_clock",
+      "description": "Return the current UTC timestamp.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "get_uptime",
+      "description": "Return server uptime seconds.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "strict": false
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Read the current UTC clock and server uptime using the parameterless tools."
+        }
+      ]
+    }
+  ]
+}

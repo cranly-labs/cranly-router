@@ -344,6 +344,17 @@ type MessagePorts interface {
 	ServiceTier() string
 }
 
+// nativeMessagesReplayPreparer optionally unpacks or removes trc1 continuity
+// envelopes on native Anthropic Messages requests before cache-limit counting
+// and thinking-block filters inspect the payload.
+type nativeMessagesReplayPreparer interface {
+	// PrepareNativeReplay unpacks matching token-path trc1 continuity envelopes
+	// or deletes incompatible blocks for the supplied upstream model. Disabled
+	// runtimes and requests without a valid token-path carrier return body
+	// byte-for-byte unchanged.
+	PrepareNativeReplay(ctx context.Context, body []byte, model string) ([]byte, error)
+}
+
 // ShouldRetry reports whether caller-supplied retry eligibility permits HTTP 403
 // treatment. The boolean comes from the selected adapter's provider view; this
 // helper does not infer credential type or decide the remaining retry budget.

@@ -1,0 +1,44 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_tools_hosted_search","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_tools_hosted_search","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"ws_go127_2","type":"web_search_call","status":"in_progress"}}
+
+event: response.web_search_call.in_progress
+data: {"type":"response.web_search_call.in_progress","sequence_number":3,"output_index":0,"item_id":"ws_go127_2"}
+
+event: response.web_search_call.searching
+data: {"type":"response.web_search_call.searching","sequence_number":4,"output_index":0,"item_id":"ws_go127_2"}
+
+event: response.web_search_call.completed
+data: {"type":"response.web_search_call.completed","sequence_number":5,"output_index":0,"item_id":"ws_go127_2"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"ws_go127_2","type":"web_search_call","status":"completed","action":{"type":"search","query":"Go 1.27 encoding json v2 release notes"}}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":7,"output_index":1,"item":{"id":"msg_tools_hosted_search_out","type":"message","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":8,"item_id":"msg_tools_hosted_search_out","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"text":""}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":9,"item_id":"msg_tools_hosted_search_out","output_index":1,"content_index":0,"delta":"Go 1.27 ships encoding/json/v2 and "}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":10,"item_id":"msg_tools_hosted_search_out","output_index":1,"content_index":0,"delta":"encoding/json/jsontext in the standard library."}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":11,"item_id":"msg_tools_hosted_search_out","output_index":1,"content_index":0,"text":"Go 1.27 ships encoding/json/v2 and encoding/json/jsontext in the standard library."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":12,"item_id":"msg_tools_hosted_search_out","output_index":1,"content_index":0,"part":{"type":"output_text","text":"Go 1.27 ships encoding/json/v2 and encoding/json/jsontext in the standard library.","annotations":[{"type":"url_citation","url":"https://go.dev/doc/go1.27","title":"Go 1.27 Release Notes","start_index":0,"end_index":83}]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":13,"output_index":1,"item":{"id":"msg_tools_hosted_search_out","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Go 1.27 ships encoding/json/v2 and encoding/json/jsontext in the standard library.","annotations":[{"type":"url_citation","url":"https://go.dev/doc/go1.27","title":"Go 1.27 Release Notes","start_index":0,"end_index":83}]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":14,"response":{"id":"resp_tools_hosted_search","object":"response","created_at":1760000000,"status":"completed","model":"gpt-5","output":[{"id":"ws_go127_2","type":"web_search_call","status":"completed","action":{"type":"search","query":"Go 1.27 encoding json v2 release notes"}},{"id":"msg_tools_hosted_search_out","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Go 1.27 ships encoding/json/v2 and encoding/json/jsontext in the standard library.","annotations":[{"type":"url_citation","url":"https://go.dev/doc/go1.27","title":"Go 1.27 Release Notes","start_index":0,"end_index":83}]}]}],"usage":{"input_tokens":84,"output_tokens":24,"total_tokens":108,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}

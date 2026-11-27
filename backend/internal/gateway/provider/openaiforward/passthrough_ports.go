@@ -82,9 +82,15 @@ type PassthroughPorts interface {
 	// publishes a copied map. Keep supplied entries stable during copying; later
 	// restoration reads the newly published map for this request.
 	MergeToolNames(value map[string]string)
-	// AdaptClientTools lowers API Key client-tool shapes and records the output
-	// restoration mapping.
-	AdaptClientTools(body []byte) ([]byte, error)
+	// NeedsClientToolAdaptation clears any prior attempt's IR ToolMap from
+	// request state before evaluating body against model's resolved Dialect. It
+	// reports whether declarations, tool_choice, or history items require lowering.
+	NeedsClientToolAdaptation(ctx context.Context, model string, body []byte) bool
+	// AdaptClientTools lowers unsupported API Key client tools via
+	// AdaptResponsesTools and stores the resulting ToolMap on request state for
+	// response restoration. Tool validation or collision failures write a local
+	// HTTP 400 rejection on tools before returning the error.
+	AdaptClientTools(ctx context.Context, model string, body []byte) ([]byte, error)
 	// NormalizeLite reapplies raw Lite rules after earlier OAuth or API Key
 	// preparation. Its changed result replaces outgoing bytes so late
 	// compatibility cleanup cannot lose the Lite-required controls.
@@ -177,4 +183,8 @@ type PassthroughPorts interface {
 	// ObservedServiceTier reads the vendor-declared service tier recorded during
 	// response processing.
 	ObservedServiceTier() string
+	// PrepareNativeResponsesReplay unpacks matching trc1 continuity envelopes or
+	// strips incompatible reasoning items for the prepared outgoing model.
+	// Requests without token-path carriers return body byte-for-byte unchanged.
+	PrepareNativeResponsesReplay(ctx context.Context, model string, body []byte) ([]byte, error)
 }

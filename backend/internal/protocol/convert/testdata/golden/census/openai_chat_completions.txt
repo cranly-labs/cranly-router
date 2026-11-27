@@ -1,0 +1,12 @@
+# Unmodeled field census for openai_chat_completions (3 corpus requests)
+[summary]
+(none)
+
+[corpus/clients/pi/1.6.0/lab_text_chat/1.request.json]
+(none)
+
+[corpus/clients/pi/1.6.0/lab_tool_chat/1.request.json]
+(none)
+
+[corpus/clients/pi/1.6.0/lab_tool_chat/2.request.json]
+(none)

@@ -1,0 +1,35 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "tools": [
+    {
+      "type": "function",
+      "name": "check_gateway_health",
+      "description": "Checks health metrics for a gateway service.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "description": "Service slug to inspect"
+          }
+        },
+        "required": [
+          "service"
+        ]
+      }
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Check edge-gateway health and report active incidents."
+        }
+      ]
+    }
+  ]
+}

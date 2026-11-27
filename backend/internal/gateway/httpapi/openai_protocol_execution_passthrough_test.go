@@ -20,7 +20,9 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
@@ -241,4 +243,167 @@ func TestOpenAICyberPolicyWrapped5xxNeverFailsOver(t *testing.T) {
 
 	require.False(t, gatewayprovider.ShouldFailoverOpenAIResponse(http.StatusBadGateway, "wrapped upstream failure", body))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Type: capability.ProviderTypeOAuth}}, http.StatusBadGateway, body))
+}
+
+// TestOpenAIPassthroughAPIKey_IRClientToolsStreamingBufferedAndLocalRejection
+// runs OpenAI API Key HTTP passthrough requests across buffered and streaming
+// responses. It verifies PrepareNativeReplay carrier unpacking,
+// CodexToolNameReverse alias restoration, and local HTTP 400 tool-conflict
+// responses that skip failover and health penalties.
+func TestOpenAIPassthroughAPIKey_IRClientToolsStreamingBufferedAndLocalRejection(t *testing.T) {
+	carrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_pass_acct_5659",
+		ProviderID: 5659,
+	})
+	require.NoError(t, err)
+
+	reqBody := func(stream bool) []byte {
+		streamText := "false"
+		if stream {
+			streamText = "true"
+		}
+		return []byte(`{
+			"model":"gpt-5.4",
+			"stream":` + streamText + `,
+			"store":false,
+			"nonce":9007199254740993,
+			"tools":[
+				{"type":"custom","name":"exec","description":"Execute command"},
+				{"type":"tool_search","execution":"client"},
+				{"type":"namespace","name":"nb","tools":[{"type":"function","name":"python__tokenrouter","parameters":{"type":"object"}}]}
+			],
+			"input":[
+				{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"plan"}],"encrypted_content":"` + carrier + `"},
+				{"type":"message","role":"user","content":"run tools"}
+			]
+		}`)
+	}
+
+	makeProvider := func() *gatewayprovider.ExecutionProvider {
+		return &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation: time.LoadLocation,
+				ID:           5659,
+				Name:         "openai-apikey-pass",
+				Platform:     capability.PlatformOpenAI,
+				Type:         capability.ProviderTypeAPIKey,
+				Concurrency:  1,
+				Status:       billing.StatusActive,
+				Schedulable:  true,
+				Credentials:  map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.com/v1"},
+				Extra:        map[string]any{"openai_passthrough": true},
+			},
+		}
+	}
+
+	t.Run("buffered", func(t *testing.T) {
+		body := reqBody(false)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		SetCodexToolNameReverse(c, map[string]string{"python__tokenrouter": "python"})
+
+		upResp := `{"id":"resp_buf","status":"completed","trace":9007199254740993111,"output":[` +
+			`{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"ls\"}"},` +
+			`{"type":"function_call","id":"fc_2","call_id":"c2","name":"tool_search","arguments":"{\"query\":\"nb\"}"},` +
+			`{"type":"function_call","id":"fc_3","call_id":"c3","name":"nb__python__tokenrouter","arguments":"{}"}` +
+			`],"usage":{"input_tokens":5,"output_tokens":3}}`
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(upResp)),
+		}}
+		svc := openAIClientToolsTestService(up)
+
+		res, pErr := svc.Text.Passthrough(context.Background(), c, makeProvider(), body, body, "gpt-5.4", false, nil, false, time.Now())
+		require.NoError(t, pErr)
+		require.NotNil(t, res)
+		require.Equal(t, "function", gjson.GetBytes(up.lastBody, "tools.0.type").String())
+		require.Equal(t, "exec", gjson.GetBytes(up.lastBody, "tools.0.name").String())
+		require.Equal(t, "tool_search", gjson.GetBytes(up.lastBody, "tools.1.name").String())
+		require.Equal(t, "nb__python__tokenrouter", gjson.GetBytes(up.lastBody, "tools.2.name").String())
+		require.Equal(t, "9007199254740993", gjson.GetBytes(up.lastBody, "nonce").Raw)
+		require.Equal(t, "gAAAA_pass_acct_5659", gjson.GetBytes(up.lastBody, "input.0.encrypted_content").String())
+		require.Equal(t, "9007199254740993111", gjson.Get(rec.Body.String(), "trace").Raw)
+		require.Equal(t, "custom_tool_call", gjson.Get(rec.Body.String(), "output.0.type").String())
+		require.Equal(t, "ls", gjson.Get(rec.Body.String(), "output.0.input").String())
+		require.Equal(t, "tool_search_call", gjson.Get(rec.Body.String(), "output.1.type").String())
+		require.Equal(t, "nb", gjson.Get(rec.Body.String(), "output.2.namespace").String())
+		require.Equal(t, "python", gjson.Get(rec.Body.String(), "output.2.name").String())
+	})
+
+	t.Run("streaming", func(t *testing.T) {
+		body := reqBody(true)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		SetCodexToolNameReverse(c, map[string]string{"python__tokenrouter": "python"})
+
+		sse := strings.Join([]string{
+			`: keepalive`,
+			`event: ping`,
+			``,
+			`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","status":"in_progress"}}`,
+			``,
+			`data: {"type":"response.function_call_arguments.delta","sequence_number":1,"output_index":0,"item_id":"fc_1","delta":"{\"input\":"}`,
+			``,
+			`data: {"type":"response.function_call_arguments.done","sequence_number":2,"output_index":0,"item_id":"fc_1","name":"exec","arguments":"{\"input\":\"pwd\"}"}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":4,"output_index":1,"item":{"type":"function_call","id":"fc_2","call_id":"c2","name":"nb__python__tokenrouter","arguments":"{}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.completed","sequence_number":5,"response":{"id":"resp_stream","model":"gpt-5.4-2026","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"pwd\"}"},{"type":"function_call","id":"fc_2","call_id":"c2","name":"nb__python__tokenrouter","arguments":"{}"}],"usage":{"input_tokens":4,"output_tokens":2}}}`,
+			``,
+		}, "\n")
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}}
+		svc := openAIClientToolsTestService(up)
+
+		res, pErr := svc.Text.Passthrough(context.Background(), c, makeProvider(), body, body, "gpt-5.4", false, nil, true, time.Now())
+		require.NoError(t, pErr)
+		require.NotNil(t, res)
+		require.Equal(t, "gpt-5.4-2026", res.UpstreamResponseModel)
+		out := rec.Body.String()
+		require.NotContains(t, out, "event: ping")
+		require.Contains(t, out, `"type":"custom_tool_call"`)
+		require.Contains(t, out, `"type":"response.custom_tool_call_input.done"`)
+		require.Contains(t, out, `"input":"pwd"`)
+		require.Contains(t, out, `"namespace":"nb"`)
+		require.Contains(t, out, `"name":"python"`)
+	})
+
+	t.Run("ir_tool_conflict_returns_local_400_without_failover_or_penalty", func(t *testing.T) {
+		conflictBody := []byte(`{
+			"model":"gpt-5.4",
+			"stream":false,
+			"tools":[
+				{"type":"function","name":"db__query","parameters":{"type":"object"}},
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			],
+			"input":"hi"
+		}`)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(conflictBody))
+
+		up := &auxiliaryHTTPRecorder{}
+		svc := openAIClientToolsTestService(up)
+
+		res, pErr := svc.Text.Passthrough(context.Background(), c, makeProvider(), conflictBody, conflictBody, "gpt-5.4", false, nil, false, time.Now())
+		require.Error(t, pErr)
+		require.Nil(t, res)
+		require.True(t, routing.IsModelAttributeError(pErr), "tool conflict must be marked as a local model-capability error to skip schedule penalty")
+		var failoverErr *forwardcore.UpstreamFailoverError
+		require.False(t, errors.As(pErr, &failoverErr))
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+		require.Equal(t, "tools", gjson.Get(rec.Body.String(), "error.param").String())
+		require.Empty(t, up.bodies)
+	})
 }

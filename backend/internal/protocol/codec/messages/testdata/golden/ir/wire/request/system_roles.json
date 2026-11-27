@@ -1,0 +1,43 @@
+{
+  "model": "claude-sonnet-4-5",
+  "system": [
+    {
+      "kind": "text",
+      "text": "You are a concise protocol engineer."
+    },
+    {
+      "kind": "text",
+      "text": "Always include unit names next to numbers."
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "What is the default HTTP keepalive timeout?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "The default timeout is 30 seconds."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Also include the equivalent in milliseconds.\n\nRestate the timeout."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256
+}

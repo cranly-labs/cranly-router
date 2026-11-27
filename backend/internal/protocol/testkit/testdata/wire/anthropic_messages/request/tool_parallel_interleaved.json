@@ -1,0 +1,45 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "stream": true,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    },
+    {
+      "name": "get_time",
+      "description": "Get the local time for an IANA timezone.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone identifier"
+          }
+        },
+        "required": [
+          "timezone"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Fetch weather in Tokyo and local time in Asia/Tokyo simultaneously."
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "model": "deepseek-reasoner",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Check warehouse stock for SKU-42 and SKU-99, then recommend reorder quantities."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "segments": [
+              "First inspect SKU-42 stock levels before querying SKU-99."
+            ]
+          }
+        },
+        {
+          "kind": "tool_call",
+          "call": {
+            "call_id": "call_inv_sku42_1",
+            "tool": {
+              "kind": "function",
+              "name": "query_inventory"
+            },
+            "arguments": "{\"sku\":\"SKU-42\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_inv_sku42_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"sku\":\"SKU-42\",\"on_hand\":4,\"reorder_point\":20}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "query_inventory",
+      "description": "Query warehouse stock counts for an SKU.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Catalog SKU code"
+          }
+        },
+        "required": [
+          "sku"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "high"
+  },
+  "include_usage": true
+}

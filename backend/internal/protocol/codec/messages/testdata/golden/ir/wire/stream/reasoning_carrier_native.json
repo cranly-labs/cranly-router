@@ -1,0 +1,95 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_reasoning_carrier_native",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 118,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {}
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Read timeout of 30s is below the 45s upstream SLA, "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "while write timeout of 60s exceeds it."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Read timeout of 30s is below the 45s upstream SLA, while write timeout of 60s exceeds it."
+        ],
+        "token": {
+          "data": "EqQBCgIYAiJAbmF0aXZlX3JlcGxheV9yZXBseV9zaWdfMDM"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "write_timeout_s at 60s already covers the SLA."
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "text",
+      "text": "Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; write_timeout_s at 60s already covers the SLA."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 118,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 60
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

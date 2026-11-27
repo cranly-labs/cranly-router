@@ -1,0 +1,15 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Outline a three-step regional failover plan for the gateway."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

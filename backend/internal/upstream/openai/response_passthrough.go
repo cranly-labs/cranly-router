@@ -15,7 +15,6 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -172,8 +171,8 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 	documentScanner := wire.NewSSEJSONDocumentScanner(scanner)
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
-	responseAccumulator := bridge.NewBufferedResponseAccumulator()
-	streamDoneItems := bridge.NewResponsesStreamOutputItems()
+	responseAccumulator := wire.NewBufferedResponseAccumulator()
+	streamDoneItems := wire.NewResponsesStreamOutputItems()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
 	// These snapshots populate observation fields only; caller writer/policy
@@ -340,7 +339,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 					streamImageOutputs = append(streamImageOutputs, imageOutput)
 				}
 				streamDoneItems.Observe(dataBytes)
-				if normalizedData, normalized := bridge.NormalizeResponsesStreamingTerminalOutput(dataBytes, responseAccumulator, streamDoneItems, streamImageOutputs); normalized {
+				if normalizedData, normalized := wire.NormalizeResponsesStreamingTerminalOutput(dataBytes, responseAccumulator, streamDoneItems, streamImageOutputs); normalized {
 					dataBytes = normalizedData
 					data = string(normalizedData)
 					trimmedData = strings.TrimSpace(data)
@@ -581,7 +580,7 @@ func ReadPassthroughSSEAsJSON(resp *http.Response, sink upstream.OutputSink, opt
 		// An empty terminal output can have earlier deltas; reconstruction is
 		// optional, and a failed raw output patch leaves the selected terminal metadata intact.
 		if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
-			if outputJSON, reconstructed := bridge.ReconstructResponseOutputFromSSE(bodyText); reconstructed {
+			if outputJSON, reconstructed := wire.ReconstructResponseOutputFromSSE(bodyText); reconstructed {
 				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {
 					finalResponse = patched
 				}

@@ -2,11 +2,13 @@ package openaiforward
 
 import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// result_projection.go converts forwarding result records between package,
-// gateway, and compatibility reader types.
+// result_projection.go converts forwarding result and usage records between
+// package, gateway, and compatibility reader types.
 // Forwarding results carry measured usage alongside caller, billing, and vendor
 // identities for completion processing. Conversion allocates a destination
 // record and copies values. Headers, mutable collections, and pointers other
@@ -16,9 +18,27 @@ import (
 // Messages readers also supply normalized native usage with uncached input and
 // separate cache buckets, including cache lifetimes and processing speed. Each
 // conversion copies this observation independently so downstream updates cannot
-// alter the reader result. The inclusive OpenAI usage remains available for
-// compatibility consumers; completion selects the native observation as a whole
-// to keep cache tokens from contributing twice to the billable input count.
+// alter the reader result. AnthropicUsageToOpenAI builds inclusive OpenAI input
+// usage for compatibility consumers while completion selects the native
+// observation as a whole to keep cache tokens from contributing twice to the
+// billable input count.
+
+// AnthropicUsageToOpenAI builds inclusive OpenAI input usage from normalized
+// Anthropic token buckets. Callers supply uncached InputTokens plus separate
+// cache-creation and cache-read quantities, such as those produced by
+// MergeAnthropicUsage; nil input returns empty usage.
+//
+// The input total includes all three buckets, while the two cache quantities
+// also remain available separately for pricing. For example, 250 uncached
+// tokens and 173056 cache-read tokens produce 173306 input tokens with 173056
+// still reported in CacheReadInputTokens. Output tokens are copied from the
+// same observation.
+func AnthropicUsageToOpenAI(u *upstream.TokenUsage) protocolopenai.ForwardUsage {
+	if u == nil {
+		return protocolopenai.ForwardUsage{}
+	}
+	return protocolopenai.ForwardUsage{InputTokens: u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens, OutputTokens: u.OutputTokens, CacheCreationInputTokens: u.CacheCreationInputTokens, CacheReadInputTokens: u.CacheReadInputTokens}
+}
 
 // ToForwardResult converts a package result into gateway completion data,
 // returning nil for nil input. Header maps, slices, and pointers other than
@@ -144,5 +164,21 @@ func FromCompatResult(r *openai.CompatResponseResult, billing string) *Result {
 	if r == nil {
 		return nil
 	}
-	return &Result{RequestID: r.RequestID, ResponseID: r.ResponseID, Headers: r.UpstreamHeaders, Usage: r.Usage, Model: r.Model, BillingModel: billing, UpstreamModel: r.UpstreamModel, UpstreamResponseServiceTier: r.ServiceTier, ServiceTier: r.ResolvedTier, ReasoningEffort: r.ReasoningEffort, Stream: r.Stream, Duration: r.Duration, ClientDisconnect: r.ClientDisconnect, SearchCount: r.SearchCount}
+	return &Result{
+		RequestID:                   r.RequestID,
+		ResponseID:                  r.ResponseID,
+		Headers:                     r.UpstreamHeaders,
+		Usage:                       r.Usage,
+		Model:                       r.Model,
+		BillingModel:                billing,
+		UpstreamModel:               r.UpstreamModel,
+		UpstreamResponseModel:       r.UpstreamResponseModel,
+		UpstreamResponseServiceTier: r.ServiceTier,
+		ServiceTier:                 r.ResolvedTier,
+		ReasoningEffort:             r.ReasoningEffort,
+		Stream:                      r.Stream,
+		Duration:                    r.Duration,
+		ClientDisconnect:            r.ClientDisconnect,
+		SearchCount:                 r.SearchCount,
+	}
 }

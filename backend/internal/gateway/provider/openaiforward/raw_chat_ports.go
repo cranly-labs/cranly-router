@@ -5,20 +5,59 @@ import (
 	"net/http"
 	"time"
 
+	"go.uber.org/zap"
+
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// raw_chat_ports.go defines the platform-specific callbacks and retry
-// observations used by raw Chat forwarding.
-// Native Chat can still need platform request repairs and auxiliary image
-// descriptions before exchange. Grok-specific health and retry evidence
-// supplements shared model, credential, and output bindings so the runner can
+// raw_chat_ports.go defines the attempt, platform, and retry callbacks used by
+// native raw Chat forwarding.
+// Native Chat still needs mapped models, platform request repairs, and
+// auxiliary image descriptions before exchange. Grok-specific health and retry
+// evidence supplements model, credential, and output bindings so the runner can
 // retain description usage alongside the main response and return provider-loop
 // recovery guidance.
 
-// RawChatPorts extends Chat fallback bindings with native platform preparation and health operations.
+// RawChatPorts supplies native Chat preparation, transport, output, and Grok health operations.
 type RawChatPorts interface {
-	RawFallbackPorts // shared Chat attempt bindings
+	// Profile returns the selected provider's platform, credential, and protocol
+	// capability snapshot.
+	Profile() MessagesProfile
+	// Error writes the selected client protocol's local request failure response.
+	Error(int, string, string)
+	// BillingModel selects the charge model using provider mapping and a caller
+	// default.
+	BillingModel(string, string) string
+	// UpstreamModel normalizes the charge model for the selected upstream
+	// provider.
+	UpstreamModel(string) string
+	// ObserveModel records the mapped upstream model for this request attempt.
+	ObserveModel(string)
+	// PrepareModel applies selected-provider model attributes to the outgoing Chat
+	// request bytes.
+	PrepareModel(context.Context, []byte) ([]byte, error)
+	// Debug writes the supplied structured diagnostic fields through the execution
+	// logger.
+	Debug(string, ...zap.Field)
+	// Endpoint records the actual selected upstream request path in request
+	// observations.
+	Endpoint(string)
+	// ReadUpstreamError captures bounded upstream error bytes and closes the
+	// consumed network body. The installed adapter replaces the body for later
+	// presentation and returns a query-sanitized explanation alongside captured
+	// bytes.
+	ReadUpstreamError(*http.Response) ([]byte, string)
+	// FailoverHTTP applies provider failure policy before final client error
+	// presentation. A nonnil result returns recovery guidance to the outer
+	// provider loop; nil keeps the current response for its protocol presenter.
+	FailoverHTTP(context.Context, *http.Response, []byte, string, string) error
+	// Sink returns the synchronous client output destination for this provider
+	// attempt.
+	Sink() upstream.OutputSink
+	// RawOptions binds response reading to this request and its client protocol.
+	RawOptions(*http.Response, string, string, *string) openai.RawResponseOptions
 	// GrokCacheIdentity derives a stable cache identity from client bytes and
 	// model before bridging.
 	GrokCacheIdentity([]byte, string, string) string

@@ -1,0 +1,16 @@
+{
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Confirm that quirky SSE framing normalizes without dropping tokens."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256,
+  "include_usage": true
+}

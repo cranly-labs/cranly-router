@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	geminiwire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -31,10 +30,9 @@ import (
 
 const (
 	// Response mode values select the exchange and response adapter used for
-	// Messages, native Gemini, or OpenAI-compatible client output.
-	MessagesResponse ResponseMode = iota // Anthropic Messages conversion
-	NativeResponse                       // Gemini native output
-	OpenAIResponse                       // OpenAI-compatible output
+	// native Gemini or IR-converted client output.
+	NativeResponse    ResponseMode = iota // Gemini native output
+	ConvertedResponse                     // protocol/convert IR output
 )
 
 // ResponseMode selects one Gemini exchange and its matching client response
@@ -44,26 +42,21 @@ type ResponseMode uint8
 // Target supplies one provider attempt and its Gemini response conversion
 // callbacks.
 type Target struct {
-	ProviderID int64           // selected provider audit identifier
-	Model      string          // selected upstream model identifier
-	Mode       ResponseMode    // response exchange and adapter selection
-	Exchange   ExchangeOptions // provider-local exchange callback settings
-	Response   ResponseOptions // response read and output settings
+	ProviderID int64            // selected provider audit identifier
+	Model      string           // selected upstream model identifier
+	Mode       ResponseMode     // response exchange and adapter selection
+	Exchange   ExchangeOptions  // provider-local exchange callback settings
+	Response   ResponseOptions  // response read and output settings
+	Converted  ConvertedOptions // protocol/convert reader and error settings
 	// StartedAt selects the executor duration origin. A zero value uses the time
 	// after successful attempt registration, before request preparation and exchange.
 	StartedAt time.Time // caller request timing origin
-	// UpstreamStream describes server framing; OAuth selects unwrapping;
-	// IncludeUsage selects Chat usage chunks.
-	UpstreamStream, OAuth, IncludeUsage bool
-	OpenAIProtocol                      OpenAICompatProtocol // OpenAI client response protocol
-	// ClientTools shares its maps with response restoration. Callers keep those
-	// maps unchanged until this synchronous attempt finishes converting its output.
-	ClientTools bridge.ResponsesClientToolMapping
+	// UpstreamStream describes server framing; OAuth selects unwrapping.
+	UpstreamStream, OAuth bool
 	// Enter optionally registers this attempt and returns a nonnil release
 	// callback. Release runs after the response body closes or a later phase
 	// fails.
-	// optional attempt lifecycle registration
-	Enter func() (func(), error)
+	Enter func() (func(), error) // optional attempt lifecycle registration
 	// BeforeResponse optionally consumes policy or provider errors before
 	// conversion. Returning stop or an error ends adapter handling while the
 	// executor still closes the response body.
@@ -141,12 +134,10 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	var exchange ExchangeResult
 	var err error
 	switch target.Mode {
-	case MessagesResponse:
-		exchange, err = ExchangeMessages(ctx, target.Exchange)
 	case NativeResponse:
 		exchange, err = ExchangeNative(ctx, target.Exchange)
-	case OpenAIResponse:
-		exchange, err = ExchangeOpenAI(ctx, target.Exchange)
+	case ConvertedResponse:
+		exchange, err = ExchangeConverted(ctx, target.Exchange)
 	default:
 		return result, errors.New("unsupported gemini response mode")
 	}
@@ -183,9 +174,16 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	} else if resp.StatusCode >= 400 {
 		return result, fmt.Errorf("gemini upstream status %d", resp.StatusCode)
 	}
-	output := upstream.NewOutputContext(sink)
-	if result.RequestID != "" {
-		output.Header("x-request-id", result.RequestID)
+	var output *upstream.OutputContext
+	if target.Mode == ConvertedResponse {
+		// Defer initializing sink headers and commitment until converted frames or
+		// buffered JSON flush so waiting heartbeats stay active during staging.
+		output = upstream.NewDeferredOutputContext(sink)
+	} else {
+		output = upstream.NewOutputContext(sink)
+		if result.RequestID != "" {
+			output.Header("x-request-id", result.RequestID)
+		}
 	}
 	response := target.Response
 	response.Context = ctx
@@ -220,12 +218,18 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	adapter := ResponseAdapter{Options: response}
 	var usage *upstream.TokenUsage
 	switch target.Mode {
-	case MessagesResponse:
-		usage, err = adapter.CompleteMessages(output, resp, started, input.ResponseModel, input.Stream, target.UpstreamStream)
 	case NativeResponse:
 		usage, err = adapter.CompleteNative(output, resp, started, input.Stream, target.UpstreamStream, target.OAuth)
-	case OpenAIResponse:
-		usage, err = adapter.CompleteOpenAI(output, resp, started, input.ResponseModel, input.Stream, target.UpstreamStream, target.OAuth, target.IncludeUsage, target.OpenAIProtocol, target.ClientTools)
+	case ConvertedResponse:
+		conv := target.Converted
+		if conv.RequestID == "" {
+			conv.RequestID = result.RequestID
+		}
+		if input.Stream {
+			usage, err = adapter.ReadConvertedStreaming(output, resp, conv, target.OAuth)
+		} else {
+			usage, err = adapter.ReadConvertedBuffered(output, resp, conv, target.UpstreamStream, target.OAuth)
+		}
 	}
 	if usage != nil {
 		result.Usage = *usage

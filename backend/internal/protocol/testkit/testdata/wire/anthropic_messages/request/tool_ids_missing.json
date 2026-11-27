@@ -1,0 +1,29 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "stream": true,
+  "tools": [
+    {
+      "name": "lookup_host",
+      "description": "Resolve an internal hostname to its IPv4 address.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string",
+            "description": "Internal DNS hostname"
+          }
+        },
+        "required": [
+          "hostname"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Resolve both db-primary.internal and db-replica.internal."
+    }
+  ]
+}

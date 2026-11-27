@@ -1,0 +1,1667 @@
+{
+  "route": "responses_to_messages",
+  "entries": [
+    {
+      "fixture": "wire/openai_responses/request/document_input.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/empty_response.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/image_input.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/legacy_history.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/max_tokens.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/reasoning_carrier_native.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/reasoning_carrier_roundtrip.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/reasoning_encrypted_only.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/reasoning_summary.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/reasoning_token_foreign.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/reasoning_tool_replay.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/refusal.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "refusal_inlined",
+          "path": "messages[1].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/stop_sequence.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/stream_error_event.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/stream_truncated.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/structured_output.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.strict",
+          "detail": "strict"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.name",
+          "detail": "name"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/system_roles.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[3]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/text_basic.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/text_unicode_split.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_args_empty.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_args_fragmented.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_ids_missing.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_parallel.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_parallel_interleaved.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_result_error.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_result_image.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tool_single.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tools_custom.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_choice_approximated",
+          "path": "tool_choice"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[2].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tools_hosted_search.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "opaque_item_dropped",
+          "path": "messages[1].parts[0]",
+          "detail": "web_search_call"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].id"
+        },
+        {
+          "kind": "annotation_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[0]",
+          "detail": "hosted_web_search"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tools_namespace.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[1]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[2]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[2].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[4].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/tools_search.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[1]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[2].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[4].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].id"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[0].id"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[2].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_responses/request/upstream_sse_quirks.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_responses/request/usage_cache.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "corpus/clients/codex/0.171.0/lab_custom_tool/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[0].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].id"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[9]",
+          "detail": "hosted_web_search"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/codex/0.171.0/lab_custom_tool/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[4].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "messages[5].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[0].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[4].parts[0].id"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[4].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[5].parts[0].id"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[9]",
+          "detail": "hosted_web_search"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/codex/0.171.0/lab_reasoning_tool/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[0].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].id"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[9]",
+          "detail": "hosted_web_search"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/codex/0.171.0/lab_reasoning_tool/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[0].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[5].id"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[5]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[6].parts[0].id"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[6].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[7].parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[4].parts[0].id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[4].parts[0]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[9]",
+          "detail": "hosted_web_search"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/codex/0.171.0/lab_text/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[0].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].id"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[9]",
+          "detail": "hosted_web_search"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/codex/0.171.0/lab_tool/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[0].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].id"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[9]",
+          "detail": "hosted_web_search"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/codex/0.171.0/lab_tool/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[8]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[0].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].id"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[4].parts[0].id"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[4].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[5].parts[0].id"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[9]",
+          "detail": "hosted_web_search"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.verbosity",
+          "detail": "verbosity"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_text_responses/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_responses/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_responses/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[2].parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/document_input.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/empty_response.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/image_input.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/legacy_history.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/max_tokens.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_carrier_native.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_carrier_roundtrip.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_encrypted_only.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_summary.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_token_foreign.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_tool_replay.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[2].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/refusal.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/stop_sequence.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/structured_output.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/system_roles.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/text_basic.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/text_unicode_split.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_args_empty.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_args_fragmented.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_parallel.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_result_error.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_result_image.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_single.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_custom.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_hosted_search.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "opaque_item_dropped",
+          "path": "parts[0]",
+          "detail": "server_tool_use"
+        },
+        {
+          "kind": "opaque_item_dropped",
+          "path": "parts[1]",
+          "detail": "web_search_tool_result"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[2].id"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "parts[2].annotations[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_namespace.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_search.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/upstream_sse_quirks.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/usage_cache.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].id"
+        }
+      ]
+    }
+  ]
+}

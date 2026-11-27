@@ -1,0 +1,33 @@
+{
+  "id": "resp_text_basic",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_text_basic_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "Deterministic JSON serialization keeps identical inputs byte-for-byte stable, preserving prompt cache prefixes."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 24,
+    "output_tokens": 16,
+    "total_tokens": 40,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

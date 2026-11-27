@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -44,9 +44,10 @@ type ResponsesTarget struct {
 	// MaxLineSize bounds filtered stream lines; nonpositive values select the
 	// wrapper's default SSE line limit.
 	MaxLineSize int // SSE line bytes
-	// ClientTools pairs adapted request tools with stream restoration; leave its
-	// maps stable throughout this attempt's response reading.
-	ClientTools bridge.ResponsesClientToolMapping // client tool mapping
+	// ClientToolMap pairs adapted request tools with stream restoration; when it
+	// carries active restorations, Execute wraps event streams with
+	// NewResponsesToolStreamBody.
+	ClientToolMap *convert.ToolMap // client tool restoration mapping
 	// ReadResponse supplies parsed observations with its error. Execute copies
 	// HasUsage alongside values when Usage is nonnil, while commitment, disconnect
 	// and timing observations are transferred separately.
@@ -117,10 +118,8 @@ func (ResponsesExecutor) Execute(ctx context.Context, input upstream.AttemptInpu
 	// Restore client tools before response conversion. The shared Responses
 	// reader consumes billing pings with the same upstream heartbeat rules used
 	// for other providers; raw bridge readers interpret vendor events themselves.
-	if input.Stream && !t.PassRawStream {
-		if len(t.ClientTools.CustomTools) > 0 || t.ClientTools.ToolSearch || len(t.ClientTools.NamespaceTools) > 0 {
-			resp.Body = upstream.NewResponsesClientToolStreamBody(resp.Body, t.ClientTools, t.MaxLineSize)
-		}
+	if input.Stream && !t.PassRawStream && t.ClientToolMap.HasRestorations() {
+		resp.Body = upstream.NewResponsesToolStreamBody(resp.Body, t.ClientToolMap, t.MaxLineSize)
 	}
 	// Reading can fail after usable observations arrive. Transfer that evidence
 	// before returning the error so completion can assess partial work.

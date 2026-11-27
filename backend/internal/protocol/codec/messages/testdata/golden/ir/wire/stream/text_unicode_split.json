@@ -1,0 +1,82 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_text_unicode_split",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 22,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Hello 你"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "好世界！👨‍👩‍"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "👧‍👦 🇯"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "🇵 👋"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "🏽 cafe"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "́ 🚀"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Hello 你好世界！👨‍👩‍👧‍👦 🇯🇵 👋🏽 café 🚀"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 22,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 19
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

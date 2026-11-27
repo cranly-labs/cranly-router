@@ -257,50 +257,17 @@ func (e *UnifiedTextExecutor) native(ctx context.Context, c *gin.Context, target
 	}
 	switch target.Record.Platform {
 	case provider.PlatformAnthropic:
-		switch source {
-		case protocol.ProtocolAnthropicMessages:
+		if source == protocol.ProtocolAnthropicMessages {
 			result, err = e.Anthropic.Forward(ctx, c, target, parsed)
-		case protocol.ProtocolOpenAIResponses:
-			result, err = e.Anthropic.ForwardAsResponses(ctx, c, target, body, nil)
-		default:
-			result, err = e.Anthropic.ForwardAsChatCompletions(ctx, c, target, body, nil)
+		} else {
+			result, err = e.Anthropic.ForwardConverted(ctx, c, target, source, body)
 		}
 	case provider.PlatformGemini:
 		result, err = e.forwardGemini(ctx, c, target, body, source)
 	case provider.PlatformAntigravity:
-		SetActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
-		switch source {
-		case protocol.ProtocolAnthropicMessages:
-			sticky, ok := requeststate.PrefetchedStickyProviderIDFromContext(ctx)
-			result, err = e.Antigravity.Forward(ctx, c, target, body, ok && sticky == target.Record.ID)
-		case protocol.ProtocolOpenAIResponses:
-			result, err = e.Antigravity.ForwardAsResponses(ctx, c, target, body, nil)
-		default:
-			result, err = e.Antigravity.ForwardAsChatCompletions(ctx, c, target, body, nil)
-		}
+		result, err = e.forwardAntigravity(ctx, c, target, body, source)
 	case provider.PlatformQoder:
-		before := HeartbeatAdjustedWrittenSize(c)
-		result, err = ForwardQoderAttempt(ctx, c, e.Qoder, &target.Record, body, source)
-		// Retry within this target when its exchange has no result or writer-size
-		// change after subtracting heartbeats. Headers committed without a recorded
-		// heartbeat retain Gin's zero size and still close this recovery path.
-		if err != nil && result == nil && HeartbeatAdjustedWrittenSize(c) == before && qoder.MayRefreshAttempt(err) && e.QoderRefresh != nil {
-			fresh, refreshErr := e.QoderRefresh.RefreshProviderSession(ctx, &target.Record)
-			// A usable refreshed record replaces this attempt target before its one
-			// retry; unsuccessful refresh retains the first exchange error for outer
-			// failure handling.
-			if refreshErr == nil && fresh != nil {
-				target.Record = *fresh
-				result, err = ForwardQoderAttempt(ctx, c, e.Qoder, &target.Record, body, source)
-			}
-		}
-		if local, ok := errors.AsType[*qoder.RequestError](err); ok {
-			// Mixed-platform attempts use the common capability rejection to suppress
-			// scheduling feedback. Keep the native reason for the client's error body.
-			failure := apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", local.Message).WithCause(err)
-			writeLocalTextError(c, source, failure, local.Code)
-			return nil, failure
-		}
+		result, err = e.forwardQoderConverted(ctx, c, target, body, source)
 	default:
 		// A compatible platform can route a model through Gemini encoding; that
 		// route uses the Gemini executor regardless of the provider platform.
@@ -313,17 +280,126 @@ func (e *UnifiedTextExecutor) native(ctx context.Context, c *gin.Context, target
 }
 
 // forwardGemini runs one Gemini-encoded exchange for the client source and
-// records the Gemini endpoint before dispatch. Partial results remain
-// available alongside errors for the caller's conversion.
+// records the Gemini endpoint before dispatching through ForwardConverted;
+// partial results remain available alongside errors for caller conversion.
 func (e *UnifiedTextExecutor) forwardGemini(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, source protocol.ProtocolID) (*forward.MessagesResult, error) {
 	SetActualUpstreamEndpoint(c, EndpointGeminiModels)
-	switch source {
-	case protocol.ProtocolAnthropicMessages:
-		return e.Gemini.Forward(ctx, c, target, body)
-	case protocol.ProtocolOpenAIResponses:
-		return e.Gemini.ForwardAsResponses(ctx, c, target, body, nil)
-	default:
-		return e.Gemini.ForwardAsChatCompletions(ctx, c, target, body)
+	return e.Gemini.ForwardConverted(ctx, c, target, source, body)
+}
+
+// forwardAntigravity runs one Antigravity OAuth exchange for source and records
+// the Antigravity GenerateContent endpoint before dispatching through
+// ForwardConverted with sticky-session state.
+func (e *UnifiedTextExecutor) forwardAntigravity(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, source protocol.ProtocolID) (*forward.MessagesResult, error) {
+	SetActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
+	sticky, ok := requeststate.PrefetchedStickyProviderIDFromContext(ctx)
+	isSticky := ok && sticky == target.Record.ID
+	return e.Antigravity.ForwardConverted(ctx, c, target, source, body, isSticky)
+}
+
+// forwardQoderConverted executes one Qoder exchange through protocol/convert
+// while preserving same-target credential refresh, local RequestError 400
+// rejection, and pre-semantic provider failover. Switchable upstream failures
+// observed before any non-heartbeat client bytes are written return an
+// UpstreamFailoverError so outer attempt loops advance to the next provider.
+//
+// When a waiting keepalive heartbeat has already committed HTTP 200 SSE headers,
+// unrecoverable local or upstream failures emit an untimed client-protocol
+// terminal SSE error frame instead of trailing JSON. Retryable pre-output
+// errors remain unwritten during that initial attempt so credential refresh or
+// provider failover can still take over the open event stream.
+func (e *UnifiedTextExecutor) forwardQoderConverted(
+	ctx context.Context,
+	c *gin.Context,
+	target *gatewayadapter.ExecutionProvider,
+	body []byte,
+	source protocol.ProtocolID,
+) (*forward.MessagesResult, error) {
+	before := HeartbeatAdjustedWrittenSize(c)
+	result, err := forwardQoderAttempt(ctx, c, e.Qoder, &target.Record, body, source, true)
+	// Retry once on the same Qoder provider when credentials can refresh and no
+	// non-heartbeat client bytes were written during the initial attempt.
+	if err != nil && result == nil && HeartbeatAdjustedWrittenSize(c) == before && qoder.MayRefreshAttempt(err) && e.QoderRefresh != nil {
+		fresh, refreshErr := e.QoderRefresh.RefreshProviderSession(ctx, &target.Record)
+		if refreshErr == nil && fresh != nil {
+			target.Record = *fresh
+			result, err = forwardQoderAttempt(ctx, c, e.Qoder, &target.Record, body, source, true)
+		}
+	}
+	if local, ok := errors.AsType[*qoder.RequestError](err); ok {
+		// Map client request validation and model capability rejections to local
+		// HTTP 400 MODEL_CAPABILITY_UNSUPPORTED so outer scheduling skips failover.
+		failure := apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", local.Message).WithCause(err)
+		if CommittedSSE(c) {
+			model, _ := qoder.ExtractTopLevelModelJSON(body)
+			writeQoderCommittedTerminalError(c, source, http.StatusBadRequest, "invalid_request_error", local.Code, failure.Message, model)
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+		} else {
+			writeLocalTextError(c, source, failure, local.Code)
+		}
+		return nil, failure
+	}
+	if err == nil || result != nil {
+		return result, err
+	}
+	// Promote switchable pre-output upstream errors into UpstreamFailoverError so
+	// compatible text attempt loops fail over to the next candidate provider.
+	if HeartbeatAdjustedWrittenSize(c) == before && ctx.Err() == nil && qoder.MaySwitchAttempt(err) {
+		return nil, buildQoderFailoverError(err)
+	}
+	if !IsResponseCommitted(c) && !TerminalSSEDelivered(c) {
+		model, _ := qoder.ExtractTopLevelModelJSON(body)
+		if view := gatewayadapter.DescribeQoderError(err); view.Recognized {
+			SetOpsUpstreamError(c, view.SourceStatus, view.Message, "")
+			if CommittedSSE(c) || c.Writer.Written() {
+				writeQoderCommittedTerminalError(c, source, view.Status, view.Kind, "", view.Message, model)
+			} else if source == protocol.ProtocolAnthropicMessages {
+				WriteAnthropicError(c, view.Status, view.Kind, "", view.Message)
+				MarkResponseCommitted(c)
+			} else {
+				DefaultOpenAIErrorOutput().WriteError(c, view.Status, view.Kind, view.Message)
+				MarkResponseCommitted(c)
+			}
+		} else if CommittedSSE(c) && ctx.Err() == nil {
+			writeQoderCommittedTerminalError(c, source, http.StatusBadGateway, "upstream_error", "", "Upstream request failed", model)
+		}
+	}
+	return nil, err
+}
+
+// buildQoderFailoverError wraps a pre-semantic switchable Qoder error into an
+// UpstreamFailoverError carrying classified source and client HTTP metadata.
+// Unrecognized transport failures default to HTTP 502 Bad Gateway under the
+// provider inference scope.
+func buildQoderFailoverError(err error) *forward.UpstreamFailoverError {
+	view := gatewayadapter.DescribeQoderError(err)
+	statusCode := http.StatusBadGateway
+	clientStatus := 0
+	clientMessage := ""
+	var respBody []byte
+	if apiErr, ok := errors.AsType[*qoder.APIError](err); ok {
+		if apiErr.StatusCode > 0 {
+			statusCode = apiErr.StatusCode
+		}
+		if apiErr.Body != "" {
+			respBody = []byte(apiErr.Body)
+		}
+	}
+	if view.Recognized {
+		if view.SourceStatus > 0 {
+			statusCode = view.SourceStatus
+		}
+		clientStatus = view.Status
+		clientMessage = view.Message
+	}
+	return &forward.UpstreamFailoverError{
+		Platform:         provider.PlatformQoder,
+		StatusCode:       statusCode,
+		ResponseBody:     respBody,
+		Stage:            forward.GatewayFailureStageInference,
+		Scope:            forward.GatewayFailureScopeProvider,
+		ClientStatusCode: clientStatus,
+		ClientMessage:    clientMessage,
 	}
 }
 

@@ -1,294 +1,506 @@
 package provider
 
 import (
-	"encoding/json"
+	"bytes"
+	"context"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
+	"io"
+	"slices"
 	"strings"
 
-	"github.com/tidwall/gjson"
-
-	protocolforward "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
-	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
+	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// openai_responses_ingress_compat.go normalizes legacy Chat messages and
-// prompt aliases in Responses requests.
-// Legacy Responses ingress can contain Chat messages or a string prompt
-// alongside native Responses input. Nonnull input remains authoritative, so
-// conversion cannot silently replace its history or previous-response
-// relationship; message-derived history removes previous_response_id when it
-// is adopted as the complete input.
+// openai_responses_ingress_compat.go normalizes legacy Chat messages, string
+// prompt aliases, and commands fields in OpenAI Responses requests. Legacy
+// Responses ingress can carry Chat messages or a string prompt alongside native
+// Responses input; nonnull native input remains authoritative, whereas adopted
+// message history removes previous_response_id so inline history is not resolved
+// twice.
 //
-// Chat conversion supplies input plus scalar and tool fields, while raw
-// legacy-field inspection determines which converted tool, choice, and
-// reasoning values can replace existing data. String prompts are input
-// aliases, whereas object/array prompts stay available for upstream
-// validation. The decoder retains json.Number values in the surrounding map
-// and the body is published by final serialization; conversion of typed input
-// follows the bridge encoding rules.
+// Conversion translates Chat-shaped message subsets and controls via
+// protocol/convert and ordered jsontext members without routing tool schemas or
+// 64-bit integer literals through any or float64. Raw member inspection governs
+// whether converted tools, tool_choice, and reasoning replace top-level fields,
+// while object or array prompt templates stay untouched for upstream validation.
 
-// convertedLegacyResponsesMessages records converted Chat input and selected
-// legacy configuration fields.
-type convertedLegacyResponsesMessages struct {
-	input           any      // converted Responses input items
-	instructions    string   // converted system instruction text
-	maxOutputTokens *int     // optional converted output token cap
-	temperature     *float64 // optional converted sampling temperature
-	topP            *float64 // optional converted nucleus sampling
-	tools           any      // converted Responses tool declarations
-	reasoning       any      // converted Responses reasoning configuration
-	toolChoice      any      // converted Responses tool selection
-	serviceTier     string   // converted service tier text
-	// hasChatTools, hasChatToolChoice, and hasReasoningEffort track explicit legacy
-	// inputs independently of converter output. Adoption uses those flags to replace
-	// corresponding fields only when the Chat-shaped request actually supplied them.
-	hasChatTools       bool // explicit legacy tool declarations
-	hasChatToolChoice  bool // explicit legacy tool selection
-	hasReasoningEffort bool // explicit legacy reasoning effort
+// rawLegacyIngressMember preserves one top-level JSON object member in original
+// appearance order as a raw jsontext.Value slice.
+type rawLegacyIngressMember struct {
+	name  string         // decoded object member key
+	value jsontext.Value // untouched raw JSON member value
 }
 
-// NormalizeOpenAIResponsesLegacyIngress converts legacy Messages or string
-// prompt aliases to Responses input. Empty bodies return unchanged; invalid
-// decoding or conversion returns the supplied body with false and an error.
+// convertedLegacyResponsesMessages holds lossless jsontext.Value fields
+// produced by convertLegacyResponsesMessages without decoding through any.
+type convertedLegacyResponsesMessages struct {
+	input           jsontext.Value // converted Responses input array JSON
+	instructions    jsontext.Value // optional converted instructions string JSON
+	maxOutputTokens jsontext.Value // optional converted max_output_tokens JSON
+	temperature     jsontext.Value // optional converted temperature JSON
+	topP            jsontext.Value // optional converted top_p JSON
+	tools           jsontext.Value // optional converted Responses tools array JSON
+	reasoning       jsontext.Value // optional converted Responses reasoning JSON
+	toolChoice      jsontext.Value // optional converted Responses tool_choice JSON
+	serviceTier     jsontext.Value // optional converted service_tier string JSON
+	// hasChatTools, hasChatToolChoice, and hasReasoningEffort track explicit Chat
+	// legacy fields on the inbound object so applyLegacyResponsesTopLevelMembers
+	// never overwrites native Responses tools, tool_choice, or reasoning objects.
+	hasChatTools       bool // explicit Chat-style tools[] or legacy functions[]
+	hasChatToolChoice  bool // explicit Chat-style tool_choice or function_call
+	hasReasoningEffort bool // explicit non-blank top-level reasoning_effort
+}
+
+// NormalizeOpenAIResponsesLegacyIngress normalizes legacy Chat messages, string
+// prompt aliases, and commands fields in a Responses request body using
+// protocol/convert and ordered jsontext members. Empty bodies or valid JSON
+// objects without legacy fields return body byte-for-byte unchanged with false
+// and nil error, whereas non-object JSON, duplicate keys, or Chat conversion
+// failures return body with false and an error.
 //
-// A present nonnull native input wins over converted messages, including an
-// empty array. Converted message input receives compatible top-level fields
-// and loses previous_response_id because that history has been supplied
-// directly. The messages field is then removed; string prompt aliases are
-// removed after filling only absent/null input, while object or array prompts
-// remain. Serialization publishes the rebuilt body after all selected
-// mutations succeed.
+// Present non-null native input stays authoritative over converted messages,
+// retaining native tools, tool_choice, and previous_response_id while removing
+// messages. When native input is absent or null, converted message history
+// adopts compatible top-level controls, clears previous_response_id, and keeps
+// every untouched top-level or nested 64-bit integer and extension field intact.
 func NormalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	// Screen valid root objects with a zero-copy view so native Responses bodies
-	// lacking messages, prompt, and commands skip full-body UseNumber map decoding.
-	if gjson.ValidBytes(body) && !hasLegacyResponsesIngressFields(body) {
+	members, hasLegacyKeys, err := decodeRawLegacyIngressObject(body)
+	if err != nil {
+		return body, false, fmt.Errorf("normalize legacy Responses ingress: %w", err)
+	}
+	if !hasLegacyKeys {
 		return body, false, nil
 	}
 
-	var request map[string]any
-	if err := wirejson.DecodeUseNumber(body, &request); err != nil {
-		return body, false, fmt.Errorf("normalize legacy Responses ingress: %w", err)
-	}
-
 	changed := false
-	messagesValue, hasMessages := request["messages"]
-	if hasMessages {
-		messages, messagesAreArray := messagesValue.([]any)
-		if messagesAreArray && len(messages) > 0 {
-			legacy, err := convertLegacyResponsesMessages(body)
-			if err != nil {
-				return body, false, err
+	if msgVal, hasMessages := findRawLegacyMember(members, "messages"); hasMessages {
+		if isNonEmptyRawJSONArray(msgVal) {
+			legacy, convErr := convertLegacyResponsesMessages(members)
+			if convErr != nil {
+				return body, false, convErr
 			}
-
-			input, hasInput := request["input"]
-			hasNativeInput := hasInput && input != nil
-			// Message-derived history becomes complete input only when native input is
-			// absent or null. Remove its continuation ID so the same history is not resolved twice.
-			if !hasNativeInput {
-				request["input"] = legacy.input
-				applyLegacyResponsesTopLevelFields(request, legacy)
-				delete(request, "previous_response_id")
+			// Adopt converted Chat messages only when native input is absent or null,
+			// removing previous_response_id so inline history is not resolved twice.
+			if !hasNonNullRawLegacyMember(members, "input") {
+				upsertRawLegacyMember(&members, "input", legacy.input)
+				applyLegacyResponsesTopLevelMembers(&members, legacy)
+				deleteRawLegacyMember(&members, "previous_response_id")
 			}
 		}
-		// Responses forwarding consumes input, so remove the legacy messages alias
-		// after its adoption decision while retaining the selected authoritative history.
-		delete(request, "messages")
+		deleteRawLegacyMember(&members, "messages")
 		changed = true
 	}
 
-	if prompt, hasPrompt := request["prompt"]; hasPrompt {
-		// String prompts supply legacy text input. Object prompt templates and other
-		// shapes retain their own meaning, so leave them available for upstream validation.
-		if promptText, isLegacyString := prompt.(string); isLegacyString {
-			if input, hasInput := request["input"]; !hasInput || input == nil {
-				request["input"] = promptText
+	if promptVal, hasPrompt := findRawLegacyMember(members, "prompt"); hasPrompt {
+		trimmedPrompt := bytes.TrimSpace(promptVal)
+		// Only string prompt aliases translate into input; object prompt templates
+		// and array shapes stay untouched for upstream Responses validation.
+		if len(trimmedPrompt) > 0 && trimmedPrompt[0] == '"' {
+			if !hasNonNullRawLegacyMember(members, "input") {
+				upsertRawLegacyMember(&members, "input", jsontext.Value(bytes.Clone(trimmedPrompt)))
 			}
-			delete(request, "prompt")
+			deleteRawLegacyMember(&members, "prompt")
 			changed = true
 		}
 	}
-	if _, hasCommands := request["commands"]; hasCommands {
-		delete(request, "commands")
+
+	if _, hasCommands := findRawLegacyMember(members, "commands"); hasCommands {
+		deleteRawLegacyMember(&members, "commands")
 		changed = true
 	}
 
 	if !changed {
 		return body, false, nil
 	}
-	normalized, err := wirejson.Marshal(request)
+	normalized, err := marshalRawLegacyIngressObject(members)
 	if err != nil {
 		return body, false, fmt.Errorf("serialize legacy Responses ingress: %w", err)
 	}
 	return normalized, true, nil
 }
 
-// convertLegacyResponsesMessages decodes Chat input and uses the shared bridge
-// to build Responses fields. It rejects invalid conversion or empty encoded
-// input, and records raw legacy tool/choice presence separately so top-level
-// adoption only replaces the corresponding Chat-shaped fields.
-func convertLegacyResponsesMessages(body []byte) (convertedLegacyResponsesMessages, error) {
-	var converted convertedLegacyResponsesMessages
-	var chatRequest protocolopenai.ChatCompletionsRequest
-	if err := json.Unmarshal(body, &chatRequest); err != nil {
-		return converted, fmt.Errorf("normalize legacy Responses messages: %w", err)
-	}
-	responsesRequest, err := protocolbridge.ChatCompletionsToResponses(&chatRequest, protocolforward.ConversionOptionsForModel(chatRequest.Model))
-	if err != nil {
-		return converted, fmt.Errorf("normalize legacy Responses messages: %w", err)
-	}
-	if len(responsesRequest.Input) == 0 {
-		return converted, fmt.Errorf("normalize legacy Responses messages: empty input")
-	}
-	if err := json.Unmarshal(responsesRequest.Input, &converted.input); err != nil {
-		return converted, fmt.Errorf("decode normalized legacy Responses input: %w", err)
-	}
-
-	converted.instructions = strings.TrimSpace(responsesRequest.Instructions)
-	converted.maxOutputTokens = responsesRequest.MaxOutputTokens
-	converted.temperature = responsesRequest.Temperature
-	converted.topP = responsesRequest.TopP
-	converted.serviceTier = strings.TrimSpace(responsesRequest.ServiceTier)
-	converted.hasReasoningEffort = strings.TrimSpace(chatRequest.ReasoningEffort) != ""
-	if responsesRequest.Reasoning != nil {
-		converted.reasoning = responsesRequest.Reasoning
-	}
-
-	var rawRequest map[string]any
-	if err := wirejson.DecodeUseNumber(body, &rawRequest); err != nil {
-		return converted, fmt.Errorf("inspect legacy Responses fields: %w", err)
-	}
-	converted.hasChatTools = hasChatStyleTools(rawRequest) || rawRequest["functions"] != nil
-	if converted.hasChatTools && len(responsesRequest.Tools) > 0 {
-		converted.tools = responsesRequest.Tools
-	}
-	converted.hasChatToolChoice = hasChatStyleToolChoice(rawRequest) || rawRequest["function_call"] != nil
-	if converted.hasChatToolChoice && len(responsesRequest.ToolChoice) > 0 {
-		choice, err := normalizeLegacyResponsesToolChoice(responsesRequest.ToolChoice)
-		if err != nil {
-			return converted, err
-		}
-		converted.toolChoice = choice
-	}
-	return converted, nil
-}
-
-// hasChatStyleTools recognizes nested function objects inside a decoded tools
-// array. Other tool representations or non-array values return false, letting
-// legacy ingress preserve flat Responses declarations when no Chat encoding is
-// present.
-func hasChatStyleTools(request map[string]any) bool {
-	tools, ok := request["tools"].([]any)
-	if !ok {
-		return false
-	}
-	for _, rawTool := range tools {
-		tool, _ := rawTool.(map[string]any)
-		if _, ok := tool["function"].(map[string]any); ok {
-			return true
-		}
-	}
-	return false
-}
-
-// hasChatStyleToolChoice recognizes a nested function object in decoded
-// tool_choice. Other choice forms return false, leaving their adoption
-// decision to the legacy-field presence tracked during conversion.
-func hasChatStyleToolChoice(request map[string]any) bool {
-	choice, _ := request["tool_choice"].(map[string]any)
-	_, ok := choice["function"].(map[string]any)
-	return ok
-}
-
-// normalizeLegacyResponsesToolChoice decodes converted choice and flattens a
-// named nested function selection. Non-function choices, missing nested
-// objects, and blank names return their decoded value; invalid JSON returns a
-// contextual error.
-func normalizeLegacyResponsesToolChoice(raw json.RawMessage) (any, error) {
-	var choice any
-	if err := json.Unmarshal(raw, &choice); err != nil {
-		return nil, fmt.Errorf("normalize legacy Responses tool_choice: %w", err)
-	}
-	object, ok := choice.(map[string]any)
-	if !ok || strings.TrimSpace(openai.FirstNonEmptyString(object["type"])) != "function" {
-		return choice, nil
-	}
-	function, ok := object["function"].(map[string]any)
-	if !ok {
-		return choice, nil
-	}
-	name := strings.TrimSpace(openai.FirstNonEmptyString(function["name"]))
-	if name == "" {
-		return choice, nil
-	}
-	// Responses function choice uses a flat name beside type; retaining the
-	// nested Chat function object would give the selected endpoint another request shape.
-	return map[string]any{"type": "function", "name": name}, nil
-}
-
-// applyLegacyResponsesTopLevelFields installs selected converted fields after
-// legacy messages become authoritative input. The writable request retains
-// nonblank instructions, receives available scalar conversions, and removes
-// deprecated Chat top-level spellings.
+// convertLegacyResponsesMessages converts the Chat-shaped member subset of
+// members into lossless jsontext.Value Responses fields through
+// convert.NewExchange. Malformed Chat message arrays, dialect conversion
+// failures, or empty converted input slices return an error without mutating
+// caller-supplied members.
 //
-// Tool and choice replacement depends on their recorded Chat-shaped presence,
-// while reasoning replacement requires explicit Chat reasoning effort. This
-// keeps preexisting Responses forms from being overwritten by converter
-// defaults when no matching legacy input was supplied. The conversion result
-// is temporary data; NormalizeOpenAIResponsesLegacyIngress serializes the
-// request only after adoption.
-func applyLegacyResponsesTopLevelFields(request map[string]any, legacy convertedLegacyResponsesMessages) {
-	if legacy.instructions != "" && strings.TrimSpace(openai.FirstNonEmptyString(request["instructions"])) == "" {
-		request["instructions"] = legacy.instructions
+// Sub-request assembly copies only Chat-compatible controls (model, messages,
+// token caps, sampling scalars, service_tier, explicit reasoning_effort, nested
+// function tools or tool_choice, and deprecated functions or function_call).
+// Leaving flat Responses tools, tool_choice, and reasoning objects outside that
+// temporary sub-request prevents codec/chat from rejecting hybrid requests while
+// preserving 64-bit integer bounds and unmodeled schema keywords.
+func convertLegacyResponsesMessages(members []rawLegacyIngressMember) (convertedLegacyResponsesMessages, error) {
+	var out convertedLegacyResponsesMessages
+
+	modelVal, _ := findRawLegacyMember(members, "model")
+	modelStr := decodeOptionalJSONString(modelVal)
+
+	toolsVal, hasTools := findRawLegacyMember(members, "tools")
+	functionsVal, hasFunctions := findRawLegacyMember(members, "functions")
+	out.hasChatTools = (hasTools && hasChatStyleToolsRaw(toolsVal)) || (hasFunctions && isNonNullRawJSON(functionsVal))
+
+	tcVal, hasTC := findRawLegacyMember(members, "tool_choice")
+	fnCallVal, hasFnCall := findRawLegacyMember(members, "function_call")
+	out.hasChatToolChoice = (hasTC && hasChatStyleToolChoiceRaw(tcVal)) || (hasFnCall && isNonNullRawJSON(fnCallVal))
+
+	effortVal, _ := findRawLegacyMember(members, "reasoning_effort")
+	out.hasReasoningEffort = strings.TrimSpace(decodeOptionalJSONString(effortVal)) != ""
+
+	var chatSub []rawLegacyIngressMember
+	for _, key := range []string{"model", "messages", "max_tokens", "max_completion_tokens", "temperature", "top_p", "service_tier"} {
+		if val, ok := findRawLegacyMember(members, key); ok {
+			chatSub = append(chatSub, rawLegacyIngressMember{name: key, value: val})
+		}
 	}
-	if legacy.maxOutputTokens != nil {
-		request["max_output_tokens"] = *legacy.maxOutputTokens
+	if out.hasReasoningEffort {
+		chatSub = append(chatSub, rawLegacyIngressMember{name: "reasoning_effort", value: effortVal})
 	}
-	if legacy.temperature != nil {
-		request["temperature"] = *legacy.temperature
+	if out.hasChatTools {
+		if hasTools && hasChatStyleToolsRaw(toolsVal) {
+			chatSub = append(chatSub, rawLegacyIngressMember{name: "tools", value: toolsVal})
+		}
+		if hasFunctions && isNonNullRawJSON(functionsVal) {
+			chatSub = append(chatSub, rawLegacyIngressMember{name: "functions", value: functionsVal})
+		}
 	}
-	if legacy.topP != nil {
-		request["top_p"] = *legacy.topP
+	if out.hasChatToolChoice {
+		if hasTC && hasChatStyleToolChoiceRaw(tcVal) {
+			chatSub = append(chatSub, rawLegacyIngressMember{name: "tool_choice", value: tcVal})
+		} else if hasFnCall && isNonNullRawJSON(fnCallVal) {
+			chatSub = append(chatSub, rawLegacyIngressMember{name: "function_call", value: fnCallVal})
+		}
 	}
-	if legacy.hasChatTools && legacy.tools != nil {
-		request["tools"] = legacy.tools
+
+	subBody, err := marshalRawLegacyIngressObject(chatSub)
+	if err != nil {
+		return out, fmt.Errorf("normalize legacy Responses messages: %w", err)
 	}
-	if legacy.hasReasoningEffort && legacy.reasoning != nil {
-		request["reasoning"] = legacy.reasoning
+
+	dialect := legacyIngressChatToResponsesDialect(modelStr)
+	ex, err := convert.NewExchange(subBody, convert.Options{
+		Route: convert.Route{
+			Client:   protocol.ProtocolOpenAIChatCompletions,
+			Upstream: protocol.ProtocolOpenAIResponses,
+			Dialect:  dialect,
+		},
+	})
+	if err != nil {
+		return out, fmt.Errorf("normalize legacy Responses messages: %w", err)
 	}
-	if legacy.hasChatToolChoice && legacy.toolChoice != nil {
-		request["tool_choice"] = legacy.toolChoice
+	convertedBytes, err := ex.UpstreamRequest()
+	if err != nil {
+		return out, fmt.Errorf("normalize legacy Responses messages: %w", err)
 	}
-	if legacy.serviceTier != "" {
-		request["service_tier"] = legacy.serviceTier
+
+	var encoded struct {
+		Input           jsontext.Value            `json:"input"`             // converted Responses input item array
+		Instructions    jsontext.Value            `json:"instructions"`      // converted system instructions string
+		MaxOutputTokens jsontext.Value            `json:"max_output_tokens"` // converted output token cap
+		Temperature     jsontext.Value            `json:"temperature"`       // converted sampling temperature scalar
+		TopP            jsontext.Value            `json:"top_p"`             // converted nucleus sampling scalar
+		Tools           jsontext.Value            `json:"tools"`             // converted flat Responses tool array
+		Reasoning       jsontext.Value            `json:"reasoning"`         // converted Responses reasoning configuration
+		ToolChoice      jsontext.Value            `json:"tool_choice"`       // converted Responses tool selection
+		ServiceTier     jsontext.Value            `json:"service_tier"`      // converted upstream service tier string
+		Unknown         map[string]jsontext.Value `json:",embed"`            // unused converted sibling members
+	}
+	dec := jsontext.NewDecoder(bytes.NewReader(convertedBytes), jsontext.AllowInvalidUTF8(true))
+	if err := jsonv2.UnmarshalDecode(dec, &encoded); err != nil {
+		return out, fmt.Errorf("decode normalized legacy Responses input: %w", err)
+	}
+	if len(bytes.TrimSpace(encoded.Input)) == 0 {
+		return out, fmt.Errorf("normalize legacy Responses messages: empty input")
+	}
+
+	out.input = encoded.Input
+	out.instructions = encoded.Instructions
+	out.maxOutputTokens = encoded.MaxOutputTokens
+	out.temperature = encoded.Temperature
+	out.topP = encoded.TopP
+	out.serviceTier = encoded.ServiceTier
+	if out.hasChatTools && len(bytes.TrimSpace(encoded.Tools)) > 0 {
+		out.tools = encoded.Tools
+	}
+	if out.hasReasoningEffort && len(bytes.TrimSpace(encoded.Reasoning)) > 0 {
+		out.reasoning = encoded.Reasoning
+	}
+	if out.hasChatToolChoice && len(bytes.TrimSpace(encoded.ToolChoice)) > 0 {
+		out.toolChoice = encoded.ToolChoice
+	}
+	return out, nil
+}
+
+// legacyIngressChatToResponsesDialect constructs the OpenAI Responses target
+// dialect for legacy Chat-messages ingress normalization, retaining full
+// Responses tool support before final provider routing.
+func legacyIngressChatToResponsesDialect(model string) convert.Dialect {
+	return ConversionDialect(
+		context.Background(),
+		nil,
+		modelrules.Resolution{
+			Target: modelrules.Target{
+				Platform:         capability.PlatformOpenAI,
+				ProviderType:     capability.ProviderTypeOAuth,
+				Model:            model,
+				UpstreamProtocol: string(protocol.ProtocolOpenAIResponses),
+			},
+		},
+		protocol.ProtocolOpenAIResponses,
+	)
+}
+
+// applyLegacyResponsesTopLevelMembers merges converted Chat fields from legacy
+// into members and strips deprecated Chat-only top-level member keys. Existing
+// native Responses tools, tool_choice, and reasoning values remain untouched
+// when no corresponding Chat-shaped field was supplied.
+func applyLegacyResponsesTopLevelMembers(members *[]rawLegacyIngressMember, legacy convertedLegacyResponsesMessages) {
+	if strings.TrimSpace(decodeOptionalJSONString(legacy.instructions)) != "" {
+		existingInst, _ := findRawLegacyMember(*members, "instructions")
+		if strings.TrimSpace(decodeOptionalJSONString(existingInst)) == "" {
+			upsertRawLegacyMember(members, "instructions", legacy.instructions)
+		}
+	}
+	if isNonNullRawJSON(legacy.maxOutputTokens) {
+		upsertRawLegacyMember(members, "max_output_tokens", legacy.maxOutputTokens)
+	}
+	if isNonNullRawJSON(legacy.temperature) {
+		upsertRawLegacyMember(members, "temperature", legacy.temperature)
+	}
+	if isNonNullRawJSON(legacy.topP) {
+		upsertRawLegacyMember(members, "top_p", legacy.topP)
+	}
+	if legacy.hasChatTools && isNonNullRawJSON(legacy.tools) {
+		upsertRawLegacyMember(members, "tools", legacy.tools)
+	}
+	if legacy.hasReasoningEffort && isNonNullRawJSON(legacy.reasoning) {
+		upsertRawLegacyMember(members, "reasoning", legacy.reasoning)
+	}
+	if legacy.hasChatToolChoice && isNonNullRawJSON(legacy.toolChoice) {
+		upsertRawLegacyMember(members, "tool_choice", legacy.toolChoice)
+	}
+	if strings.TrimSpace(decodeOptionalJSONString(legacy.serviceTier)) != "" {
+		upsertRawLegacyMember(members, "service_tier", legacy.serviceTier)
 	}
 	for _, key := range []string{"max_tokens", "max_completion_tokens", "reasoning_effort", "functions", "function_call"} {
-		delete(request, key)
+		deleteRawLegacyMember(members, key)
 	}
 }
 
-// hasLegacyResponsesIngressFields reports whether a validated JSON document is a
-// non-object (which DecodeUseNumber rejects) or carries top-level messages,
-// prompt, or commands fields requiring legacy ingress normalization.
-func hasLegacyResponsesIngressFields(body []byte) bool {
-	root := wirejson.ParseView(body)
-	if !root.IsObject() {
-		return true
+// decodeRawLegacyIngressObject parses body as one JSON object with invalid-UTF-8
+// tolerance and duplicate-key rejection, returning ordered top-level members.
+// Non-object roots, duplicate keys, or trailing tokens return an error.
+func decodeRawLegacyIngressObject(body []byte) ([]rawLegacyIngressMember, bool, error) {
+	dec := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil {
+		return nil, false, err
 	}
-	found := false
-	root.ForEach(func(key, _ gjson.Result) bool {
-		switch key.String() {
-		case "messages", "prompt", "commands":
-			found = true
-			return false
-		default:
-			return true
+	if tok.Kind() != '{' {
+		return nil, false, errors.New("JSON root must be an object")
+	}
+
+	var members []rawLegacyIngressMember
+	seen := make(map[string]bool)
+	hasLegacy := false
+	for dec.PeekKind() != '}' {
+		keyTok, kErr := dec.ReadToken()
+		if kErr != nil {
+			return nil, false, kErr
 		}
-	})
-	return found
+		name := keyTok.String()
+		if seen[name] {
+			return nil, false, fmt.Errorf("duplicate JSON object key %q", name)
+		}
+		seen[name] = true
+		switch name {
+		case "messages", "prompt", "commands":
+			hasLegacy = true
+		}
+		val, vErr := dec.ReadValue()
+		if vErr != nil {
+			return nil, false, vErr
+		}
+		members = append(members, rawLegacyIngressMember{
+			name:  name,
+			value: bytes.Clone(val),
+		})
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return nil, false, err
+	}
+	if _, err := dec.ReadToken(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, false, errors.New("multiple JSON values are not allowed")
+		}
+		return nil, false, err
+	}
+	return members, hasLegacy, nil
+}
+
+// marshalRawLegacyIngressObject writes members as a compact UTF-8 JSON object
+// without HTML escaping or trailing newlines. Each member value is compacted
+// before writing, and invalid raw JSON returns an error.
+func marshalRawLegacyIngressObject(members []rawLegacyIngressMember) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := jsontext.NewEncoder(&buf, jsontext.AllowInvalidUTF8(true))
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		if err := enc.WriteToken(jsontext.String(m.name)); err != nil {
+			return nil, err
+		}
+		val := jsontext.Value(bytes.Clone(m.value))
+		if err := val.Compact(); err != nil {
+			return nil, err
+		}
+		if err := enc.WriteValue(val); err != nil {
+			return nil, err
+		}
+	}
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
+// findRawLegacyMember scans members in appearance order for key and returns its
+// stored raw JSON value with true when present. Missing keys return nil and
+// false without allocating or mutating members, and callers must not modify the
+// returned slice in place.
+func findRawLegacyMember(members []rawLegacyIngressMember, key string) (jsontext.Value, bool) {
+	for _, m := range members {
+		if m.name == key {
+			return m.value, true
+		}
+	}
+	return nil, false
+}
+
+// hasNonNullRawLegacyMember reports whether key appears in members with a
+// non-blank value other than literal JSON null. Absent keys and explicit null
+// values both return false so legacy fallbacks can populate missing inputs.
+func hasNonNullRawLegacyMember(members []rawLegacyIngressMember, key string) bool {
+	val, ok := findRawLegacyMember(members, key)
+	return ok && isNonNullRawJSON(val)
+}
+
+// upsertRawLegacyMember replaces the value of key at its existing index when
+// present or appends a new entry at the end of members. The stored jsontext
+// bytes are cloned from val so callers retain independent ownership of their
+// input slice.
+func upsertRawLegacyMember(members *[]rawLegacyIngressMember, key string, val jsontext.Value) {
+	cloned := jsontext.Value(bytes.Clone(val))
+	for i := range *members {
+		if (*members)[i].name == key {
+			(*members)[i].value = cloned
+			return
+		}
+	}
+	*members = append(*members, rawLegacyIngressMember{name: key, value: cloned})
+}
+
+// deleteRawLegacyMember removes every member matching key from members in place
+// while compacting the backing slice. All surviving entries retain their
+// original relative appearance order and raw JSON byte slices.
+func deleteRawLegacyMember(members *[]rawLegacyIngressMember, key string) {
+	out := (*members)[:0]
+	for _, m := range *members {
+		if m.name != key {
+			out = append(out, m)
+		}
+	}
+	*members = out
+}
+
+// isNonNullRawJSON reports whether raw is non-empty after trimming whitespace and is not literal JSON null.
+func isNonNullRawJSON(raw jsontext.Value) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+}
+
+// isNonEmptyRawJSONArray reports whether raw begins a JSON array containing at
+// least one element. Non-array or malformed inputs return false so legacy
+// ingress removes non-array messages fields without invoking Chat conversion.
+func isNonEmptyRawJSONArray(raw jsontext.Value) bool {
+	dec := jsontext.NewDecoder(bytes.NewReader(raw), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '[' {
+		// Treat non-array or unreadable messages values as empty so outer ingress
+		// drops the legacy alias without attempting Chat message conversion.
+		return false
+	}
+	return dec.PeekKind() != ']' && dec.PeekKind() != 0
+}
+
+// hasChatStyleToolsRaw reports whether raw is a JSON array containing at least
+// one tool object with a nested JSON object under its "function" member.
+// Non-array or flat Responses tool declarations return false.
+func hasChatStyleToolsRaw(raw jsontext.Value) bool {
+	var elems []jsontext.Value
+	dec := jsontext.NewDecoder(bytes.NewReader(raw), jsontext.AllowInvalidUTF8(true))
+	if err := jsonv2.UnmarshalDecode(dec, &elems); err != nil {
+		// Non-array tools values cannot carry Chat function declarations, so leave
+		// them untouched on the outer request for upstream validation.
+		return false
+	}
+	return slices.ContainsFunc(elems, hasNestedFunctionObjectRaw)
+}
+
+// hasChatStyleToolChoiceRaw reports whether raw is a JSON object containing a
+// nested JSON object under its "function" member. String selectors and flat
+// Responses tool_choice objects return false.
+func hasChatStyleToolChoiceRaw(raw jsontext.Value) bool {
+	return hasNestedFunctionObjectRaw(raw)
+}
+
+// hasNestedFunctionObjectRaw reports whether raw is a JSON object whose
+// "function" member is itself a JSON object. Scalar, array, or flat tool
+// objects without a nested function member return false.
+func hasNestedFunctionObjectRaw(raw jsontext.Value) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+	var obj struct {
+		Function jsontext.Value            `json:"function"` // candidate nested function member value
+		Unknown  map[string]jsontext.Value `json:",embed"`   // remaining tool or choice members
+	}
+	dec := jsontext.NewDecoder(bytes.NewReader(trimmed), jsontext.AllowInvalidUTF8(true))
+	if err := jsonv2.UnmarshalDecode(dec, &obj); err != nil {
+		// Ignore malformed candidate tool entries here so flat or custom shapes do
+		// not masquerade as Chat function wrappers.
+		return false
+	}
+	fn := bytes.TrimSpace(obj.Function)
+	return len(fn) > 0 && fn[0] == '{'
+}
+
+// decodeOptionalJSONString decodes raw when it is a JSON string literal and
+// otherwise returns an empty string. Non-string values stay silent because
+// callers use empty strings to detect absent or non-scalar optional fields.
+func decodeOptionalJSONString(raw jsontext.Value) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '"' {
+		return ""
+	}
+	var out string
+	dec := jsontext.NewDecoder(bytes.NewReader(trimmed), jsontext.AllowInvalidUTF8(true))
+	if err := jsonv2.UnmarshalDecode(dec, &out); err != nil {
+		// Return empty on malformed string tokens because validated object members
+		// only reach here after root decoding has already checked syntax.
+		return ""
+	}
+	return out
 }

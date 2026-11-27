@@ -1,0 +1,27 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "inlineData": {
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        },
+        {
+          "fileData": {
+            "mimeType": "image/png",
+            "fileUri": "https://assets.example.com/diagrams/architecture-overview.png"
+          }
+        },
+        {
+          "text": "Compare the inline PNG calibration swatch with the remote architecture diagram and state whether their aspect ratios match."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

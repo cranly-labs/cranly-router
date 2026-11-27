@@ -1,0 +1,19 @@
+{
+  "id": "gem_refusal",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "I cannot provide instructions for bypassing authentication controls or extracting active session credentials."
+    }
+  ],
+  "finish": {
+    "reason": "content_filter"
+  },
+  "usage": {
+    "input": 46,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 14
+  }
+}

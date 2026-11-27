@@ -1,0 +1,45 @@
+{
+  "id": "chatcmpl_tool_parallel_interleaved",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_interleaved_1",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Tokyo\"}"
+            }
+          },
+          {
+            "id": "call_interleaved_2",
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "arguments": "{\"timezone\":\"Asia/Tokyo\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 52,
+    "completion_tokens": 28,
+    "total_tokens": 80,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

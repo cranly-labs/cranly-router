@@ -1,0 +1,38 @@
+{
+  "id": "chatcmpl_tool_parallel_interleaved",
+  "model": "gpt-4o",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_interleaved_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": "{\"city\":\"Tokyo\"}"
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_interleaved_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_time"
+        },
+        "arguments": "{\"timezone\":\"Asia/Tokyo\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 52,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 28
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "msg_reasoning_tool_replay",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "SKU-42 has 4 units against a reorder point of 20; now query SKU-99 stock.",
+      "signature": "EqQBCgIYAiJAc2t1Xzk5X3RoaW5raW5nX3NpZ190dXJuXzAy"
+    },
+    {
+      "type": "redacted_thinking",
+      "data": "EmwKAhgCIkByZWRhY3RlZF9pbnZlbnRvcnlfZGF0YV90dXJuXzAy"
+    },
+    {
+      "type": "tool_use",
+      "id": "call_inv_sku99_2",
+      "name": "query_inventory",
+      "input": {
+        "sku": "SKU-99"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 96,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 52
+  }
+}

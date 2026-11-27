@@ -95,20 +95,6 @@ func ChatChunkStartsResponsesOutput(chunk *ChatCompletionsChunk) bool {
 	return false
 }
 
-// ChatCompletionsChunkHasToolCallDelta reports whether any choice contains
-// tool-call records in its delta.
-func ChatCompletionsChunkHasToolCallDelta(chunk *ChatCompletionsChunk) bool {
-	if chunk == nil {
-		return false
-	}
-	for _, choice := range chunk.Choices {
-		if len(choice.Delta.ToolCalls) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // OpenAIChatCompletionServiceTierEventType returns response.completed for
 // usage-only payloads or choices with a nonblank gjson finish-reason string.
 // Other payloads return empty text; this classification supplies metadata

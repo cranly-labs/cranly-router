@@ -16,7 +16,6 @@ import (
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -92,7 +91,7 @@ func (b *nativeGeminiAttemptBridge) Select(excluded map[int64]struct{}) (textflo
 		} else {
 			b.reqLog.Info("gemini.sticky_session_provider_switched", zap.Int64("from_provider_id", change.PreviousProviderID), zap.Int64("to_provider_id", b.provider.Record.ID), zap.Bool("clean_thought_signature", true))
 		}
-		b.body = protocolgemini.CleanNativeThoughtSignatures(b.body, bridge.DummyThoughtSignature)
+		b.body = protocolgemini.CleanNativeThoughtSignatures(b.body, protocolgemini.DummyThoughtSignature)
 	}
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }

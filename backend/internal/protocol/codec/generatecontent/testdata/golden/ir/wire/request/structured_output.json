@@ -1,0 +1,48 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Summarize the health of edge-gateway: all probes passed, 5xx fraction is 0.0015, and no incidents are open."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256,
+  "output": {
+    "kind": "json_schema",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string",
+          "description": "Canonical service identifier"
+        },
+        "healthy": {
+          "type": "boolean",
+          "description": "Whether all SLO probes passed"
+        },
+        "error_rate": {
+          "type": "number",
+          "description": "Observed 5xx fraction between 0 and 1"
+        },
+        "open_incidents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "service",
+        "healthy",
+        "error_rate",
+        "open_incidents"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

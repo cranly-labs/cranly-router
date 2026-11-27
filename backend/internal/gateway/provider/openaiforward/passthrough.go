@@ -19,7 +19,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -234,13 +233,18 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	// Lower client tools for non-Compact API Key passthrough before exchange,
 	// retaining request-local mappings so response wrappers can restore the
 	// caller's tool representation.
-	if profile.OpenAI && profile.APIKey &&
-		!p.CompactPath() && protocolbridge.NeedsOpenAIResponsesClientToolAdaptation(body) {
-		adaptedBody, adaptErr := p.AdaptClientTools(body)
-		if adaptErr != nil {
-			return nil, adaptErr
+	if profile.OpenAI && profile.APIKey && !p.CompactPath() {
+		adaptModel := strings.Clone(strings.TrimSpace(wirejson.ParseView(body).Get("model").String()))
+		if adaptModel == "" {
+			adaptModel = reqModel
 		}
-		body = adaptedBody
+		if p.NeedsClientToolAdaptation(ctx, adaptModel, body) {
+			adaptedBody, adaptErr := p.AdaptClientTools(ctx, adaptModel, body)
+			if adaptErr != nil {
+				return nil, adaptErr
+			}
+			body = adaptedBody
+		}
 	}
 
 	// Clean empty base64 image placeholders after client-tool preparation so late
@@ -300,6 +304,17 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		imageBillingModel = imageCfg.Model
 		imageSizeTier = imageCfg.SizeTier
 		imageInputSize = imageCfg.InputSize
+	}
+
+	if !p.CompactPath() {
+		// Unpack matching trc1 encrypted_content or strip cross-account and
+		// foreign envelopes after store=false compatibility checks so retained
+		// reasoning summaries survive OpenAI API Key normalization intact.
+		rewritten, prepErr := p.PrepareNativeResponsesReplay(ctx, policyModel, body)
+		if prepErr != nil {
+			return nil, prepErr
+		}
+		body = rewritten
 	}
 
 	logging.LegacyPrintf(

@@ -86,7 +86,7 @@ Messages 转 OpenAI 的提示缓存摘要按提供商与 API Key 隔离命名空
 
 ### 报文、流生命周期与 usage 兼容
 
-协议编解码与跨协议转换归 `protocol/openai` 和 `protocol/bridge`，平台单次执行与响应读取归 `upstream/openai`，全局故障转移循环统一在 `gateway/text`（WS 在 `gateway/ws`）。跨协议转换合并稀疏用量时优先采用嵌套终态字段，区分显式零与缺失字段，详见[客户端用量与缓存](protocol_capabilities.md#client_usage_cache)。
+原生报文归 `protocol/openai`，跨协议转换与同协议客户端工具适配归 `protocol/convert` 和 `protocol/codec/*`，平台单次执行与响应读取归 `upstream/openai`，全局故障转移循环统一在 `gateway/text`（WS 在 `gateway/ws`）。跨协议转换合并稀疏用量时优先采用嵌套终态字段，区分显式零与缺失字段，详见[客户端用量与缓存](protocol_capabilities.md#client_usage_cache)。
 
 HTTP Responses（标准流与透传流）额外兼容以下第三方事件形态（仅限 HTTP，不影响 WS 与其他协议）：
 
@@ -96,8 +96,6 @@ HTTP Responses（标准流与透传流）额外兼容以下第三方事件形态
 - 同一 Response ID 的重复成功终态仅下发一次，后续用量仍参与解析；缺少终态的断流不会补成成功。
 
 非流式 OpenAI 兼容响应的 usage 按 `usage` > `response.usage` > `data.usage` > `data.response.usage` 顺序解析，同层读取 hosted image usage，避免混用不同 envelope。
-
-推理历史缓存（`ReasoningHistory`）保留客户端 reasoning item ID，TTL 7 天、单次操作预算 2 秒；读取失败放行，写入失败仅记日志，缓存过期或丢失后不可恢复。
 
 <a id="images_url_backfill"></a>
 ## 图片与 GIF
@@ -159,7 +157,7 @@ API Key 提供商设置 `extra.images_url_to_b64_json=true`（默认关闭）后
 
 分组可配置 `max_reasoning_effort` 与超限动作 `max_reasoning_effort_over_limit`（默认 `downgrade`，可选 `deny`）：
 
-- 仅作用于客户端显式传入的 `reasoning.effort`、`reasoning_effort` 或 Messages `output_config.effort`；兼容桥补齐的默认 `medium` 不受影响。
+- 仅作用于客户端显式传入的 `reasoning.effort`、`reasoning_effort` 或 Messages `output_config.effort`；跨协议转换补齐的默认 `medium` 不受影响。
 - 先执行分组模型范围映射，再按 `minimal < low < medium < high < xhigh < max` 比较（`none` 仅可用于映射，不参与上限排序）。
 - `downgrade` 将超限值压到上限；`deny` 在 HTTP 返回 403 `permission_error`，Messages 返回 `forbidden_error`，Responses WS 以 policy-violation 关闭。
 
@@ -211,13 +209,15 @@ TokenRouter 同时支持原生 Remote Compaction V2 与旧版 `/responses/compac
 - Responses Lite：仅由 HTTP 头 `X-OpenAI-Internal-Codex-Responses-Lite: true` 或 WS `client_metadata` 标记识别（不看模型名）。所有带 Lite 标记的 OpenAI 请求强制 `parallel_tool_calls=false`；OAuth 额外设置 `reasoning.context=all_turns` 并将私有 namespace 工具移入 `input.additional_tools`。OAuth Lite 若已在 `input` 的 developer 消息提供非空指令，允许省略顶层 `instructions`。
 - Anthropic `count_tokens`：OAuth 提供商调用 Responses `input_tokens` 端点；遇缺少 scope、端点不存在或代理返回 HTML 403 时回退本地 token 估算并返回成功，不冷却或标错提供商。
 
-### namespace、工具 ID 与 Chat 降级
+### namespace、工具适配与跨协议 Chat 规则
 
 - 原生 namespace 保留：普通 Responses 保留 `function_call`、`tool_call`、`custom_tool_call`、`mcp_tool_call` 历史项的 `namespace`，清理非调用项上的残留值。上游 HTTP 400 拒绝特定 `input[i].namespace` 时仅删该索引（`Missing namespace` 不删），受 6 次恢复预算与重复报文检查约束。
-- 转换与平铺：转 Chat 或 function-only Responses 时，默认 `functions` 命名空间保留裸名，其他显式 namespace 生成稳定平铺名并在响应阶段还原；压缩后声明缺失的历史带 namespace 调用仅分配当次输入回放名（冲突时加摘要后缀），不进入工具声明与后续 WS 工具集。WS 桥接在后续轮次省略 `tools` 时复用前声明，显式空值清空；每次故障转移清空上次尝试的映射。OAuth 兼容中转不接受 namespace 时可开启 `extra.openai_responses_flatten_namespaces=true`。
-- 工具 ID 校验与转换：API Key Responses 校验输入项 ID 前缀（message=`msg`、工具=`fc`、reasoning=`rs`），类型不匹配直接删除。兼容层将 function-only 上游的 `fc_` 还原为 `custom_tool_call`（`ctc_`）或 `tool_search_call`（`tsc_`），再次降级时还原为 `fc_`。进入转发前统一将显式 `parameters.type: null` 修正为 `object`（省略 `type` 的宽松 schema 保持原样）。
-- Responses 降级到 Chat：工具结果中的图片（`input_image` / `image_url` / data URL）按 `call_id` 抽出，原位置替换为稳定标记并在该组工具回复后追加用户多模态消息，无图片结果保持原始字节以保护提示缓存前缀。
-- Messages 强制走 Chat：并行 `tool_calls` 按 `index` 聚合，流结束时按序发出完整 `content_block_start` / `input_json_delta` / `content_block_stop`（聚合期间发送下游空闲保活，文本与 thinking 即时流式输出）。空参数归一为 `{}`，`disable_parallel_tool_use=true` 映射为 `parallel_tool_calls=false`。
+- 同协议与跨协议工具降级：仅支持普通函数的 Responses 上游经 `AdaptResponsesTools` 与 `NewResponsesToolStream` 轻量改写客户端工具条目，跨协议路线共用 `ToolMap` 还原（见[工具适配](../architecture/protocol_conversion.md#tool_adaptation)）。
+- 命名空间与会话继承：默认 `functions` 保留裸名，显式 namespace 生成确定性平铺名；WS 桥跨预热与省略 `tools` 轮继承 `ToolMap`（空值清空），OAuth 中转可开启 `extra.openai_responses_flatten_namespaces=true`。
+- 工具 ID 与 Schema：API Key Responses 删除前缀不匹配的输入项 ID，`protocol/convert` 在 `fc_` 与 `ctc_`、`tsc_` 间双向转换，进入转发前统一将显式 `parameters.type: null` 修正为 `object`。
+- 原生重放解封：原生 HTTP/WS Responses 与 `/v1/responses/input_tokens` 出站前经 `PrepareNativeReplay` 解封同提供商 `trc1:openai` 密文或清理异源及跨账号信封，会话失效密文摘要按内部签发方原文计算哈希。
+- Responses 降级到 Chat：从 `reasoning.encrypted_content` 内的 `trc1:plain` 信封恢复历史 `reasoning_content`；工具结果图片按 `call_id` 抽出，在 `tool` 与紧邻 `user` 消息写入归属标记并以确定性键序编码。
+- Messages 走 Chat 上游：活动工具调用收到 `tool_calls` 分片时实时写出 `input_json_delta`，交错并行槽位由 `ir.Sequencer` 缓冲并在当前块闭合后按序释放，上游 `reasoning_content` 封装为 `trc1:plain`；空参数归一为 `{}`，`disable_parallel_tool_use=true` 映射为 `parallel_tool_calls=false`。
 
 ## 模型与能力
 

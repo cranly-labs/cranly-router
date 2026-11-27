@@ -1,0 +1,37 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "check_gateway_health",
+          "description": "Checks health metrics for a gateway service.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "service": {
+                "type": "STRING",
+                "description": "Service slug to inspect"
+              }
+            },
+            "required": [
+              "service"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Check edge-gateway health and report active incidents."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

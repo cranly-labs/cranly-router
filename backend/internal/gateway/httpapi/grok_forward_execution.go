@@ -17,9 +17,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
@@ -53,6 +55,9 @@ type grokForwardAdapter struct {
 // framing is already committed after an earlier attempt's heartbeat, it emits a
 // terminal protocol SSE error frame instead of appending raw JSON.
 func WriteGrokForwardInvalidRequest(c *gin.Context, message, param string) {
+	if c == nil {
+		return
+	}
 	MarkResponseCommitted(c)
 	if CommittedSSE(c) {
 		writeCommittedClientSSEError(c, http.StatusBadRequest, "invalid_request_error", "", message)
@@ -77,7 +82,32 @@ func (a *grokForwardAdapter) options() grokforward.Options {
 		return result.Attributes, err
 	}, Codec: grok.BodyCodec{
 		NewID: uuid.NewString,
-	}, MaxLineSize: maxLine, Enter: a.s.Enter}
+	}, MaxLineSize: maxLine, Enter: a.s.Enter, ResolveDialect: func(ctx context.Context, model string, body []byte) convert.Dialect {
+		if ctx == nil && a.c != nil && a.c.Request != nil {
+			ctx = a.c.Request.Context()
+		}
+		var res modelrules.Resolution
+		// Fall back to zero resolution when optional attribute lookup is absent or fails
+		// so Grok provider tool support still governs client-tool lowering.
+		if resolved, err := gatewayprovider.ResolveModelAttributes(ctx, a.provider, model, a.s.Attributes, "openai_responses"); err == nil {
+			res = resolved.ForRequest(gatewayprovider.ModelRequestState(body))
+		}
+		return gatewayprovider.ConversionDialect(ctx, a.provider, res, protocol.ProtocolOpenAIResponses)
+	}, PrepareNativeReplay: func(ctx context.Context, model string, body []byte) ([]byte, error) {
+		if ctx == nil && a.c != nil && a.c.Request != nil {
+			ctx = a.c.Request.Context()
+		}
+		rewritten, _, err := gatewayprovider.PrepareNativeReplay(
+			ctx,
+			a.provider,
+			model,
+			body,
+			a.s.Attributes,
+			protocol.ProtocolOpenAIResponses,
+			protocol.ProtocolOpenAIResponses,
+		)
+		return rewritten, err
+	}}
 }
 
 // input captures provider identity and request flags for grokforward
@@ -130,11 +160,12 @@ func (a *grokForwardAdapter) SetError(status int, message, detail string) {
 	SetOpsUpstreamError(a.c, status, message, detail)
 }
 
-// ClientTools stores this attempt's Responses tool mapping in the HTTP
-// context. Its maps remain shared with the supplied mapping, and the response
-// reader uses them while restoring client tool representations.
-func (a *grokForwardAdapter) ClientTools(mapping bridge.ResponsesClientToolMapping) {
-	SetGrokResponsesClientToolMapping(a.c, mapping)
+// ClientToolMap stores a detached deep copy of this attempt's Grok IR ToolMap
+// on the active HTTP context for buffered and per-event response restoration.
+// Passing nil or a map without active call restorations clears existing state so
+// a non-lowered retry never reuses stale mappings.
+func (a *grokForwardAdapter) ClientToolMap(tools *convert.ToolMap) {
+	SetGrokResponsesClientToolMap(a.c, tools)
 }
 
 // CacheIdentity resolves this request's prompt-cache key using its final

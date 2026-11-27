@@ -1,0 +1,28 @@
+{
+  "id": "chatcmpl_reasoning_encrypted_only",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "deepseek-reasoner",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out.",
+        "reasoning_content": "Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 88,
+    "completion_tokens": 54,
+    "total_tokens": 142,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 24
+    }
+  }
+}

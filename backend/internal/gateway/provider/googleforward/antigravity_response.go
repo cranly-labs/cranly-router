@@ -1,24 +1,17 @@
 package googleforward
 
 import (
-	"errors"
-	"net/http"
-
-	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// antigravity_response.go binds Antigravity response conversion to attempt
-// output and tool restoration.
-// Antigravity response modes share attempt tool restoration and HTTP error
-// presentation. The response options install semantic commitment and typed
-// failover callbacks, while stream limits are supplied when startup
-// configuration is present and pure image/unwrap operations can use no output.
+// antigravity_response.go binds Antigravity response adapters to attempt image
+// observations, stream limits, and tool restoration. Configured options supply
+// SSE line and interval limits, while a nil attempt supports pure request
+// image-size extraction and v1internal response unwrapping.
 
 // antigravityResponseAdapter binds response presentation to the current attempt
-// output and tool map. Configured options supply stream limits; a nil attempt
-// supports pure extraction methods, while output callbacks require a usable
-// attempt.
+// image counter, stream limits, and tool restoration map. A nil attempt leaves
+// request context unset while keeping pure extraction helpers available.
 func (s *Antigravity) antigravityResponseAdapter(c *attempt) *antigravity.ResponseAdapter {
 	opts := antigravity.ResponseOptions{
 		ObserveRaw: func(body []byte) {
@@ -27,16 +20,6 @@ func (s *Antigravity) antigravityResponseAdapter(c *attempt) *antigravity.Respon
 			}
 		},
 		ReverseTools: func(body []byte) []byte { return c.reverseTools(body) },
-		ClaudeError:  func(status int, kind, message string) error { return c.ClaudeError(status, kind, message) },
-		CompatError: func(status int, kind, message string) error {
-			return c.AntigravityCompatError(status, kind, message)
-		},
-		MapCollectionError: func(err error) error { return c.MapAntigravityCollectionError(err) },
-		Failover: func(body []byte) error {
-			return &forwardcore.UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: body, RetryableOnSameProvider: true}
-		},
-		IsFailover:    func(err error) bool { var value *forwardcore.UpstreamFailoverError; return errors.As(err, &value) },
-		MarkCommitted: func() { c.Commit() },
 	}
 	if c != nil && c.Output != nil {
 		opts.Context = c.RequestContext()

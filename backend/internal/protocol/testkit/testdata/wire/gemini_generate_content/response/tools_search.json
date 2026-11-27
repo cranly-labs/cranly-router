@@ -1,0 +1,40 @@
+{
+  "responseId": "gem_tools_search",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "id": "call_search_2",
+              "name": "tool_search",
+              "args": {
+                "query": "slack notify",
+                "limit": 3
+              }
+            },
+            "thoughtSignature": "sig_fc_search_2"
+          },
+          {
+            "functionCall": {
+              "id": "call_inc_2",
+              "name": "pager__list_incidents",
+              "args": {
+                "severity": "sev2"
+              }
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 148,
+    "candidatesTokenCount": 36,
+    "totalTokenCount": 184
+  }
+}

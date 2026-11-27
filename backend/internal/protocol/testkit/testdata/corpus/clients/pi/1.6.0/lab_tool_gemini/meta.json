@@ -1,0 +1,12 @@
+{
+  "protocol": "gemini_generate_content",
+  "client": "pi",
+  "version": "1.6.0",
+  "model": "gemini-2.5-pro",
+  "captured_at": "2026-11-21",
+  "stream": true,
+  "scenario": "lab_tool_gemini",
+  "headers": {
+    "user-agent": "pi/1.6.0 (darwin; node/v24.15.0; arm64)"
+  }
+}

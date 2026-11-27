@@ -1,0 +1,25 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "media",
+          "media": {
+            "type": "document",
+            "mime": "application/pdf",
+            "source": "base64",
+            "data": "JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0NvdW50IDEvS2lkc1szIDAgUl0+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAxIDFdPj4KZW5kb2JqCnhyZWYKMCA0CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDUzIDAwMDAwIG4gCjAwMDAwMDAxMDQgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDQvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgoxNTUKJSVFT0YK",
+            "name": "quarterly-sla-report.pdf"
+          }
+        },
+        {
+          "kind": "text",
+          "text": "Read the attached quarterly SLA PDF and report the page count and availability target."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256
+}

@@ -1,0 +1,13 @@
+data: {"id":"chatcmpl_tools_custom","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_patch_2","type":"function","function":{"name":"apply_patch","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tools_custom","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"input\":\"*** Begin Patch\\n*** Update File: README.md\\n"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tools_custom","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"@@\\n-Default timeout: 5s\\n"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tools_custom","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"+Default timeout: 15s\\n*** End Patch\\n\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tools_custom","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl_tools_custom","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":104,"completion_tokens":42,"total_tokens":146,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]

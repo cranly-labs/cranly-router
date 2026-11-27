@@ -13,14 +13,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
+	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
@@ -869,6 +872,124 @@ func TestAntigravityGatewayService_ForwardGemini_SignatureRetryPropagatesFailove
 	require.Len(t, events, 2)
 	require.Equal(t, "signature_error", events[0].Kind)
 	require.Equal(t, "failover", events[1].Kind)
+}
+
+// TestAntigravityGatewayService_ForwardGemini_RecordsReasoningEffort executes
+// native Gemini requests through Antigravity in buffered, streaming, and
+// strip-effort modes. Generation results must keep normalized thinkingLevel
+// even when effort_model_mapping_strip_effort removes the wrapped wire field,
+// while countTokens leaves ReasoningEffort nil.
+func TestAntigravityGatewayService_ForwardGemini_RecordsReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name          string // scenario label for diagnostics
+		action        string // Gemini native URL action
+		stream        bool   // whether client requested streaming SSE
+		body          string // native Gemini request JSON
+		stripEffort   bool   // whether provider strips wire thinkingLevel after mapping
+		wantEffort    string // expected recorded ReasoningEffort; empty expects nil
+		wantWireLevel bool   // whether wrapped upstream request retains thinkingLevel
+	}{
+		{
+			name:          "buffered HIGH",
+			action:        "generateContent",
+			stream:        false,
+			body:          `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			wantEffort:    "high",
+			wantWireLevel: true,
+		},
+		{
+			name:          "streaming HIGH",
+			action:        "streamGenerateContent",
+			stream:        true,
+			body:          `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			wantEffort:    "high",
+			wantWireLevel: true,
+		},
+		{
+			name:          "strip effort preserves recorded effort",
+			action:        "generateContent",
+			stream:        false,
+			body:          `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			stripEffort:   true,
+			wantEffort:    "high",
+			wantWireLevel: false,
+		},
+		{
+			name:   "countTokens leaves effort nil",
+			action: "countTokens",
+			stream: false,
+			body:   `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			writer := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(writer)
+			body := []byte(tc.body)
+			c.Request = httptest.NewRequest(http.MethodPost, "/antigravity/v1beta/models/gemini-3.1-pro:"+tc.action, bytes.NewReader(body))
+
+			upstreamBody := []byte("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":1}}}\n\n")
+			upstream := &queuedHTTPUpstreamStub{
+				responses: []*http.Response{
+					{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+						Body:       io.NopCloser(bytes.NewReader(upstreamBody)),
+					},
+				},
+			}
+			svc := newAntigravityFixture(antigravityDependencies{
+				settingService: newExecutionReadersFixture(&antigravitySettingRepoStub{}),
+				options:        fixtureOptions(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024}),
+				tokenProvider:  newAntigravityTokenSourceForTest(nil),
+				httpUpstream:   upstream,
+			})
+			creds := map[string]any{
+				"access_token": "token",
+				"project_id":   "proj",
+				"model_mapping": map[string]any{
+					"gemini-3.1-pro": "gemini-3.1-pro",
+				},
+			}
+			if tc.stripEffort {
+				creds[providercore.EffortModelMappingCredentialKey] = map[string]any{
+					"gemini-3.1-pro": map[string]any{"high": "gemini-3.1-pro-high"},
+				}
+				creds[providercore.EffortModelMappingStripEffortCredentialKey] = true
+			}
+			provider := &gatewayprovider.ExecutionProvider{
+				Record: providercore.Record{
+					LoadLocation: time.LoadLocation,
+					ID:           102,
+					Name:         "acc-gemini-effort",
+					Platform:     capability.PlatformAntigravity,
+					Type:         capability.ProviderTypeOAuth,
+					Status:       billing.StatusActive,
+					Concurrency:  1,
+					Credentials:  creds,
+				},
+			}
+			ctx := requeststate.WithRoutingReasoningEffort(
+				context.Background(),
+				requeststate.ExtractRoutingReasoningEffort(body, protocolcore.ProtocolGeminiGenerateContent),
+			)
+
+			result, err := svc.ForwardGemini(ctx, gatewayhttp.NewGoogleBoundary(c, svc.Options, true), provider, "gemini-3.1-pro", tc.action, tc.stream, body, false)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			if tc.wantEffort == "" {
+				require.Nil(t, result.ReasoningEffort)
+				return
+			}
+			require.NotNil(t, result.ReasoningEffort)
+			require.Equal(t, tc.wantEffort, *result.ReasoningEffort)
+			require.Len(t, upstream.requestBodies, 1)
+			hasLevel := gjson.GetBytes(upstream.requestBodies[0], "request.generationConfig.thinkingConfig.thinkingLevel").Exists() ||
+				gjson.GetBytes(upstream.requestBodies[0], "request.generation_config.thinking_config.thinking_level").Exists()
+			require.Equal(t, tc.wantWireLevel, hasLevel)
+		})
+	}
 }
 
 // SetRateLimited records the selected provider and cooldown deadline for

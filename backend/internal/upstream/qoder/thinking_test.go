@@ -17,13 +17,21 @@ func TestResolveObservedThinkingDefaultsAndProjection(t *testing.T) {
 	model := qodermodel.Model{Key: "qmodel", Reasoning: new(true), CanDisable: new(true), DefaultThinking: true, DefaultEffort: "medium", Efforts: []string{"low", "medium", "xhigh"}}
 	resolution := modelrules.Resolution{Target: modelrules.Target{Model: model.Key, ProviderModels: qodermodel.NewCatalog("test", []qodermodel.Model{model})}, Attributes: model.Attributes()}
 	for _, test := range []struct {
-		body   string // native client request
-		effort string // expected encoded effort
-	}{{`{}`, "medium"}, {`{"reasoning_effort":"high"}`, "xhigh"}, {`{"reasoning_effort":"max"}`, "xhigh"}, {`{"reasoning_effort":"xhigh"}`, "xhigh"}, {`{"reasoning_effort":"low"}`, "low"}, {`{"thinking":{"type":"disabled"}}`, "none"}, {`{"thinking":{"budget_tokens":1024}}`, "xhigh"}} {
-		directive := QoderThinkingDirectiveFromBody([]byte(test.body), "reasoning_effort")
-		resolved, err := ResolveObservedThinking(directive, &resolution)
+		name      string                 // case label
+		directive QoderThinkingDirective // normalized thinking directive
+		effort    string                 // expected encoded effort
+	}{
+		{"default", QoderThinkingDirective{}, "medium"},
+		{"high", QoderThinkingDirective{Specified: true, Enabled: true, Effort: "high"}, "xhigh"},
+		{"max", QoderThinkingDirective{Specified: true, Enabled: true, Effort: "max"}, "xhigh"},
+		{"xhigh", QoderThinkingDirective{Specified: true, Enabled: true, Effort: "xhigh"}, "xhigh"},
+		{"low", QoderThinkingDirective{Specified: true, Enabled: true, Effort: "low"}, "low"},
+		{"disabled", QoderThinkingDirective{Specified: true, Enabled: false}, "none"},
+		{"budget", QoderThinkingDirective{Specified: true, Enabled: true, Effort: "max"}, "xhigh"},
+	} {
+		resolved, err := ResolveObservedThinking(test.directive, &resolution)
 		require.NoError(t, err)
-		require.Equal(t, test.effort, resolved.Effort, test.body)
+		require.Equal(t, test.effort, resolved.Effort, test.name)
 		payload := QoderBasePayload()
 		applyObservedThinking(payload, resolved)
 		require.Equal(t, test.effort, qoderFixtureValue[map[string]any](t, payload["parameters"])["reasoning_effort"])

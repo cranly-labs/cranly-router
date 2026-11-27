@@ -181,7 +181,8 @@ func (b *geminiMessageAttemptBridge) Acquire() bool {
 //
 // The byte baseline is captured after acquisition and before output,
 // separating retry commitment from already written HTTP headers. Forward
-// releases the provider lease before schedule reporting and preserves partial
+// releases the provider lease before schedule reporting, skipping scheduler
+// feedback on local model-attribute rejections, and preserves partial
 // result/error observations. A classified UpstreamFailoverError supplies retry
 // policy to the text loop, which decides later recovery rather than replaying
 // here.
@@ -214,7 +215,11 @@ func (b *geminiMessageAttemptBridge) Forward(state textflow.AttemptState) textfl
 	if b.providerReleaseFunc != nil {
 		b.providerReleaseFunc()
 	}
-	b.binding().reportSchedule(b.selection, b.provider.Record.ID, err == nil, b.result)
+	// Skip scheduler score penalties on local model-attribute rejections so
+	// client capability mismatches do not degrade healthy Gemini accounts.
+	if !routing.IsModelAttributeError(err) {
+		b.binding().reportSchedule(b.selection, b.provider.Record.ID, err == nil, b.result)
+	}
 	out := textflow.Outcome{Attempt: messageObservedAttempt(b.result, err), Err: err, HasResult: b.result != nil, OutputChanged: gatewayhttp.HeartbeatAdjustedWrittenSize(b.c) != b.writerSizeBeforeForward}
 	out.Attempt.HTTPCommitted = b.c.Writer.Written()
 	out.Attempt.RetryCommitted = out.OutputChanged

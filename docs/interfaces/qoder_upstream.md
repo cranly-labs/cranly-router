@@ -67,19 +67,19 @@
 
 ### 执行边界与无状态历史
 
-- 模块归属：`provider/qodermodel` 维护单账号模型索引与原生能力约束（预览、探测与推理按最终路由键、客户端协议与 `qoder_chat` 匹配分组属性；属性引用可借用他型号字段，出站仍用原路由键与限制）；`upstream/qoder` 实现桌面协议、站点、签名、转换与会话历史，不依赖 Gin 或旧实体。
+- 模块归属：`provider/qodermodel` 维护单账号模型索引与原生能力约束（按最终路由键、客户端协议与 `qoder_chat` 匹配属性）；`protocol/qoder`、`protocol/codec/qoderchat` 与 `protocol/convert` 完成三类请求的 IR 归一化、能力拒绝与包裹式流解码；`upstream/qoder` 实现桌面协议、签名、会话历史与合并响应读取器。
 - 本机凭据导入隔离：本机凭据读取隔离在 `upstream/qoder/localauth`（仅用于手动导入与 opt-in 测试，macOS 读站点 `auth.v1.dat`、`auth.machine-id` 与 Keychain 并校验版本与站点，旧 CLI 文件可显式导入；仅在内存中解密，正常服务不读本机登录资料）。
-- 完整历史与 Responses 限制：三个入口均由客户端提交完整历史。Qoder Responses 仅接受省略 `store` 或 `store:false`；传入 `store:true`、`previous_response_id`、`conversation` 或 `item_reference` 返回 HTTP `400`。
-- 会话键与工具轮次：多轮工具调用须在当轮 `input` 中同时提交原始消息、函数调用与结果。响应 ID 标识当次输出与使用记录，Redis 粘性仅绑定实际请求会话键，网关只为原生会话匹配保留指纹与用量。
-- 规范报文：推理用新版规范 `content`（用户文本放 `content` 数组，工具结果保留字符串或文本块，文本请求不生成旧 `contents` 副本）；`chat_context.text` 与 `originalContent` 用字符串，`aliyun_user_type` 留空，显示名与视觉标记取自账号观察。
-- 缓存标记与流式写出：自动缓存标记写到输出副本以防污染后续指纹；转换器逐段写出并 Flush，不聚合整条 SSE。
+- 完整历史与 Responses 限制：三个入口（含带 `input` 的 Cursor Chat 与归一化后的旧式 Responses `messages`）均由客户端提交完整历史。Responses 来源仅接受省略 `store` 或 `store:false`；传入 `store:true`、`previous_response_id`、`conversation`、孤立或无 ID 工具结果或 `item_reference` 直接在本地返回 HTTP `400`。
+- 会话键与工具轮次：多轮工具调用须在当轮 `input` 中同时提交原始消息、函数调用与结果。响应 ID 标识当次输出与使用记录，Redis 粘性仅绑定实际请求会话键，网关归一化 `x-anthropic-billing-header` 中的易变 `cch` 指纹且只为原生会话匹配保留指纹与用量。
+- 规范报文与连续性：推理用新版规范 `content`（用户多块或带缓存标记文本保留离散数组，助手与工具结果用字符串，不生成旧 `contents` 副本），`chat_context.text` 与 `originalContent` 用字符串，`aliyun_user_type` 留空。响应侧先还原 Qoder 工具别名再由 `ToolMap` 恢复客户端工具身份，无令牌明文推理封装为 `trc1:plain` 信封。
+- 缓存标记与流式写出：自动缓存标记写到输出副本以防污染后续指纹；流式读取器在首个语义帧到达前暂存非语义前导帧以保留切号窗口，随后逐帧写出并 Flush，不聚合整条 SSE。
 
 ### 工具、用量与取消策略
 
 - 工具门禁：能力取本轮生效的推理开关和档位。分组禁用工具调用时，三个入口移除可选工具声明并保留历史调用与结果；强制调用或指定函数在联系上游前返回 HTTP `400`（`allowed_tools` 按原顺序转发子集，`required` 遵循同一校验），本地拒绝不计入提供商成功率。
 - 缓存用量口径：遵循[客户端用量与缓存](protocol_capabilities.md#client_usage_cache)（OpenAI 总输入含全部输入桶，Messages 分离普通输入与缓存；`cacheable_tokens` 非缓存写入，Qoder 当前不生成非零写入桶，序列化器仅保留调用方提供的真实计数）。
 - 流内报错部分结算：流式已开始服务且观测到 usage 后上游再报错，返回部分结果与错误：按已观测用量结算一次、返回失败反馈并回滚会话（不标成功，不估算缺失用量）；未开始服务或无用量观测不做部分结算。
-- 并行工具解析：解析器补全的默认类型 `function` 不作为工具调用身份；并行工具流中缺少 ID、索引和名称的参数片段不写入任意工具，单工具参数片段继续追加而不拆块。
+- 并行与文本工具解析：`codec/qoderchat` 同时解析结构化 `tool_calls`/事件封套与 XML、JSON、DSML 文本编码工具调用，经 `ir.Sequencer` 顺序化并行槽位；补全的默认类型 `function` 不作为工具调用身份，缺少 ID、索引和名称的参数片段不写入任意工具，单工具参数片段继续追加而不拆块。
 - 取消与超时：拿到凭据后、发起推理前检查客户端是否已取消。已进入上游的流式请求与客户端取消脱钩，在 15 分钟执行预算内收集尾部 usage；非流式正常传播取消。响应体由平台执行关闭，提供商与用户租约由编排层释放。
 
 ### 授权与凭据缓存

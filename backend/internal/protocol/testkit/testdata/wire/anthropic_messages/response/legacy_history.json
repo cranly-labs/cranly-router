@@ -1,0 +1,25 @@
+{
+  "id": "msg_legacy_history",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Migration checks for the requested tenants are ready to finalize.",
+      "signature": "EqQBCgIYAiJAbGVnYWN5X2hpc3RvcnlfcmVwbHlfc2lnXzAz"
+    },
+    {
+      "type": "text",
+      "text": "Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 112,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 48
+  }
+}

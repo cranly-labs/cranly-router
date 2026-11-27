@@ -1,0 +1,23 @@
+{
+  "responseId": "gem_text_unicode_split",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Hello 你好世界！👨‍👩‍👧‍👦 🇯🇵 👋🏽 café 🚀"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 22,
+    "candidatesTokenCount": 19,
+    "totalTokenCount": 41
+  }
+}

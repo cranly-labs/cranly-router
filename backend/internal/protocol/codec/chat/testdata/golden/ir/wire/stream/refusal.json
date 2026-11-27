@@ -1,0 +1,50 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_refusal",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "refusal"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "I cannot provide instructions "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "for bypassing authentication controls or extracting active session credentials."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 46,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 14
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "refusal",
+      "text": "I cannot provide instructions for bypassing authentication controls or extracting active session credentials."
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "content_filter"
+    }
+  }
+]

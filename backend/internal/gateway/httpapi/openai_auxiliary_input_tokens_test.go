@@ -17,6 +17,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
@@ -211,4 +212,76 @@ func TestNativeInputTokensDelayedFailureKeepsAttemptOwnership(t *testing.T) {
 		require.Equal(t, "second", saved.Attempts[1].RequestID)
 		require.Equal(t, nextProvider, saved.Attempts[1].ProviderID)
 	}
+}
+
+// TestForwardResponsesInputTokens_PrepareNativeReplay exercises native
+// /v1/responses/input_tokens preflight across same-account and cross-account
+// targets. Literal user "trc1:" text stays intact, same-account targets unpack
+// encrypted_content, and cross-account targets strip encrypted_content and
+// synthetic store=false IDs before PrepareNativeInputTokens.
+func TestForwardResponsesInputTokens_PrepareNativeReplay(t *testing.T) {
+	carrierAcct7, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_count_acct_7",
+		ProviderID: 7,
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemePlain,
+		Text:   "Plain reasoning text.",
+	})
+	require.NoError(t, err)
+
+	body := []byte(`{"model":"gpt-5.4","store":false,"nonce":9007199254740993,"input":[{"type":"message","role":"user","content":"literal trc1:plain:demo"},{"type":"reasoning","id":"rs_keep","summary":[{"type":"summary_text","text":"visible summary"}],"encrypted_content":"` + carrierAcct7 + `"},{"type":"reasoning","id":"rs_drop","summary":[],"encrypted_content":"` + foreignCarrier + `"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)
+	literalClean := []byte(`{"model":"gpt-5.4","nonce":9007199254740993,"input":[{"type":"message","role":"user","content":"literal trc1:plain:demo"}]}`)
+
+	runPreflight := func(providerID int64, reqBody []byte) []byte {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", nil)
+		upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"object":"response.input_tokens","input_tokens":31}`)),
+		}}
+		svc := newAuxiliaryFixture(auxiliaryFixtureInputs{transport: upstream})
+		target := &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation: time.LoadLocation,
+				ID:           providerID,
+				Platform:     capability.PlatformOpenAI,
+				Type:         capability.ProviderTypeAPIKey,
+				Concurrency:  1,
+				Credentials:  map[string]any{"api_key": "official-key", "base_url": "https://api.openai.com/v1"},
+			},
+		}
+		require.NoError(t, svc.ForwardResponsesInputTokens(context.Background(), c, target, reqBody))
+		require.Equal(t, http.StatusOK, recorder.Code)
+		return upstream.lastBody
+	}
+
+	// Literal user "trc1:" leaves prepareNativeInputTokensReplay byte-identical.
+	auxSvc := newAuxiliaryFixture(auxiliaryFixtureInputs{})
+	directLit, err := auxSvc.prepareNativeInputTokensReplay(context.Background(), &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{ID: 7, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey},
+	}, literalClean)
+	require.NoError(t, err)
+	require.Equal(t, literalClean, directLit)
+	gotLiteral := runPreflight(7, literalClean)
+	require.Equal(t, "literal trc1:plain:demo", gjson.GetBytes(gotLiteral, "input.0.content").String())
+
+	// Same-account (ID=7) unpacks gAAAA_count_acct_7 and drops empty trc1:plain item.
+	gotSame := runPreflight(7, body)
+	require.Equal(t, "gAAAA_count_acct_7", gjson.GetBytes(gotSame, "input.1.encrypted_content").String())
+	require.Equal(t, "message", gjson.GetBytes(gotSame, "input.2.type").String())
+	require.False(t, gjson.GetBytes(gotSame, "store").Exists())
+
+	// Cross-account (ID=8) sees store=false BEFORE PrepareNativeInputTokens deletes store,
+	// stripping both encrypted_content and synthetic id while keeping visible summary.
+	gotCross := runPreflight(8, body)
+	require.Equal(t, "reasoning", gjson.GetBytes(gotCross, "input.1.type").String())
+	require.Equal(t, "visible summary", gjson.GetBytes(gotCross, "input.1.summary.0.text").String())
+	require.False(t, gjson.GetBytes(gotCross, "input.1.encrypted_content").Exists())
+	require.False(t, gjson.GetBytes(gotCross, "input.1.id").Exists())
+	require.False(t, gjson.GetBytes(gotCross, "store").Exists())
 }

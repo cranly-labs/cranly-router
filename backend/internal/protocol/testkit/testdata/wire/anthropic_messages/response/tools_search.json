@@ -1,0 +1,33 @@
+{
+  "id": "msg_tools_search",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "call_search_2",
+      "name": "tool_search",
+      "input": {
+        "query": "slack notify",
+        "limit": 3
+      }
+    },
+    {
+      "type": "tool_use",
+      "id": "call_inc_2",
+      "name": "pager__list_incidents",
+      "input": {
+        "severity": "sev2"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 148,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 36
+  }
+}

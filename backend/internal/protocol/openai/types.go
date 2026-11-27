@@ -3,26 +3,25 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	"github.com/tidwall/gjson"
 )
 
-// types.go defines Responses and Chat wire values and adapts tool arguments,
-// result content, and usage aliases during JSON conversion.
-// Responses and Chat share conversation concepts but encode tool output,
-// arguments, usage aliases, and streamed empty values differently. Input
-// decoding retains nonstring tool-result JSON beside the public string form,
-// and discovery-call decoding keeps object arguments as text until its
-// specialized encoder can restore a JSON value. The typed shapes cover
-// recognized fields; unknown extensions require a raw helper when callers need
-// to retain them.
+// types.go defines OpenAI Responses and Chat Completions wire types and JSON
+// codecs for polymorphic tool arguments, input items, and usage aliases.
+// Responses and Chat payloads carry string or nonstring tool outputs, string
+// shorthand custom-tool declarations, object-valued tool_search_call arguments,
+// and raw JSON Chat function arguments. Custom UnmarshalJSON and MarshalJSON
+// methods normalize those wire forms into typed strings and values without
+// rejecting valid upstream variations.
 //
-// Usage decoding resolves canonical counts, Chat aliases, and nested cache
-// presence in a defined order. An explicit nested zero can defeat a positive
-// alias, while a canonical numeric zero can still use a nonzero Chat count.
-// Stream event encoding adds required indexes and arrays separately from
-// ordinary struct tags, so the same values can have different wire presence
-// according to the selected event kind.
+// Usage decoding reconciles canonical Responses counters, compatible Chat
+// aliases, and nested cache details through OpenAIUsageFromGJSON and
+// normalizeResponsesCacheUsage. Explicit nested zero counts take precedence
+// over positive top-level aliases, while zero canonical totals fall back to
+// nonzero Chat counts so stream accumulators, buffered readers, and prompt-cache
+// helpers share consistent typed observations.
 
 // Text protocol values select the wire format expected by text exchange adapters
 // and keep endpoint labels consistent across their shared protocol request types.
@@ -31,35 +30,30 @@ const (
 	TextProtocolResponses       TextProtocol = "responses"        // Responses text endpoint
 )
 
-// ResponsesRequest represents the typed Responses request subset consumed by
-// protocol converters.
+// ResponsesRequest represents the typed Responses request fields inspected or
+// rewritten by compatibility guard helpers.
 type ResponsesRequest struct {
 	Model string `json:"model"` // requested Responses model
 	// leading request instruction text
 	Instructions string          `json:"instructions,omitempty"`
 	Input        json.RawMessage `json:"input"` // raw string or item-array input
 	// MaxOutputTokens, Temperature, and TopP use nil to omit their controls. A
-	// nonnil pointer retains the supplied numeric value, including zero, for the
-	// upstream or converter to interpret.
-	// optional output token limit
-	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
-	// optional sampling temperature value
-	Temperature *float64 `json:"temperature,omitempty"`
-	// optional nucleus sampling probability
-	TopP   *float64 `json:"top_p,omitempty"`
-	Stream bool     `json:"stream,omitempty"` // requested SSE response mode
+	// nonnil pointer retains the supplied numeric value, including zero, when
+	// the request struct is decoded or re-encoded.
+	MaxOutputTokens *int     `json:"max_output_tokens,omitempty"` // optional output token limit
+	Temperature     *float64 `json:"temperature,omitempty"`       // optional sampling temperature value
+	TopP            *float64 `json:"top_p,omitempty"`             // optional nucleus sampling probability
+	Stream          bool     `json:"stream,omitempty"`            // requested SSE response mode
 	// available Responses tool declarations
 	Tools []ResponsesTool `json:"tools,omitempty"`
 	// requested supplemental output fields
 	Include []string `json:"include,omitempty"`
 	// Store distinguishes an omitted storage preference from a supplied false
 	// value; JSON encoding keeps either pointed-to boolean.
-	// optional response storage selection
-	Store *bool `json:"store,omitempty"`
-	// ParallelToolCalls distinguishes an omitted concurrency preference from a
-	// supplied false value; converters can therefore disable parallel execution.
-	// optional parallel call selection
-	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
+	Store *bool `json:"store,omitempty"` // optional response storage selection
+	// ParallelToolCalls distinguishes an omitted concurrency preference from an
+	// explicit false value so JSON encoding preserves either boolean setting.
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"` // optional parallel call selection
 	// optional reasoning control object
 	Reasoning  *ResponsesReasoning `json:"reasoning,omitempty"`
 	Text       *ResponsesText      `json:"text,omitempty"`        // optional text output preferences
@@ -72,8 +66,8 @@ type ResponsesRequest struct {
 	PreviousResponseID string `json:"previous_response_id,omitempty"`
 }
 
-// ResponsesReasoning carries effort and summary preferences for converted
-// Responses requests.
+// ResponsesReasoning carries effort and summary preferences in a typed
+// Responses request.
 type ResponsesReasoning struct {
 	Effort  string `json:"effort"`            // reasoning effort label, such as low, medium, high, xhigh, or max
 	Summary string `json:"summary,omitempty"` // reasoning summary style: auto, concise, or detailed
@@ -86,15 +80,14 @@ type ResponsesText struct {
 	Verbosity string          `json:"verbosity,omitempty"` // output verbosity label: low, medium, or high
 }
 
-// ResponsesInputItem represents a supported conversation item and retains
-// nonstring tool output for conversion. Its ordinary encoding uses the public
-// string Output; RawOutput supplies retained JSON to multimodal readers.
+// ResponsesInputItem represents a supported conversation item in a Responses
+// input array and accepts string or structured tool output during decoding.
 type ResponsesInputItem struct {
 	Type string `json:"type,omitempty"` // input kind; blank denotes a role-based message
 
 	// Role and Content carry role-based messages when Type is blank or message.
-	// Content retains raw string or typed-part JSON for the request converter
-	// that selects the target format.
+	// Content retains raw string or part-array JSON for callers inspecting text
+	// or re-encoding leading developer instructions.
 	Role    string          `json:"role,omitempty"`    // message speaker role
 	Content json.RawMessage `json:"content,omitempty"` // raw message content value
 
@@ -108,13 +101,9 @@ type ResponsesInputItem struct {
 	Arguments string `json:"arguments,omitempty"` // serialized function argument text
 	ID        string `json:"id,omitempty"`        // upstream input item identity
 
-	// Output contains decoded string output, or the raw JSON text of nonstring
-	// output. outputRaw retains the latter bytes for RawOutput consumers;
-	// ordinary struct serialization uses Output as a string.
-	Output string `json:"output,omitempty"` // decoded tool output text
-	// outputRaw owns copied nonstring JSON from UnmarshalJSON. RawOutput exposes
-	// this storage, so its consumers treat the returned bytes as read-only.
-	outputRaw json.RawMessage // retained nonstring output JSON
+	// Output holds decoded string tool output or the trimmed raw JSON text of
+	// nonstring tool output decoded by UnmarshalJSON.
+	Output string `json:"output,omitempty"`
 }
 
 // ResponsesContentPart represents supported text, image, and file parts in
@@ -140,9 +129,9 @@ type ResponsesTool struct {
 	// serialized; nil omits the setting from the declaration.
 	Strict *bool `json:"strict,omitempty"` // optional strict-schema selection
 
-	// Tools and Children are alternate child arrays. Bridge namespace conversion
-	// prefers a nonempty Tools array and otherwise reads Children; encoding
-	// retains whichever collections the caller populated.
+	// Tools and Children carry alternate namespace child-tool declaration
+	// slices; JSON encoding retains whichever non-empty child collection the
+	// caller populated on the namespace tool.
 	Tools    []ResponsesTool `json:"tools,omitempty"`    // primary namespace child declarations
 	Children []ResponsesTool `json:"children,omitempty"` // alternate namespace child declarations
 
@@ -164,8 +153,8 @@ type ResponsesTool struct {
 	EnableVideoUnderstanding *bool `json:"enable_video_understanding,omitempty"`
 }
 
-// ResponsesResponse represents the typed buffered response and lifecycle
-// snapshot consumed by converters.
+// ResponsesResponse represents the typed buffered response and terminal
+// lifecycle snapshot inspected by OpenAI and Grok response readers.
 type ResponsesResponse struct {
 	// Store reports the storage policy when the adapter knows it. Nil omits
 	// the field for responses whose upstream storage behavior is unspecified.
@@ -204,49 +193,33 @@ type ResponsesIncompleteDetails struct {
 }
 
 // ResponsesOutput represents the known message, reasoning, search, and
-// tool-call output fields.
+// tool-call output fields in buffered responses and decoded stream events.
 type ResponsesOutput struct {
-	// Type selects the tool-search-specific MarshalJSON shape and the event
-	// serializer's message, reasoning, function, and custom-call field rules.
+	// Type selects the tool_search_call MarshalJSON and UnmarshalJSON codec
+	// alongside ordinary struct fields for message, reasoning, and tool items.
 	Type string `json:"type"` // output item kind discriminator
 
-	// ID identifies the upstream output item. Lifecycle item encoding includes
-	// the key even when empty; ordinary item encoding can omit it.
 	ID string `json:"id,omitempty"` // upstream output item identity
-	// Role, Content, and Status describe message output. Event item encoding
-	// defaults a blank role to assistant and emits an array for empty Content;
-	// ordinary item tags can omit these fields.
+	// Role, Content, and Status describe assistant message output items, pairing
+	// speaker identity and typed content parts with optional upstream completion status.
 	Role    string                 `json:"role,omitempty"`    // message output speaker role
 	Content []ResponsesContentPart `json:"content,omitempty"` // typed message output parts
 	Status  string                 `json:"status,omitempty"`  // output item lifecycle status
 
-	// EncryptedContent and Summary describe reasoning output. Event item encoding
-	// emits an array for empty Summary and includes encrypted replay data when
-	// its string is nonempty.
-	// opaque reasoning replay data
-	EncryptedContent string             `json:"encrypted_content,omitempty"`
-	Summary          []ResponsesSummary `json:"summary,omitempty"` // reasoning summary text blocks
+	// EncryptedContent and Summary describe reasoning output items, pairing
+	// opaque replay ciphertext for continuation turns with visible summary text
+	// blocks for downstream readers.
+	EncryptedContent string             `json:"encrypted_content,omitempty"` // opaque reasoning replay data
+	Summary          []ResponsesSummary `json:"summary,omitempty"`           // reasoning summary text blocks
 
-	// CallID links client results to the call. Name and Namespace together
-	// identify a namespaced function, while Arguments carries its serialized
-	// parameters; the event codec selects fields by item type.
-	// CallID remains present, including empty text, in function, custom, and
-	// discovery lifecycle item shapes so clients receive the result correlation field.
-	CallID string `json:"call_id,omitempty"` // tool result correlation identity
-	// Name remains present, including empty text, for function and custom
-	// lifecycle items. Discovery lifecycle items omit this modeled field.
-	Name string `json:"name,omitempty"` // called client tool name
-	// Arguments stores serialized parameter text. Function lifecycle items keep
-	// empty text; discovery encoding applies ToolSearchCallArgumentsJSON's
-	// parse-or-quote rule to the stored text.
+	// CallID, Name, Namespace, and Arguments describe tool invocations: CallID
+	// correlates results, Name and Namespace identify the tool, and Arguments
+	// stores string parameters or raw discovery argument JSON for MarshalJSON.
+	CallID    string `json:"call_id,omitempty"`   // tool result correlation identity
+	Name      string `json:"name,omitempty"`      // called client tool name
 	Arguments string `json:"arguments,omitempty"` // serialized tool argument text
-	// Namespace qualifies function names. Function lifecycle encoding emits
-	// nonempty namespace values; custom and discovery lifecycle shapes omit this
-	// modeled field.
 	Namespace string `json:"namespace,omitempty"` // called tool namespace identity
 
-	// Input carries freeform custom-tool text. Custom call lifecycle encoding
-	// includes an empty string so newly opened calls retain their input field.
 	Input string `json:"input,omitempty"` // freeform custom tool input
 
 	Action *WebSearchAction `json:"action,omitempty"` // optional hosted search action
@@ -310,90 +283,64 @@ type ResponsesOutputTokensDetails struct {
 	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
 }
 
-// ResponsesStreamEvent represents known lifecycle, delta, tool, reasoning, and
-// error event fields. Its event-specific MarshalJSON supplies required zero
-// values and arrays that ordinary omitempty tags would omit.
+// ResponsesStreamEvent represents decoded lifecycle, delta, tool, reasoning,
+// and error fields observed on Responses SSE frames.
 type ResponsesStreamEvent struct {
 	Type string `json:"type"` // Responses stream event discriminator
 
-	// Response and Usage can both carry terminal counts. Bridge response-to-Chat
-	// and response-to-Messages completion adapters prefer a present
-	// Response.Usage over the top-level Usage alias.
+	// Response and Usage carry terminal response snapshots and usage observations;
+	// UsageAccumulator.ObserveResponsesEvent prefers a present Response.Usage
+	// over the top-level Usage alias on terminal frames.
 	Response *ResponsesResponse `json:"response,omitempty"` // optional response lifecycle snapshot
 	Usage    *ResponsesUsage    `json:"usage,omitempty"`    // optional terminal usage alias
 
-	// Item becomes an empty object when nil in output-item lifecycle encoding.
-	// Ordinary event encoding follows the tag and omits a nil item.
 	Item *ResponsesOutput `json:"item,omitempty"` // optional output lifecycle item
 
-	// OutputIndex and ContentIndex may identify position zero. Event-specific
-	// MarshalJSON emits those indexes for text/content events even when omitempty
-	// would remove them; other event kinds select their own fields.
-	OutputIndex  int `json:"output_index,omitempty"`  // output item position index
-	ContentIndex int `json:"content_index,omitempty"` // message content part index
-	// Delta and Text separate fragments from completed text. Selected delta maps
-	// emit Delta even when empty, while text-done maps emit Text even when empty.
-	// Those maps carry one of these fields.
-	Delta  string `json:"delta,omitempty"`   // incremental text or argument fragment
-	Text   string `json:"text,omitempty"`    // completed text event value
-	ItemID string `json:"item_id,omitempty"` // associated output item identity
+	OutputIndex  int    `json:"output_index,omitempty"`  // output item position index
+	ContentIndex int    `json:"content_index,omitempty"` // message content part index
+	Delta        string `json:"delta,omitempty"`         // incremental text or argument fragment
+	Text         string `json:"text,omitempty"`          // completed text event value
+	ItemID       string `json:"item_id,omitempty"`       // associated output item identity
 
-	CallID string `json:"call_id,omitempty"` // associated tool call identity
-	Name   string `json:"name,omitempty"`    // associated tool function name
-	// Arguments and Input carry final function and freeform parameters.
-	// Their recognized done-event maps keep empty strings so completion retains
-	// the matching parameter field. Delta events emit Delta.
+	CallID    string `json:"call_id,omitempty"`   // associated tool call identity
+	Name      string `json:"name,omitempty"`      // associated tool function name
 	Arguments string `json:"arguments,omitempty"` // completed function argument text
+	Input     string `json:"input,omitempty"`     // completed custom tool input
 
-	Input string `json:"input,omitempty"` // completed custom tool input
-
-	// SummaryIndex identifies a reasoning summary block. Reasoning summary
-	// text/part events serialize zero as the first block position through MarshalJSON.
 	SummaryIndex int `json:"summary_index,omitempty"` // reasoning summary part index
 
-	// Part contributes Text to content/summary events. Nil yields empty text in
-	// an output_text or summary_text part; ordinary event encoding omits nil.
 	Part *ResponsesContentPart `json:"part,omitempty"` // optional content or summary part
 
 	Code  string `json:"code,omitempty"`  // stream error category code
 	Param string `json:"param,omitempty"` // stream error parameter name
 
-	// SequenceNumber is present even at zero in selected event maps. Lifecycle
-	// and unlisted events use ordinary tags and can omit zero.
 	SequenceNumber int `json:"sequence_number,omitempty"` // stream event sequence index
 }
 
-// ChatCompletionsRequest represents modern and legacy Chat request fields
-// consumed by converters.
+// ChatCompletionsRequest represents modern and legacy Chat request fields used
+// when deriving compatibility prompt-cache keys.
 type ChatCompletionsRequest struct {
 	Model    string        `json:"model"`    // requested Chat model identity
 	Messages []ChatMessage `json:"messages"` // ordered Chat conversation messages
 	// Responses-compatible instruction text alias
 	Instructions string `json:"instructions,omitempty"`
-	// MaxTokens and MaxCompletionTokens are alternate output limits.
-	// Chat-to-Responses request conversion uses MaxCompletionTokens when present;
-	// otherwise it uses MaxTokens, and only a positive selected limit is
-	// forwarded.
-	MaxTokens *int `json:"max_tokens,omitempty"` // legacy output token limit
-	// completion output token limit
-	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
-	// optional sampling temperature value
-	// Temperature and TopP retain pointer presence, so supplied numeric zero
-	// remains available for conversion or encoding. Nil omits the selected control
-	// and lets the receiving request path choose its ordinary sampling default.
-	Temperature *float64 `json:"temperature,omitempty"`
-	// optional nucleus sampling probability
-	TopP   *float64 `json:"top_p,omitempty"`
-	Stream bool     `json:"stream,omitempty"` // requested SSE response mode
-	// optional stream output settings
-	StreamOptions *ChatStreamOptions `json:"stream_options,omitempty"`
-	Tools         []ChatTool         `json:"tools,omitempty"` // available Chat tool declarations
-	// ParallelToolCalls uses pointer presence to retain explicit false during
-	// conversion and serialization. Nil leaves the upstream preference
-	// unspecified here.
-	// optional parallel call selection
-	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
-	ToolChoice        json.RawMessage `json:"tool_choice,omitempty"` // raw tool selection value
+	// MaxTokens and MaxCompletionTokens carry legacy and modern output-token
+	// caps as pointers so omitted fields stay distinct from explicit zero values
+	// during JSON decoding and encoding.
+	MaxTokens           *int `json:"max_tokens,omitempty"`            // legacy output token limit
+	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"` // completion output token limit
+	// Temperature and TopP retain pointer presence so supplied numeric zero
+	// remains distinct from omitted sampling controls during JSON decoding and
+	// serialization.
+	Temperature   *float64           `json:"temperature,omitempty"`    // optional sampling temperature value
+	TopP          *float64           `json:"top_p,omitempty"`          // optional nucleus sampling probability
+	Stream        bool               `json:"stream,omitempty"`         // requested SSE response mode
+	StreamOptions *ChatStreamOptions `json:"stream_options,omitempty"` // optional stream output settings
+	Tools         []ChatTool         `json:"tools,omitempty"`          // available Chat tool declarations
+	// ParallelToolCalls uses pointer presence to retain an explicit false
+	// setting during JSON decoding and serialization while nil omits the field.
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"` // optional parallel call selection
+	ToolChoice        json.RawMessage `json:"tool_choice,omitempty"`         // raw tool selection value
 	// reasoning effort label, such as low, medium, high, xhigh, or max
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// requested upstream service tier
@@ -417,45 +364,21 @@ type ChatStreamOptions struct {
 type ChatMessage struct {
 	Role    string          `json:"role"`              // conversation message speaker role
 	Content json.RawMessage `json:"content,omitempty"` // raw text or multimodal content
-	// ReasoningContent and Reasoning are alternate plaintext fields.
-	// ReasoningText chooses nonempty ReasoningContent first, then Reasoning, so
-	// an empty primary string permits the alternate value.
-	// primary reasoning text alias
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	Reasoning        string         `json:"reasoning,omitempty"`  // alternate reasoning text value
-	Name             string         `json:"name,omitempty"`       // optional message function name
-	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"` // assistant tool call records
+	// ReasoningContent and Reasoning carry primary and compatible plaintext
+	// reasoning fields reported on completed assistant messages or replayed
+	// Chat conversation turns.
+	ReasoningContent string         `json:"reasoning_content,omitempty"` // primary reasoning text field
+	Reasoning        string         `json:"reasoning,omitempty"`         // compatible reasoning text alias
+	Name             string         `json:"name,omitempty"`              // optional message function name
+	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`        // assistant tool call records
 	// tool-result correlation call identity
 	ToolCallID string `json:"tool_call_id,omitempty"`
 
 	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"` // optional legacy function call
 }
 
-// ChatContentPart represents a supported text, image, or file message part.
-type ChatContentPart struct {
-	Type     string        `json:"type"`                // multimodal content kind discriminator
-	Text     string        `json:"text,omitempty"`      // message text part value
-	ImageURL *ChatImageURL `json:"image_url,omitempty"` // optional image reference object
-	File     *ChatFile     `json:"file,omitempty"`      // optional attached file object
-}
-
-// ChatImageURL carries an image reference and optional model detail
-// preference.
-type ChatImageURL struct {
-	URL    string `json:"url"`              // image URL or data URI
-	Detail string `json:"detail,omitempty"` // requested image detail label
-}
-
-// ChatFile carries supported uploaded-file identities or data-URI file
-// attachments.
-type ChatFile struct {
-	Filename string `json:"filename,omitempty"`  // attached file display name
-	FileData string `json:"file_data,omitempty"` // attached file data URI
-	FileID   string `json:"file_id,omitempty"`   // upstream uploaded file identity
-}
-
-// ChatTool represents function, search, and code-execution declarations
-// supported by request converters.
+// ChatTool represents function, search, and code-execution tool declarations
+// carried in a Chat Completions request.
 type ChatTool struct {
 	Type     string        `json:"type"`               // Chat tool kind discriminator
 	Function *ChatFunction `json:"function,omitempty"` // optional function declaration object
@@ -606,23 +529,14 @@ type ChatDelta struct {
 // exchange.
 type TextProtocol string
 
-// RawOutput returns the retained nonstring tool-output JSON, or nil when no
-// such value was decoded. The returned slice shares the item's storage;
-// callers treat it as read-only and copy it before modifying bytes.
-func (i *ResponsesInputItem) RawOutput() json.RawMessage {
-	return i.outputRaw
-}
-
-// UnmarshalJSON decodes a Responses input item and retains nonstring output
-// for multimodal conversion. It resets the receiver before decoding, so an
+// UnmarshalJSON decodes a Responses input item and accepts either string or
+// structured tool output values. It resets the receiver before decoding, so an
 // error can leave a zero or partially populated item. Absent or null output
-// leaves both output forms empty, while string output is stored as decoded
-// text.
+// leaves Output empty, while string output is stored as decoded text.
 //
-// For any other valid output value, the trimmed raw JSON is copied into
-// outputRaw and also stored as Output text. RawOutput consumers can inspect
-// its original JSON shape; ordinary struct marshaling later encodes Output as
-// a string and does not reproduce outputRaw automatically.
+// Any other valid JSON output value is trimmed and stored in Output as raw JSON
+// text so local token estimators and input helpers can inspect structured tool
+// results; subsequent struct marshaling encodes Output as a JSON string.
 func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 	// alias exposes input fields while preventing recursive ResponsesInputItem
 	// JSON decoding.
@@ -634,8 +548,8 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 		Output json.RawMessage `json:"output"` // raw tool output value
 	}
 
-	// Reset retained output before decoding another item, so absent output cannot
-	// accidentally reuse bytes from a previous tool result on this receiver.
+	// Reset retained state before decoding another item so absent output cannot
+	// accidentally reuse text from a previous tool result on this receiver.
 	*i = ResponsesInputItem{}
 	wire.alias = (*alias)(i)
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -650,9 +564,8 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// String decoding failed for a valid JSON value. Copy its raw shape for
-	// multimodal conversion and retain text for consumers using the public field.
-	i.outputRaw = append(i.outputRaw[:0], output...)
+	// String decoding failed for a valid JSON value; retain its trimmed raw JSON
+	// text in Output so token estimation and input helpers can read structured results.
 	i.Output = string(output)
 	return nil
 }
@@ -688,8 +601,8 @@ func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 //
 // That interpretation keeps valid trimmed JSON as a value, uses an object for
 // blank text, and quotes invalid text. Function calls retain string arguments
-// through ordinary encoding, so the two tool kinds remain distinguishable
-// across the bridge's shared argument-string representation.
+// through ordinary encoding, keeping function and discovery argument shapes
+// distinct when ResponsesResponse values are marshaled.
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 	// responsesOutputAlias exposes output fields while bypassing the custom item
 	// JSON codec.
@@ -710,6 +623,23 @@ func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 		m["status"] = o.Status
 	}
 	return json.Marshal(m)
+}
+
+// ToolSearchCallArgumentsJSON encodes discovery arguments as a JSON value.
+// Blank text becomes an empty object, any valid trimmed JSON value stays raw,
+// and invalid JSON becomes a quoted string of the supplied text.
+func ToolSearchCallArgumentsJSON(arguments string) json.RawMessage {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" {
+		return json.RawMessage(`{}`)
+	}
+	if json.Valid([]byte(trimmed)) {
+		return json.RawMessage(trimmed)
+	}
+	// A string encoder has no unsupported-value or cycle error path. Quoting
+	// this text yields valid JSON even when the attempted raw argument value is invalid.
+	fallback, _ := json.Marshal(arguments)
+	return fallback
 }
 
 // UnmarshalJSON decodes an output item and accepts object-valued arguments for
@@ -831,9 +761,8 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 //
 // A supplied string is unquoted into Arguments; other valid values keep their
 // trimmed raw JSON spelling as text. Reencoding this struct uses the string
-// field, so callers converting another protocol can read raw object text but
-// cannot assume a general JSON-type round trip through ordinary Chat
-// marshaling.
+// field, so Chat stream and buffered readers tolerate nonstring upstream
+// arguments without promising a JSON-type round trip on reserialization.
 func (c *ChatFunctionCall) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Name      string          `json:"name"`      // called function tool name
@@ -853,20 +782,10 @@ func (c *ChatFunctionCall) UnmarshalJSON(data []byte) error {
 		c.Arguments = text
 		return nil
 	}
-	// String decoding failed for another valid JSON type. Keep its raw text
-	// so request converters can recover the object or scalar argument value.
+	// String decoding failed for another valid JSON type; retain its raw text so
+	// Chat stream and buffered readers preserve the object or scalar value without failing.
 	c.Arguments = string(arguments)
 	return nil
-}
-
-// ReasoningText selects a message's nonempty reasoning_content before the
-// reasoning alias. A blank primary value permits the alternate string, and
-// both blank values produce empty text for the consuming converter.
-func (m ChatMessage) ReasoningText() string {
-	if m.ReasoningContent != "" {
-		return m.ReasoningContent
-	}
-	return m.Reasoning
 }
 
 // ReasoningText selects a present reasoning_content pointer before the

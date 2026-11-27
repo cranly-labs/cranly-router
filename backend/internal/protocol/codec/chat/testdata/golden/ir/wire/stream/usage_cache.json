@@ -1,0 +1,60 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_usage_cache",
+      "model": "gpt-4o",
+      "created_at": 1760002000,
+      "service_tier": "priority"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Cached prefix tokens were reused "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "from the 1h system block while "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "new 5m context was written once."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 120,
+      "cache_read": 640,
+      "cache_write": 300,
+      "output": 28,
+      "accepted_prediction": 4,
+      "rejected_prediction": 2
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    },
+    "service_tier": "priority"
+  }
+]

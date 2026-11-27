@@ -1,0 +1,18 @@
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello 你"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"好世界！👨‍👩‍"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"👧‍👦 🇯"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"🇵 👋"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"🏽 cafe"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"́ 🚀"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_text_unicode_split","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":22,"completion_tokens":19,"total_tokens":41,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]
+

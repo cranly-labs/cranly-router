@@ -17,6 +17,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
@@ -311,4 +312,54 @@ func TestBedrockAttempt_ForceClaude1hCacheByModelCapability(t *testing.T) {
 	require.False(t, gjson.GetBytes(transport.bodies[1], "system.0.cache_control.ttl").Exists())
 	require.False(t, gjson.GetBytes(transport.bodies[1], "tools.0.cache_control.ttl").Exists())
 	require.False(t, gjson.GetBytes(transport.bodies[1], "messages.0.content.0.cache_control.ttl").Exists())
+}
+
+// TestBedrockAttempt_PrepareNativeReplay exercises native Bedrock Messages
+// forwarding continuity-carrier replay. Literal user "trc1:" text stays
+// untouched, matching Anthropic envelopes restore vendor signatures, and
+// foreign envelopes strip cleanly.
+func TestBedrockAttempt_PrepareNativeReplay(t *testing.T) {
+	anthCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAnthropic,
+		Data:   "EqQBBedrockSig",
+		Text:   "Bedrock canonical thought.",
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeGemini,
+		Data:   "CpEBGeminiSig",
+	})
+	require.NoError(t, err)
+
+	provider := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           709,
+			Name:         "bedrock-replay",
+			Platform:     capability.PlatformAnthropic,
+			Type:         capability.ProviderTypeBedrock,
+			Credentials: map[string]any{
+				"auth_mode":  "apikey",
+				"api_key":    "bedrock-key",
+				"aws_region": "us-east-1",
+			},
+		},
+	}
+	carrierBody := []byte(`{"model":"claude-opus-4-6","max_tokens":128,"messages":[{"role":"user","content":"keep trc1:plain:literal"},{"role":"assistant","content":[{"type":"thinking","thinking":"old","signature":"` + anthCarrier + `"},{"type":"thinking","thinking":"drop","signature":"` + foreignCarrier + `"},{"type":"text","text":"done"}]}]}`)
+
+	transportOn := &bedrockCaptureTransport{}
+	svcOn := NewRuntime(Dependencies{Transport: transportOn}, Options{ResponseReadLimit: 1 << 20})
+	bOn, err := newPrivateHTTPFixture(httptest.NewRecorder())
+	require.NoError(t, err)
+	bOn.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	_, err = svcOn.bedrock(context.Background(), bOn, &AttemptState{}, provider, &requeststate.ParsedRequest{
+		Body:  requeststate.NewRequestBodyRef(carrierBody),
+		Model: "claude-opus-4-6",
+	}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, transportOn.bodies, 1)
+	require.Equal(t, "EqQBBedrockSig", gjson.GetBytes(transportOn.bodies[0], "messages.1.content.0.signature").String())
+	require.Equal(t, "Bedrock canonical thought.", gjson.GetBytes(transportOn.bodies[0], "messages.1.content.0.thinking").String())
+	require.Equal(t, "text", gjson.GetBytes(transportOn.bodies[0], "messages.1.content.1.type").String())
+	require.Contains(t, gjson.GetBytes(transportOn.bodies[0], "messages.0.content").String(), "trc1:plain:literal")
 }

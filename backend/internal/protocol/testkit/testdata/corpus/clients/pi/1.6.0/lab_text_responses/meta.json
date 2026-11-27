@@ -1,0 +1,12 @@
+{
+  "protocol": "openai_responses",
+  "client": "pi",
+  "version": "1.6.0",
+  "model": "gpt-5",
+  "captured_at": "2026-11-21",
+  "stream": true,
+  "scenario": "lab_text_responses",
+  "headers": {
+    "user-agent": "pi/1.6.0 (darwin; node/v24.15.0; arm64)"
+  }
+}

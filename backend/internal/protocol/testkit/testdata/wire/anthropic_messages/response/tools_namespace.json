@@ -1,0 +1,33 @@
+{
+  "id": "msg_tools_namespace",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "call_ns_trace_2",
+      "name": "enterprise_observability_telemetry_connector__query_di__5375327d",
+      "input": {
+        "service": "checkout",
+        "limit": 20
+      }
+    },
+    {
+      "type": "tool_use",
+      "id": "call_ns_spawn_2",
+      "name": "collaboration__spawn_agent",
+      "input": {
+        "task": "summarize slow spans"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 132,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 38
+  }
+}

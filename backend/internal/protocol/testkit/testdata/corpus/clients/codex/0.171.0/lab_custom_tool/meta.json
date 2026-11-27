@@ -1,0 +1,12 @@
+{
+  "protocol": "openai_responses",
+  "client": "codex",
+  "version": "0.171.0",
+  "model": "gpt-5.5",
+  "captured_at": "2026-11-21",
+  "stream": true,
+  "scenario": "lab_custom_tool",
+  "headers": {
+    "user-agent": "codex_exec/0.171.0 (Mac OS 26.4.1; arm64) dumb (codex_exec; 0.171.0)"
+  }
+}

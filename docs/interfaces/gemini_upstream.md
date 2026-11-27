@@ -38,11 +38,11 @@ Gemini 正式支持三类提供商（其余通用导入类型无正式转发实�
 
 - 原生路由与目录：Gemini SDK/CLI 使用 `/v1beta/models`、`/v1beta/models/{model}` 与 `{model}:{action}`，按 Google 规范处理。前两个 GET 资源由分组可请求目录过滤生成（仅保留 Gemini 协议模型并补本地元数据），不向上游拉取目录。
 - 原生入口门禁：POST 动作（GenerateContent、StreamGenerateContent、CountTokens）受分组 Gemini 协议开关控制，GET 模型列表不受影响（见[统一协议能力](protocol_capabilities.md#group_protocol_routes)）；强制平台路径与复合 Key 分别校验分组权限和模型范围。
-- 兼容转换入口：Anthropic Messages、Count Tokens、OpenAI Responses 与 Chat Completions 先归一化请求，再准备上游 Gemini 请求并转回原协议。
+- 兼容转换入口：Messages、Responses 与 Chat（含带顶层 `input` 的 Cursor 请求）统一经 `protocol/convert` 单跳编码为 Gemini 请求并由合并读取器转回原协议；`/v1/messages/count_tokens` 清空重放方案与占位签名后包装为 `countTokens` 请求。
 - Responses 转换细节：支持非流式与 SSE，保留模型、reasoning、工具调用、usage、结束原因与首 Token 指标；仅发心跳失败可换号，产出非心跳协议数据后按 SSE 协议报错结束，不换号也不追加普通 JSON。
 - 传输与重试边界：API Key、OAuth 与 Vertex Service Account 在认证头、base URL、project/location 与错误结构上的差异在转换后保持保留。每次 failover 重选提供商并重建载荷；真实协议输出关闭重试窗口，排队与空闲心跳不关闭。
 - Antigravity 隔离：`/antigravity/v1beta/*` 强制选择 Antigravity 提供商，见[Antigravity 上游](antigravity_upstream.md)。
-- 协议与平台归属：通用报文归 `protocol/gemini`，Google 错误归 `protocol/google`，Anthropic/Gemini 纯转换归 `protocol/bridge`（保留原生与内部方言在 schema、工具配对、签名与预算上的差异）；激活诊断归 `upstream/gemini/codeassist`，HTTP 交换与重试归 `upstream/gemini`，状态映射归 `gateway/httpapi`。
+- 协议与平台归属：通用报文归 `protocol/gemini`，Google 错误归 `protocol/google`，跨协议转换归 `protocol/convert` 与 `protocol/codec/generatecontent`（按方言区分标准透传、Gemini 与 Antigravity 的 schema、工具配对、签名与预算规则）；激活诊断归 `upstream/gemini/codeassist`，HTTP 交换与重试归 `upstream/gemini`，状态映射归 `gateway/httpapi`。
 
 ### Thinking 与采样控制
 
@@ -62,8 +62,9 @@ Gemini 正式支持三类提供商（其余通用导入类型无正式转发实�
 - 通用目录与白名单：通用候选来自[统一模型目录](model_catalog_and_marketplace.md#model_catalog_resolution)；白名单为空允许任意型号（格式、认证与协议仍各自检查），默认测试型号用于探测。
 - Schema 清理：兼容层维护 thinking、tool/schema、图片、usage、finish reason 与 thought signature。工具 schema 递归删 Gemini 不支持字段；INTEGER 整数 `exclusiveMinimum` 转为加 1 后的 `minimum`（保留更严格下界），无法等价转换的独占下界直接删除。
 - 会话连续性：跨轮次依赖 signature、session 或缓存连续性时优先粘性复用原提供商；换号时重评续接，不把另一提供商内部状态当作通用上下文。
-- Messages 推理历史：Messages 响应把 Gemini 推理摘要放入独立 thinking 块且签名留空；普通请求回传历史时，转换器省略 `thinking`、`redacted_thinking` 块及仅含这些块的回合。
-- 工具调用 ID 与签名关联：网关在内存中按「API Key + 提供商 + 实际转发模型」关联客户端调用 ID 与原始 Gemini 工具调用 ID 和签名。命中时调用与结果共用原 Gemini ID 且签名回填至原调用；最多保留 1 小时并受条数和内存上限约束，重启后重建。未命中时按名称和兼容签名回传；同一消息内连续工具结果按调用顺序提交。上游拒绝缓存签名时，兼容入口可用旧格式重试。
+- 推理连续性信封：带签名的思考部件（及带签名的普通文本尾随空思考块）封装为 `trc1:gemini`，无签名摘要封装为 `trc1:plain`，Chat 客户端丢弃签名输出 `reasoning_content`（见[推理连续性](../architecture/protocol_conversion.md#reasoning_continuity)）；回传时解封同方案（含 Antigravity `gemini-*`）签名，省略异源信封、裸令牌与无签名思考。
+- 调用关联记忆（`CallMemory`）：`session.GeminiToolCalls` 按「API Key + 提供商 + 映射后上游模型」隔离作用域缓存客户端调用 ID 与原始 Gemini ID、方案及调用签名（1 小时 TTL、`16384` 条与 `32 MiB` 上限，已观测无签名调用记空令牌）。
+- 调用重放与签名重试：同方案命中非空上游 ID 时共用原 ID 并回填签名（无上游 ID 则省略客户端自造 ID 并按序提交结果）；每步首调用在已知无签名或未命中时补占位签名，后续已知无签名并行调用保持无签名。遇签名 `400` 时清空方案且不传 `CallMemory` 同号重试一次，保留原 `Exchange` 封装新令牌。
 - 生图计费：原生和 Claude 兼容生图按上游实际返回的 `inlineData`/`inline_data` 图片 part 数计费（自定义别名同效）。流式取单个 payload 观测到的最大张数，避免累积 SSE 重复计费；仅在未观测到内联图片时回退按请求或映射后模型名判断是否生图模型。
 
 ## 配额、调度与错误处理
@@ -102,7 +103,7 @@ Gemini REST、OAuth、Vertex 与 Antigravity 的原生 Gemini 输出，以及 Me
 <a id="gemini_native_execution"></a>
 ## 原生执行与提供商授权
 
-- 执行边界：单次平台交换、协议输出与关闭响应体归 `upstream/gemini`，Messages、原生、Chat、Responses 各自保留流式、非流式与 Code Assist 缓冲分支，原生输入与兼容 REST 净化分开处理；原生错误、重试与配额时间解析不修改提供商持久化数据。流式输出不加整流缓冲，各入口保持各自的断开处理。
+- 执行边界：单次交换、协议输出与关闭响应体归 `upstream/gemini`，原生 `ForwardNative` 与跨协议合并入口 `ExchangeConverted`（Code Assist 非流式经缓冲读取器折叠 SSE）分开处理输入净化，不修改提供商持久化数据；转换流仅暂存非语义前导帧，各入口保持独立断开处理。
 - 结果上报：单次执行分别返回已观测 usage（含明确零值）、语义输出、旧版 TTFT、内联图片张数与失败分类；`countTokens` 本地估算单独携带，不计入实际 usage 与资金记录；图片回退判断与结算条件由调用方处理。
 - 授权与清理：`code_assist` 与 `ai_studio` 两类 OAuth 编排、project/tier 发现、同会话免重登令牌缓存、token 回填与刷新资格归 `provider`，协议交换、`GetOperation` 轮询与 Resource Manager 查询归 `upstream/gemini/codeassist`。动态 OAuth 配置在调用时读取，缓存键与刷新 CAS 兼容；关停超时且有限重试未结束时不报告已排空。
 - 批量与创作复用：Batch JSONL 编码与创作台图片调用使用原生实现（`protocol/gemini` 保留显式报文变体），任务状态机、清理与资金由任务用例负责。Gemini 不依赖 Vertex 包，原生执行通过传入 URL 与认证参数复用同一协议输出。

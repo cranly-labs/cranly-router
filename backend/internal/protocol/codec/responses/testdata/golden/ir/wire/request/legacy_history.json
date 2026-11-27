@@ -1,0 +1,119 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Verify pre-upgrade migration status for tenant-7 and tenant-12."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_leg_bare_1",
+          "reasoning": {
+            "segments": [
+              "Check tenant-7 migration row before checking tenant-12."
+            ],
+            "summary": true,
+            "token": {
+              "data": "gAAAAABnLegacyBareResponsesEncFromPreUpgrade01"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "id": "fc_mig_t7_1",
+          "call": {
+            "call_id": "call_mig_t7_1",
+            "tool": {
+              "kind": "function",
+              "name": "check_migration_state"
+            },
+            "arguments": "{\"tenant_id\":\"tenant-7\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_mig_t7_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"tenant_id\":\"tenant-7\",\"schema_version\":42,\"status\":\"applied\"}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_leg_redis_2",
+          "reasoning": {
+            "token": {
+              "data": "enc_legacy_redis_reasoning_history_opaque_02"
+            }
+          }
+        },
+        {
+          "kind": "text",
+          "id": "msg_leg_2",
+          "text": "tenant-7 is already at schema version 42."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Confirm tenant-12 status next."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "check_migration_state",
+      "description": "Check tenant database migration version and status.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "description": "Tenant ID"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto",
+    "include_encrypted": true
+  },
+  "store": false
+}

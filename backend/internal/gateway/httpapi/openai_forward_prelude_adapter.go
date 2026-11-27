@@ -3,16 +3,22 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	forward "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
@@ -24,6 +30,9 @@ import (
 // adapter supplies group image controls, client admission and protocol
 // transformations to the shared runner, so rejected preparation uses the
 // active HTTP context before any upstream response is opened.
+
+// Interface assertion confirms openAIForwardPreludeAdapter satisfies PreludePorts.
+var _ forward.PreludePorts = openAIForwardPreludeAdapter{}
 
 // openAIForwardPreludeAdapter binds one Responses preparation to its provider
 // and HTTP request.
@@ -94,11 +103,11 @@ func (p openAIForwardPreludeAdapter) Begin() {
 }
 
 // ClearMappings removes request-local Grok, OpenAI, namespace and Codex
-// reverse-tool state before preparation. Callers run it at attempt start so
-// another provider's restoration data cannot be reused by the new response.
+// reverse-tool state before preparation, including IR ToolMaps. Callers run it
+// at attempt start so another provider's restoration data cannot be reused.
 func (p openAIForwardPreludeAdapter) ClearMappings() {
-	ClearGrokResponsesClientToolMapping(p.c)
-	ClearOpenAIResponsesClientToolMapping(p.c)
+	ClearGrokResponsesClientToolMap(p.c)
+	ClearOpenAIResponsesClientToolMap(p.c)
 	ClearOpenAIResponsesNamespaceNames(p.c)
 	SetCodexToolNameReverse(p.c, nil)
 }
@@ -206,20 +215,6 @@ func (p openAIForwardPreludeAdapter) KeepNamespaces(v forward.TransportDecision,
 	return gatewayprovider.ShouldKeepOpenAIResponsesToolCallNamespaces(p.provider, egress.OpenAIUpstreamTransport(v.Transport), passthrough, compact)
 }
 
-// AdaptClientTools lowers client tool representations and binds the
-// response-restoration mapping on success. A bridge error leaves existing
-// request mapping untouched; callers clear that state at attempt start before
-// trying this preparation.
-func (p openAIForwardPreludeAdapter) AdaptClientTools(body []byte) ([]byte, error) {
-	body, mapping, err := protocolbridge.AdaptOpenAIResponsesClientTools(body)
-	// Install restoration state only after successful lowering so the response
-	// can recover names belonging to the body that the prelude actually adopts.
-	if err == nil {
-		SetOpenAIResponsesClientToolMapping(p.c, mapping)
-	}
-	return body, err
-}
-
 // BindMessagesBridge delegates the request's Messages-compatibility marker
 // publication for this preparation. SetOpenAICompatMessagesBridgeContext
 // records true values and ignores false, so this call does not clear a marker
@@ -261,4 +256,78 @@ func (p openAIForwardPreludeAdapter) MappedModel(model string) string {
 		policy = policy.WithContext(p.c.Request.Context())
 	}
 	return policy.Mapped(model)
+}
+
+// NeedsClientToolAdaptation resolves model's target Dialect and evaluates body
+// without mutating request state. It reports whether compatible API Key
+// Responses preparation must lower client tools before TransformRequest runs.
+func (p openAIForwardPreludeAdapter) NeedsClientToolAdaptation(ctx context.Context, model string, body []byte) bool {
+	dialect := p.resolveClientToolDialect(ctx, model, body)
+	return convert.NeedsResponsesToolAdaptation(dialect, body, nil)
+}
+
+// AdaptClientTools lowers unsupported client tools via convert.AdaptResponsesTools
+// and publishes the resulting ToolMap on success. Validation or collision errors
+// write a local HTTP 400 invalid_request_error on tools and return a
+// MODEL_CAPABILITY_UNSUPPORTED error so failover and health penalties are skipped.
+func (p openAIForwardPreludeAdapter) AdaptClientTools(ctx context.Context, model string, body []byte) ([]byte, error) {
+	dialect := p.resolveClientToolDialect(ctx, model, body)
+	updated, toolMap, losses, err := convert.AdaptResponsesTools(body, dialect, nil)
+	if err != nil {
+		p.Reject(forward.Rejection{
+			Status:          http.StatusBadRequest,
+			Type:            "invalid_request_error",
+			Message:         err.Error(),
+			Param:           "tools",
+			ObserveUpstream: true,
+		})
+		MarkResponseCommitted(p.c)
+		wrapped := fmt.Errorf("adapt DeepSeek Responses client tools: %w", err)
+		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", wrapped.Error()).WithCause(wrapped)
+	}
+	if len(losses) > 0 {
+		logging.FromContext(p.resolveContext(ctx)).Debug(
+			"gateway.prelude_responses_tool_adaptation_losses",
+			zap.Int64("provider_id", p.provider.Record.ID),
+			zap.String("model", model),
+			zap.Int("loss_count", len(losses)),
+		)
+	}
+	// Publish the active ToolMap only after lowering succeeds so response
+	// restoration matches the outgoing request bytes adopted by PreparePrelude.
+	SetOpenAIResponsesClientToolMap(p.c, toolMap)
+	return updated, nil
+}
+
+// resolveClientToolDialect constructs the target convert.Dialect for prelude
+// client-tool lowering from provider and model attributes. Catalog lookup
+// failures fall back to a zero resolution so downstream TransformRequest keeps
+// single ownership of model-attribute admission.
+func (p openAIForwardPreludeAdapter) resolveClientToolDialect(ctx context.Context, model string, body []byte) convert.Dialect {
+	reqCtx := p.resolveContext(ctx)
+	var attrs modelrules.Resolution
+	if p.s != nil {
+		// Suppress catalog lookup errors during prelude tool lowering so downstream
+		// TransformRequest retains single ownership of model-attribute admission.
+		if resolved, err := gatewayprovider.ResolveModelAttributes(reqCtx, p.provider, model, p.s.modelAttributes(), "openai_responses"); err == nil {
+			attrs = resolved.ForRequest(gatewayprovider.ModelRequestState(body))
+		}
+	}
+	return gatewayprovider.ConversionDialect(reqCtx, p.provider, attrs, protocol.ProtocolOpenAIResponses)
+}
+
+// resolveContext returns ctx when non-nil for prelude attribute resolution and
+// diagnostics. When ctx is nil, it falls back to the adapter's stored execution
+// context, inbound Gin request context, or context.Background.
+func (p openAIForwardPreludeAdapter) resolveContext(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
+	}
+	if p.ctx != nil {
+		return p.ctx
+	}
+	if p.c != nil && p.c.Request != nil {
+		return p.c.Request.Context()
+	}
+	return context.Background()
 }

@@ -1,0 +1,11 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "temperature": 0.2,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Explain in one sentence why deterministic JSON serialization helps HTTP prompt caching."
+    }
+  ]
+}

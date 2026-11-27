@@ -1,0 +1,353 @@
+{
+  "route": "chat_to_messages",
+  "entries": [
+    {
+      "fixture": "wire/openai_chat_completions/request/document_input.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/empty_response.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/image_input.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/max_tokens.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/reasoning_summary.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/reasoning_tool_replay.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/refusal.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "refusal_inlined",
+          "path": "messages[1].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/stop_sequence.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/stream_error_event.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/stream_truncated.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/structured_output.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "output_format_approximated",
+          "path": "output.strict",
+          "detail": "strict"
+        },
+        {
+          "kind": "output_format_approximated",
+          "path": "output.name",
+          "detail": "name"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/system_roles.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[1]"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "messages[4]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/text_basic.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/text_unicode_split.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_args_empty.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_args_fragmented.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_ids_missing.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_parallel.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_parallel_interleaved.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_result_error.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_result_image.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_single.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/upstream_sse_quirks.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/usage_cache.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_text_chat/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_chat/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_chat/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "messages[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/document_input.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/empty_response.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/image_input.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/legacy_history.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/max_tokens.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_carrier_native.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_carrier_roundtrip.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_encrypted_only.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_summary.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_token_foreign.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/reasoning_tool_replay.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/refusal.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/stop_sequence.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/structured_output.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/system_roles.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/text_basic.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/text_unicode_split.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_args_empty.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_args_fragmented.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_parallel.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_result_error.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_result_image.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tool_single.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_custom.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_hosted_search.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "opaque_item_dropped",
+          "path": "parts[0]",
+          "detail": "server_tool_use"
+        },
+        {
+          "kind": "opaque_item_dropped",
+          "path": "parts[1]",
+          "detail": "web_search_tool_result"
+        },
+        {
+          "kind": "annotation_dropped",
+          "path": "parts[2]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_namespace.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/tools_search.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/upstream_sse_quirks.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/anthropic_messages/stream/usage_cache.sse",
+      "kind": "stream"
+    }
+  ]
+}

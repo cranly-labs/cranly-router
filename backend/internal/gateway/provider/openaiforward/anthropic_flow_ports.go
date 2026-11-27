@@ -6,21 +6,16 @@ import (
 
 	"go.uber.org/zap"
 
-	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
-	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// anthropic_flow_ports.go defines the request and output operations used for
-// Anthropic-compatible forwarding.
-// Anthropic-compatible providers accept one Messages exchange while clients may
-// request Messages, Responses, or Chat output. The request adapter supplies
-// protocol credentials and preparation rules, and the chosen output options
-// bind header handling, tool restoration, bounded reading, and timeout
-// observations to the same attempt.
+// anthropic_flow_ports.go defines the request preparation and output operations
+// used for native Anthropic-compatible Messages forwarding.
+// Compatible Anthropic endpoints serve Messages clients directly while keeping
+// provider credentials, continuity carrier unpacking, model-attribute rules,
+// cache-control limits, and timeout observations scoped to a single attempt.
 
-// NativeAnthropicPorts supplies request preparation and output bindings for one native exchange.
+// NativeAnthropicPorts supplies request preparation and output bindings for one native Messages exchange.
 type NativeAnthropicPorts interface {
 	// BillingModel selects the charge model using provider mapping and a caller
 	// default.
@@ -55,6 +50,10 @@ type NativeAnthropicPorts interface {
 	Profile() MessagesProfile
 	// Error writes the selected client protocol's local request failure response.
 	Error(status int, kind, message string)
+	// PrepareNativeMessagesReplay unpacks matching trc1 continuity envelopes or
+	// removes incompatible blocks for the mapped upstream model before parameter
+	// normalization. Requests lacking token-path carriers return body byte-for-byte unchanged.
+	PrepareNativeMessagesReplay(ctx context.Context, model string, body []byte) ([]byte, error)
 	// PrepareModel applies selected-model attributes to prepared Anthropic
 	// Messages request bytes.
 	PrepareModel(ctx context.Context, body []byte, model string) ([]byte, error)
@@ -93,9 +92,8 @@ type NativeAnthropicPorts interface {
 	// borrows the resulting request until exchange and owns response cleanup.
 	BuildNative(ctx context.Context, body []byte, key, url string) (*http.Request, error)
 	// SendNative exchanges through the selected provider and proxy after
-	// PrepareTransport. A successful response remains open for native or
-	// conversion output; the runner closes its body after reading or failure
-	// presentation.
+	// PrepareTransport. A successful response remains open for native output;
+	// the runner closes its body after reading or failure presentation.
 	SendNative(r *http.Request) (*http.Response, error)
 	// TransportErrorNative presents exchange failure using the native passthrough
 	// diagnostic marker.
@@ -103,27 +101,4 @@ type NativeAnthropicPorts interface {
 	// DirectOptions returns request-bound reading and observation callbacks for
 	// native Messages output.
 	DirectOptions() NativeAnthropicOptions
-	// AdaptResponsesTools lowers client tools before Responses-to-Anthropic
-	// conversion and returns their restoration mapping. An error stops request
-	// conversion, and the mapping is retained through successful response
-	// processing.
-	AdaptResponsesTools(body []byte) ([]byte, bridge.ResponsesClientToolMapping, error)
-	// ResponsesToAnthropic converts the supplied Responses request for native
-	// Anthropic execution.
-	ResponsesToAnthropic(r *protocolopenai.ResponsesRequest) (*protocolanthropic.AnthropicRequest, error)
-	// ChatToResponses resolves model capabilities and converts Chat to Responses
-	// using their options. Capability publication can precede a later conversion
-	// failure; callers return errors before constructing the upstream request.
-	ChatToResponses(r *protocolopenai.ChatCompletionsRequest) (*protocolopenai.ResponsesRequest, error)
-	// ResponsesEffort extracts recorded Responses effort using the supplied model
-	// normalization hints.
-	ResponsesEffort(body []byte, models ...string) *string
-	// ChatEffort extracts recorded Chat effort using the supplied model
-	// normalization hints.
-	ChatEffort(body []byte, models ...string) *string
-	// MapStatus selects the client status for a failed native conversion request.
-	MapStatus(status int) int
-	// OutputOptions returns request-bound conversion callbacks selected for the
-	// client error format.
-	OutputOptions() AnthropicOutputOptions
 }

@@ -1,0 +1,44 @@
+{
+  "id": "gem_upstream_sse_quirks",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "Normalized quirky upstream SSE frames cleanly."
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_gem_quirk_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_region_health"
+        },
+        "arguments": "{\"region\":\"us-east\"}",
+        "token": {
+          "data": "gem_sig_quirk_step_1"
+        }
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_gem_quirk_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_region_health"
+        },
+        "arguments": "{\"region\":\"eu-west\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 26,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 18
+  }
+}

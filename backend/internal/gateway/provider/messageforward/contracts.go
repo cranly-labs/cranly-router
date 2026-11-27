@@ -101,10 +101,6 @@ type HTTPBoundary interface {
 	// SearchOutput returns search-emulation presentation backed by the
 	// current HTTP request.
 	SearchOutput() searchtools.Output
-	// ConversionOutput binds Chat or Responses presentation to the supplied
-	// attempt state. Its reverse callback reads ToolNames during output, so
-	// callers retain that state until conversion finishes.
-	ConversionOutput(responses bool, state *AttemptState) forward.Output
 	// ReadResponseBody reads bounded upstream bytes and presents oversize
 	// errors in the selected BodyKind format. The reader remains
 	// caller-owned, and callers inspect the returned error before further

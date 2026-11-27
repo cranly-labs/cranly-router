@@ -1,0 +1,1166 @@
+{
+  "route": "messages_to_gemini",
+  "entries": [
+    {
+      "fixture": "wire/anthropic_messages/request/document_input.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "extra_dropped",
+          "path": "messages[0].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/empty_response.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/image_input.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/legacy_history.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].call_id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[1].call_id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/max_tokens.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_carrier_native.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[1].call_id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_carrier_roundtrip.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].call_id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[3].parts[1].call_id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_summary.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_token_foreign.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[2].call_id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_tool_replay.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[2].call_id"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/refusal.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/stop_sequence.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/stream_error_event.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/stream_truncated.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/structured_output.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "output.schema",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/system_roles.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/text_basic.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/text_unicode_split.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_args_empty.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_args_fragmented.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_ids_missing.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_parallel.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].call_id"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[1].call_id"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_parallel_interleaved.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_result_error.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].call_id"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_result_image.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].call_id"
+        },
+        {
+          "kind": "media_relocated",
+          "path": "messages[2].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_single.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].call_id"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tools_hosted_search.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "opaque_item_dropped",
+          "path": "messages[1].parts[0]",
+          "detail": "server_tool_use"
+        },
+        {
+          "kind": "opaque_item_dropped",
+          "path": "messages[1].parts[1]",
+          "detail": "web_search_tool_result"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[1].parts[2]"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[0]",
+          "detail": "google_search"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/upstream_sse_quirks.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/usage_cache.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "extra_dropped",
+          "path": "service_tier",
+          "detail": "priority"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[0].parts[0]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_text/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "client_marker_dropped",
+          "path": "system[0]",
+          "detail": "x-anthropic-billing-header"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[10]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[0].parts[7]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[8]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[9]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[10]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[11]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_text_bare/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "client_marker_dropped",
+          "path": "system[0]",
+          "detail": "x-anthropic-billing-header"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[0].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "client_marker_dropped",
+          "path": "system[0]",
+          "detail": "x-anthropic-billing-header"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[10]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[0].parts[7]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[8]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[9]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[10]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[11]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "client_marker_dropped",
+          "path": "system[0]",
+          "detail": "x-anthropic-billing-header"
+        },
+        {
+          "kind": "tool_lowered",
+          "path": "tools[10]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].call_id"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[2].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[8]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[9]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[10]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[11]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool_bare/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "client_marker_dropped",
+          "path": "system[0]",
+          "detail": "x-anthropic-billing-header"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[0].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool_bare/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "client_marker_dropped",
+          "path": "system[0]",
+          "detail": "x-anthropic-billing-header"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].call_id"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[2].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_text_messages/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[0].parts[0]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[1]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[2]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_messages/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0]"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[0].parts[0]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[1]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[2]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_messages/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "messages[1].parts[0].call_id"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[2].parts[0]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[1]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[2]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "gemini"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[3]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "gemini"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/document_input.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/empty_response.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/image_input.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/legacy_history.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/max_tokens.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/reasoning_carrier_roundtrip.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/reasoning_encrypted_only.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/reasoning_summary.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/reasoning_token_foreign.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/reasoning_tool_replay.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/refusal.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/stop_sequence.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/structured_output.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/system_roles.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/text_basic.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/text_unicode_split.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tool_args_empty.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tool_args_fragmented.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tool_ids_missing.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "id_rewritten",
+          "path": "parts[0].call_id"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        },
+        {
+          "kind": "id_rewritten",
+          "path": "parts[1].call_id"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tool_parallel.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tool_result_error.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tool_result_image.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tool_single.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tools_custom.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tools_hosted_search.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "annotation_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tools_namespace.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/tools_search.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/upstream_sse_quirks.sse",
+      "kind": "stream",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "parts[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/gemini_generate_content/stream/usage_cache.sse",
+      "kind": "stream"
+    }
+  ]
+}

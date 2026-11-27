@@ -1,0 +1,28 @@
+{
+  "id": "chatcmpl_upstream_sse_quirks",
+  "object": "chat.completion",
+  "created": 1760002200,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "reasoning_content": "Check framing edge cases first.",
+        "content": "Normalized quirky upstream SSE frames cleanly."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 26,
+    "completion_tokens": 16,
+    "total_tokens": 42,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 6
+    }
+  }
+}

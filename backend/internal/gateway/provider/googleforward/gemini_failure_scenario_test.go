@@ -17,12 +17,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
 // gemini_failure_scenario_test.go compares final failure behavior through the
-// public entry points in gemini_attempts.go and gemini_openai.go. Shared fixtures
+// public entry points in gemini_attempts.go and gemini_converted.go. Shared fixtures
 // capture provider writes, HTTP headers, and diagnostic events in one sequence
 // so protocol differences remain observable across both source files.
 
@@ -324,20 +325,16 @@ func forwardGeminiFailureClient(
 ) (*forwardcore.MessagesResult, error) {
 	switch client {
 	case "messages":
-		return svc.Forward(context.Background(), output, provider,
-			[]byte(`{"model":"gemini-2.5-flash","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`),
-		)
+		return svc.ForwardConverted(context.Background(), output, provider, protocol.ProtocolAnthropicMessages, []byte(`{"model":"gemini-2.5-flash","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`))
 	case "native":
 		return svc.ForwardNative(
 			context.Background(), output, provider, "gemini-2.5-flash", "generateContent", false,
 			[]byte(`{"contents":[{"parts":[{"text":"hi"}]}]}`),
 		)
 	case "responses":
-		return svc.ForwardAsResponses(context.Background(), output, provider, []byte(`{"model":"gemini-2.5-flash","input":"hi"}`), nil)
+		return svc.ForwardConverted(context.Background(), output, provider, protocol.ProtocolOpenAIResponses, []byte(`{"model":"gemini-2.5-flash","input":"hi"}`))
 	default:
-		return svc.ForwardAsChatCompletions(context.Background(), output, provider,
-			[]byte(`{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}`),
-		)
+		return svc.ForwardConverted(context.Background(), output, provider, protocol.ProtocolOpenAIChatCompletions, []byte(`{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}`))
 	}
 }
 

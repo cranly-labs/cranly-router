@@ -1,6 +1,7 @@
 package antigravity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,8 +13,6 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	anthropicwire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	geminiwire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -21,7 +20,7 @@ import (
 // execute.go executes Antigravity exchanges and adapts responses while
 // retaining usage and output observations.
 // Antigravity execution keeps upstream observation active while adapting one
-// exchange into Claude, Gemini, Chat, or Responses output. Raw usage fields
+// exchange into native Gemini or converted client output. Raw usage fields
 // accumulate across partial payloads, so a later observation containing only
 // output tokens does not erase earlier input tokens.
 //
@@ -29,17 +28,15 @@ import (
 // closing and selects output behavior independently from the accepted client
 // protocol. Successful adapter usage can replace raw accumulation, while a
 // read failure retains accumulated usage already seen. Semantic output and
-// retry commitment remain separate observations: any
-// nonempty emitted bytes can close the retry window, including keepalive
-// output that carries no model content.
+// retry commitment remain separate observations: any nonempty emitted bytes
+// can close the retry window, including keepalive output that carries no model
+// content.
 
 // Response modes choose the platform adapter representation independently from
 // the client protocol admitted by Executor.
 const (
-	ModeClaudeResponse    ResponseMode = iota // Messages response conversion mode
-	ModeGeminiResponse                        // Gemini response forwarding mode
-	ModeChatResponse                          // Chat Completions compatibility mode
-	ModeResponsesResponse                     // Responses API compatibility mode
+	ModeGeminiResponse    ResponseMode = iota // Gemini native response forwarding mode
+	ModeConvertedResponse                     // protocol/convert IR response mode
 )
 
 // ResponseMode selects the client response representation used by an
@@ -59,12 +56,6 @@ type Target struct {
 	// StartedAt supplies the elapsed-time origin; zero selects the current time
 	// after optional lifecycle admission and before upstream exchange.
 	StartedAt time.Time
-	// IncludeUsage selects Chat stream usage output; other response modes use
-	// their own adapter usage behavior for collected observations.
-	IncludeUsage bool
-	// ClientTools supplies Responses return-name mappings shared with conversion;
-	// callers keep the mapping stable through this attempt output.
-	ClientTools bridge.ResponsesClientToolMapping
 	// Exchange returns the final upstream response using ctx; successful results
 	// require a nonnil body that Executor reads and closes. The callback cleans
 	// up any response returned together with an error.
@@ -76,6 +67,9 @@ type Target struct {
 	// Response supplies adapter callbacks and limits copied for the attempt;
 	// ObserveRaw is chained with executor model and usage observation.
 	Response ResponseOptions
+	// Converted supplies protocol/convert exchange and error callbacks when Mode
+	// is ModeConvertedResponse.
+	Converted ConvertedOptions
 	// Enter optionally registers lifecycle ownership and returns a nonnil release
 	// callback on success, held until the final response body closes.
 	Enter func() (func(), error)
@@ -179,70 +173,102 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	var modelObserver protocol.ResponseModelObserver
 	defer func() { result.UpstreamResponseModel = modelObserver.Model() }()
 	priorRaw := options.ObserveRaw
-	// Accumulate only present nonnull Gemini usage fields across raw payloads so
-	// sparse later updates can retain earlier token observations during read failure.
-	observedUsage := make(map[string]json.RawMessage)
-	options.ObserveRaw = func(raw []byte) {
-		if priorRaw != nil {
-			priorRaw(raw)
-		}
-		data := strings.TrimSpace(string(raw))
-		if after, ok0 := strings.CutPrefix(data, "data:"); ok0 {
-			data = strings.TrimSpace(after)
-		}
-		body, _ := (&ResponseAdapter{}).UnwrapV1InternalResponse([]byte(data))
-		modelObserver.ObserveGemini(body)
-		observed := geminiwire.ObservePayload(body)
-		hasUsage, served := observed.HasUsage, observed.Semantic
-		if hasUsage {
-			for _, field := range []string{"promptTokenCount", "candidatesTokenCount", "cachedContentTokenCount", "thoughtsTokenCount", "totalTokenCount", "candidatesTokensDetails"} {
-				value := gjson.GetBytes(body, "usageMetadata."+field)
-				if value.Exists() && value.Type != gjson.Null {
-					observedUsage[field] = json.RawMessage(value.Raw)
+	var output *upstream.OutputContext
+	if target.Mode == ModeConvertedResponse {
+		// Guard converted raw usage accumulation with wirejson and lossless jsontext
+		// unwrapping while deferring OutputContext header initialization until first
+		// payload delivery so waiting keepalive heartbeats remain active.
+		var rawUsage antigravityRawUsageAccumulator
+		options.ObserveRaw = func(raw []byte) {
+			if priorRaw != nil {
+				priorRaw(raw)
+			}
+			data := bytes.TrimSpace(raw)
+			if after, ok0 := bytes.CutPrefix(data, []byte("data:")); ok0 {
+				data = bytes.TrimSpace(after)
+			}
+			body := data
+			// ReadGeminiStream already unwraps event.Data before invoking ObserveRaw;
+			// only unwrap payloads still carrying a wrapper "response" key, and discard
+			// ambiguous envelopes before recording model or billing usage observations.
+			if bytes.Contains(data, []byte(`"response"`)) || bytes.Contains(data, []byte(`"Response"`)) {
+				unwrapped, unwrapErr := unwrapV1InternalConvertedPayload(data)
+				if unwrapErr != nil {
+					return
+				}
+				body = unwrapped
+			}
+			modelObserver.ObserveGemini(body)
+			observed := geminiwire.ObservePayload(body)
+			if observed.HasUsage {
+				if usage, okUsage := rawUsage.observe(body); okUsage {
+					if usage != nil {
+						result.Usage = *usage
+					}
+					result.HasUsage = true
 				}
 			}
-			// Project accumulated fields together because raw chunks may expose only
-			// part of usage; later null or missing fields do not erase prior data. A
-			// discarded encoding error leaves counters unchanged, while usage presence
-			// still accumulates from the raw observation.
-			payload, _ := json.Marshal(map[string]any{"usageMetadata": observedUsage})
-			if usage := bridge.NativeUsageProjection(bridge.NativeExtractGeminiUsage(payload)); usage != nil {
-				result.Usage = *usage
-			}
+			result.Served = result.Served || observed.Semantic
 		}
-		result.HasUsage = result.HasUsage || hasUsage
-		result.Served = result.Served || served
-	}
-	output := upstream.NewOutputContext(&observedSink{OutputSink: sink, nonStream: !input.Stream, validatedGemini: target.Mode == ModeGeminiResponse})
-	if result.RequestID != "" {
-		output.Header("x-request-id", result.RequestID)
+		output = upstream.NewDeferredOutputContext(sink)
+	} else {
+		// Accumulate only present nonnull Gemini usage fields across raw payloads so
+		// sparse later updates can retain earlier token observations during read failure.
+		observedUsage := make(map[string]json.RawMessage)
+		options.ObserveRaw = func(raw []byte) {
+			if priorRaw != nil {
+				priorRaw(raw)
+			}
+			data := strings.TrimSpace(string(raw))
+			if after, ok0 := strings.CutPrefix(data, "data:"); ok0 {
+				data = strings.TrimSpace(after)
+			}
+			body, _ := (&ResponseAdapter{}).UnwrapV1InternalResponse([]byte(data))
+			modelObserver.ObserveGemini(body)
+			observed := geminiwire.ObservePayload(body)
+			hasUsage, served := observed.HasUsage, observed.Semantic
+			if hasUsage {
+				for _, field := range []string{"promptTokenCount", "candidatesTokenCount", "cachedContentTokenCount", "thoughtsTokenCount", "totalTokenCount", "candidatesTokensDetails"} {
+					value := gjson.GetBytes(body, "usageMetadata."+field)
+					if value.Exists() && value.Type != gjson.Null {
+						observedUsage[field] = json.RawMessage(value.Raw)
+					}
+				}
+				// Project accumulated fields together because raw chunks may expose only
+				// part of usage; later null or missing fields do not erase prior data. A
+				// discarded encoding error leaves counters unchanged, while usage presence
+				// still accumulates from the raw observation.
+				payload, _ := json.Marshal(map[string]any{"usageMetadata": observedUsage})
+				if usage := geminiwire.NativeUsageProjection(geminiwire.NativeExtractGeminiUsage(payload)); usage != nil {
+					result.Usage = *usage
+				}
+			}
+			result.HasUsage = result.HasUsage || hasUsage
+			result.Served = result.Served || served
+		}
+		output = upstream.NewOutputContext(&observedSink{OutputSink: sink, nonStream: !input.Stream, validatedGemini: target.Mode == ModeGeminiResponse})
+		if result.RequestID != "" {
+			output.Header("x-request-id", result.RequestID)
+		}
 	}
 	adapter := &ResponseAdapter{Options: options}
 	var stream *StreamResult
 	switch target.Mode {
-	case ModeClaudeResponse:
-		if input.Stream {
-			stream, err = adapter.HandleClaudeStreamingResponse(output, resp, started, input.ResponseModel)
-		} else {
-			stream, err = adapter.HandleClaudeStreamToNonStreaming(output, resp, started, input.ResponseModel)
-		}
 	case ModeGeminiResponse:
 		if input.Stream {
 			stream, err = adapter.HandleGeminiStreamingResponse(output, resp, started)
 		} else {
 			stream, err = adapter.HandleGeminiStreamToNonStreaming(output, resp, started)
 		}
-	case ModeChatResponse:
-		if input.Stream {
-			stream, err = adapter.HandleChatCompletionsStreamingFromAntigravity(output, resp, started, input.ResponseModel, target.IncludeUsage)
-		} else {
-			stream, err = adapter.HandleChatCompletionsNonStreamingFromAntigravity(output, resp, started, input.ResponseModel)
+	case ModeConvertedResponse:
+		conv := target.Converted
+		if conv.RequestID == "" {
+			conv.RequestID = result.RequestID
 		}
-	case ModeResponsesResponse:
 		if input.Stream {
-			stream, err = adapter.HandleResponsesStreamingFromAntigravity(output, resp, started, input.ResponseModel, target.ClientTools)
+			stream, err = adapter.ReadConvertedStreaming(output, resp, conv)
 		} else {
-			stream, err = adapter.HandleResponsesNonStreamingFromAntigravity(output, resp, started, input.ResponseModel, target.ClientTools)
+			stream, err = adapter.ReadConvertedBuffered(output, resp, conv)
 		}
 	default:
 		return result, errors.New("unsupported antigravity response mode")
@@ -254,7 +280,9 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 			result.Usage = *stream.Usage
 		}
 
-		result.ClientDisconnect = stream.ClientDisconnect
+		result.ClientDisconnect = stream.ClientDisconnect || (target.Mode == ModeConvertedResponse && output.Err() != nil)
+	} else if target.Mode == ModeConvertedResponse {
+		result.ClientDisconnect = output.Err() != nil
 	}
 	if err != nil && target.OutputError != nil {
 		target.OutputError(err)
@@ -272,21 +300,19 @@ func (s *observedSink) InitialOutput() upstream.OutputHead {
 	return upstream.OutputHead{}
 }
 
-// Emit supplements event meaning before passing the event to its underlying
-// synchronous sink. Buffered nonempty data is checked for client JSON content
-// and valid-JSON termination; streamed line checks combine compatible,
-// Messages, and Gemini observations.
+// Emit supplements native Gemini event meaning before passing the event to its
+// underlying synchronous sink. Buffered nonempty data is checked for Gemini
+// payload content and valid-JSON termination; streamed line checks inspect
+// Gemini payload observations.
 //
 // Existing semantic and terminal flags remain set as observations accumulate
 // across lines. Validated native Gemini streams use the reader's whole-response
 // terminal rather than inferring completion from an individual candidate. Any
-// nonempty data marks CommitForRetry even when it carries
-// only keepalive or framing text, so retry closure is independent from model
-// content. The underlying sink decides whether
-// writing succeeds, and its error returns unchanged.
+// nonempty data marks CommitForRetry even when it carries only keepalive or
+// framing text, so retry closure is independent from model content.
 func (s *observedSink) Emit(event upstream.OutputEvent) error {
 	if s.nonStream && len(event.Data) > 0 {
-		event.Semantic = event.Semantic || bridge.CompatJSONHasContent(event.Data) || anthropicwire.ObserveMessage(string(event.Data)).Semantic || geminiwire.ObservePayload(event.Data).Semantic
+		event.Semantic = event.Semantic || geminiwire.ObservePayload(event.Data).Semantic
 		event.Terminal = event.Terminal || json.Valid(event.Data)
 	}
 
@@ -295,11 +321,8 @@ func (s *observedSink) Emit(event upstream.OutputEvent) error {
 		if after, ok := strings.CutPrefix(line, "data:"); ok {
 			line = strings.TrimSpace(after)
 		}
-		semantic, terminal := bridge.CompatOutputMeaning([]byte("data: " + line + "\n\n"))
-		a := anthropicwire.ObserveEvent(line)
 		g := geminiwire.ObservePayload([]byte(line))
-		event.Semantic = event.Semantic || semantic || a.Semantic || g.Semantic
-		event.Terminal = event.Terminal || terminal || a.Terminal
+		event.Semantic = event.Semantic || g.Semantic
 		if !s.validatedGemini {
 			event.Terminal = event.Terminal || g.Terminal
 		}

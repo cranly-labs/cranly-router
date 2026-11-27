@@ -4,11 +4,12 @@
 // and recovery. HTTP presentation remains synchronous with the calling request.
 //
 // Start with:
-//   - gemini_attempts.go: Gemini Messages and GenerateContent entry points.
-//   - antigravity_messages.go: Antigravity Messages conversion and retry.
+//   - gemini_attempts.go: native GenerateContent forwarding and shared retry helpers.
+//   - gemini_converted.go: IR-based Gemini conversion, recovery, and response reading.
+//   - antigravity_converted.go: IR-based Antigravity conversion, recovery, and response reading.
 //
 // File groups:
-//   - gemini_*.go: Gemini forwarding, OpenAI compatibility, and responses.
-//   - antigravity_*.go: Antigravity conversion, signature recovery, and responses.
-//   - model_attributes.go: sampling and reasoning parameters from resolved model attributes.
+//   - gemini_*.go: Gemini native forwarding, IR conversion, and responses.
+//   - antigravity_*.go: Antigravity native forwarding, IR conversion, signature recovery, and responses.
+//   - model_attributes.go: native sampling and modality parameters from resolved model attributes.
 package googleforward

@@ -1,0 +1,9 @@
+data: {"id":"chatcmpl_tool_result_error","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Reading /var/log/restricted-audit.log failed with "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_result_error","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"EACCES permission denied."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_result_error","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_tool_result_error","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":78,"completion_tokens":15,"total_tokens":93,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]

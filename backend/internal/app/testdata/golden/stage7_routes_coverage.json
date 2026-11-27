@@ -1,0 +1,1376 @@
+{
+  "total_lines": 77,
+  "route_table_lines": 64,
+  "off_table_lines": 13,
+  "t6_covered_lines": 63,
+  "t6_exempt_lines": 14,
+  "entries": [
+    {
+      "line_number": 7,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tanthropic\toauth\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 8,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tanthropic\toauth\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 9,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tanthropic\tsetup-token\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 10,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tanthropic\tsetup-token\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 11,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tanthropic\tapikey\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRMessagesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRMessagesUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 12,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tanthropic\tapikey\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRMessagesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRMessagesUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 13,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tanthropic\tbedrock\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRMessagesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 14,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tanthropic\tbedrock\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRMessagesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 15,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tanthropic\tservice_account\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRMessagesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 16,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tanthropic\tservice_account\tanthropic_messages\tmessages_anthropic\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 17,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\topenai\toauth\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 18,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\topenai\toauth\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 19,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\topenai\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRResponsesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRResponsesUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 20,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\topenai\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRChatUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRChatUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 21,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\topenai\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRChatUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRChatUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 22,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\topenai\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRResponsesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRResponsesUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 23,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tgemini\toauth\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 24,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tgemini\toauth\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 25,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tgemini\toauth\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 26,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tgemini\tapikey\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 27,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tgemini\tapikey\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 28,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tgemini\tapikey\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 29,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tgemini\tservice_account\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 30,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tgemini\tservice_account\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 31,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tgemini\tservice_account\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 32,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tantigravity\toauth\tgemini_generate_content\tantigravity\tantigravity",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_AntigravityClaudeAndGeminiContinuityAndCrossFamilyIsolation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRAntigravityUpstreamMatrix"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Section 6.5 Step 4 and Section 6.8 Step 2 exempt Antigravity OAuth v1internal from CLI T6; verified via T3, T4, and T5."
+    },
+    {
+      "line_number": 33,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tantigravity\toauth\tgemini_generate_content\tantigravity\tantigravity",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_AntigravityClaudeAndGeminiContinuityAndCrossFamilyIsolation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRAntigravityUpstreamMatrix"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Section 6.5 Step 4 and Section 6.8 Step 2 exempt Antigravity OAuth v1internal from CLI T6; verified via T3, T4, and T5."
+    },
+    {
+      "line_number": 34,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tantigravity\toauth\tgemini_generate_content\tantigravity\tantigravity",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_AntigravityClaudeAndGeminiContinuityAndCrossFamilyIsolation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRAntigravityUpstreamMatrix"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Section 6.5 Step 4 and Section 6.8 Step 2 exempt Antigravity OAuth v1internal from CLI T6; verified via T3, T4, and T5."
+    },
+    {
+      "line_number": 35,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tgrok\toauth\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGrokChatResponsesMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGrokResponsesUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 36,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tgrok\toauth\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 37,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tgrok\toauth\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 38,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tgrok\toauth\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGrokChatResponsesMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGrokResponsesUpstreamScenarios",
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 39,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tgrok\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGrokChatResponsesMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGrokResponsesUpstreamScenarios"
+      ]
+    },
+    {
+      "line_number": 40,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tgrok\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 41,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tgrok\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 42,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tgrok\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGrokChatResponsesMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGrokResponsesUpstreamScenarios"
+      ]
+    },
+    {
+      "line_number": 43,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tqoder\tcosy\tqoder_chat\tqoder\tqoder",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestQoderStatelessAndCursorRequestInvariants",
+        "internal/protocol/convert:TestLawM1_QoderPlainCarrierLoweredToolsAndUpstreamAliasReplay"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRQoderUpstreamMatrix"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Section 6.7 Step 4 and Section 6.8 Step 2 exempt Qoder COSY desktop sessions from CLI T6; verified via T3, T4, and T5."
+    },
+    {
+      "line_number": 44,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tqoder\tcosy\tqoder_chat\tqoder\tqoder",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestQoderStatelessAndCursorRequestInvariants",
+        "internal/protocol/convert:TestLawM1_QoderPlainCarrierLoweredToolsAndUpstreamAliasReplay"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRQoderUpstreamMatrix"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Section 6.7 Step 4 and Section 6.8 Step 2 exempt Qoder COSY desktop sessions from CLI T6; verified via T3, T4, and T5."
+    },
+    {
+      "line_number": 45,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tqoder\tcosy\tqoder_chat\tqoder\tqoder",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestQoderStatelessAndCursorRequestInvariants",
+        "internal/protocol/convert:TestLawM1_QoderPlainCarrierLoweredToolsAndUpstreamAliasReplay"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRQoderUpstreamMatrix"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Section 6.7 Step 4 and Section 6.8 Step 2 exempt Qoder COSY desktop sessions from CLI T6; verified via T3, T4, and T5."
+    },
+    {
+      "line_number": 46,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tkimi\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 47,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tkimi\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 48,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tkimi\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 49,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tkimi\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 50,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tkimi\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 51,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tkimi\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 52,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tzhipu\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 53,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tzhipu\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 54,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tzhipu\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 55,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tzhipu\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 56,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tdeepseek\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 57,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\tdeepseek\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 58,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tdeepseek\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRMessagesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 59,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\tdeepseek\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage2ExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 60,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tdeepseek\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRMessagesUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 61,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\tdeepseek\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 62,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\topencode\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage2MixedGroupAndOpenCodeMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 63,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\topencode\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage2MixedGroupAndOpenCodeMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 64,
+      "section": "[route_table]",
+      "route_spec": "anthropic_messages\topencode\tapikey\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 65,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\topencode\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage2MixedGroupAndOpenCodeMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 66,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\topencode\tapikey\topenai_chat_completions\tchat\tchat",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage2MixedGroupAndOpenCodeMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 67,
+      "section": "[route_table]",
+      "route_spec": "openai_responses\topencode\tapikey\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 68,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\topencode\tapikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage2MixedGroupAndOpenCodeMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 69,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\topencode\tapikey\topenai_responses\tresponses\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage2MixedGroupAndOpenCodeMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage7RouteMatrixScenarios"
+      ]
+    },
+    {
+      "line_number": 70,
+      "section": "[route_table]",
+      "route_spec": "openai_chat_completions\topencode\tapikey\tgemini_generate_content\tgemini\tgemini",
+      "t3_tests": [
+        "internal/protocol/convert:TestLawsQ3Q4Q5_CrossProtocolRequestsAndLossGoldens",
+        "internal/protocol/convert:TestLawsS3S4S5S6S7S8_CrossProtocolResponsesAndStreams",
+        "internal/protocol/convert:TestLawM1_MultiTurnReplayAcrossAllRoutesSchemesAndNative",
+        "internal/protocol/convert:TestLawM1_GeminiContinuityCallMemoryLateSignatureAndUnsignedStep"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRGeminiUpstreamScenarios",
+        "internal/app:TestClientLabIRStage3GeminiExtendedScenarios"
+      ]
+    },
+    {
+      "line_number": 75,
+      "section": "[off_table]",
+      "route_spec": "responses_client_tool_lowering\topenai_responses\topenai:apikey\topenai_responses\tadapt_responses_tools\trestore_responses_tools",
+      "t3_tests": [
+        "internal/protocol/convert:TestAdaptAndRestoreResponsesTools_CustomNamespaceSearchAndWSWarmup",
+        "internal/protocol/convert:TestRestoreResponsesToolsAndStream_HostedEventsEnvelopesAndQuirks",
+        "internal/protocol/convert:TestRecordedResponsesCorpus_LosslessPrecheckAndFieldPreservation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage5ResponsesClientToolsMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage5ResponsesCustomToolScenarios"
+      ]
+    },
+    {
+      "line_number": 76,
+      "section": "[off_table]",
+      "route_spec": "responses_client_tool_lowering\topenai_responses\tdeepseek:apikey\topenai_responses\tadapt_responses_tools\trestore_responses_tools",
+      "t3_tests": [
+        "internal/protocol/convert:TestAdaptAndRestoreResponsesTools_CustomNamespaceSearchAndWSWarmup",
+        "internal/protocol/convert:TestRestoreResponsesToolsAndStream_HostedEventsEnvelopesAndQuirks",
+        "internal/protocol/convert:TestRecordedResponsesCorpus_LosslessPrecheckAndFieldPreservation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage5ResponsesClientToolsMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage5ResponsesCustomToolScenarios"
+      ]
+    },
+    {
+      "line_number": 77,
+      "section": "[off_table]",
+      "route_spec": "responses_client_tool_lowering\topenai_responses\tgrok:oauth,apikey\topenai_responses\tadapt_responses_tools\trestore_responses_tools",
+      "t3_tests": [
+        "internal/protocol/convert:TestAdaptAndRestoreResponsesTools_CustomNamespaceSearchAndWSWarmup",
+        "internal/protocol/convert:TestRestoreResponsesToolsAndStream_HostedEventsEnvelopesAndQuirks",
+        "internal/protocol/convert:TestRecordedResponsesCorpus_LosslessPrecheckAndFieldPreservation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage5ResponsesClientToolsMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage5ResponsesCustomToolScenarios"
+      ]
+    },
+    {
+      "line_number": 78,
+      "section": "[off_table]",
+      "route_spec": "responses_client_tool_lowering\topenai_responses_websocket\topenai:apikey\topenai_responses\tadapt_responses_tools_ws\trestore_responses_tools",
+      "t3_tests": [
+        "internal/protocol/convert:TestAdaptAndRestoreResponsesTools_CustomNamespaceSearchAndWSWarmup",
+        "internal/protocol/convert:TestRestoreResponsesToolsAndStream_HostedEventsEnvelopesAndQuirks",
+        "internal/protocol/convert:TestRecordedResponsesCorpus_LosslessPrecheckAndFieldPreservation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage5ResponsesClientToolsMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage5ResponsesCustomToolScenarios"
+      ]
+    },
+    {
+      "line_number": 79,
+      "section": "[off_table]",
+      "route_spec": "responses_client_tool_lowering\topenai_responses_websocket\tgrok:oauth,apikey\topenai_responses\tadapt_responses_tools_ws\trestore_responses_tools",
+      "t3_tests": [
+        "internal/protocol/convert:TestAdaptAndRestoreResponsesTools_CustomNamespaceSearchAndWSWarmup",
+        "internal/protocol/convert:TestRestoreResponsesToolsAndStream_HostedEventsEnvelopesAndQuirks",
+        "internal/protocol/convert:TestRecordedResponsesCorpus_LosslessPrecheckAndFieldPreservation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRStage5ResponsesClientToolsMatrix"
+      ],
+      "t6_status": "covered",
+      "t6_tests": [
+        "internal/app:TestClientLabIRStage5ResponsesCustomToolScenarios"
+      ]
+    },
+    {
+      "line_number": 80,
+      "section": "[off_table]",
+      "route_spec": "cursor_chat_responses_input\topenai_chat_completions\topenai:oauth,apikey;kimi:apikey;deepseek:apikey;opencode:apikey\topenai_responses\tresponses_input_passthrough\tresponses",
+      "t3_tests": [
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws",
+        "internal/protocol/convert:TestQoderStatelessAndCursorRequestInvariants"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Cursor IDE closed-source desktop client sends input-shaped /v1/chat/completions payloads not emitted by standalone Codex, Claude Code, or pi CLIs; verified end-to-end in T3 and T5."
+    },
+    {
+      "line_number": 81,
+      "section": "[off_table]",
+      "route_spec": "cursor_chat_responses_input\topenai_chat_completions\topenai:apikey;grok:oauth,apikey;kimi:apikey;zhipu:apikey;deepseek:apikey;opencode:apikey\topenai_chat_completions\tchat\tchat_passthrough",
+      "t3_tests": [
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws",
+        "internal/protocol/convert:TestQoderStatelessAndCursorRequestInvariants"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Cursor IDE closed-source desktop client sends input-shaped /v1/chat/completions payloads not emitted by standalone Codex, Claude Code, or pi CLIs; verified end-to-end in T3 and T5."
+    },
+    {
+      "line_number": 82,
+      "section": "[off_table]",
+      "route_spec": "cursor_chat_responses_input\topenai_chat_completions\tkimi:apikey;zhipu:apikey;deepseek:apikey;opencode:apikey\tanthropic_messages\tmessages_compat\tmessages",
+      "t3_tests": [
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws",
+        "internal/protocol/convert:TestQoderStatelessAndCursorRequestInvariants"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Cursor IDE closed-source desktop client sends input-shaped /v1/chat/completions payloads not emitted by standalone Codex, Claude Code, or pi CLIs; verified end-to-end in T3 and T5."
+    },
+    {
+      "line_number": 83,
+      "section": "[off_table]",
+      "route_spec": "messages_count_tokens\tanthropic_messages\tgemini:oauth,apikey,service_account\tgemini_generate_content\tgemini_count_tokens_request\tanthropic_count_tokens_response",
+      "t3_tests": [
+        "internal/protocol/convert:TestStage7OffTableAndDialectLaws"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete",
+        "internal/app:TestProtocolLabIRGeminiUpstreamMatrix"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Auxiliary /v1/messages/count_tokens preflight endpoint is not deterministically invoked as an isolated CLI generation cell; verified across all Gemini auth types in T3 and T5."
+    },
+    {
+      "line_number": 84,
+      "section": "[off_table]",
+      "route_spec": "messages_count_tokens\tanthropic_messages\topenai:oauth,apikey\topenai_responses\topenai_input_tokens_projection\tanthropic_count_tokens_response",
+      "t3_tests": [
+        "internal/gateway/provider:TestPrepareAnthropicInputTokens_FiveFieldProjectionAndCarrierUnpacking",
+        "internal/gateway/provider:TestPrepareNativeInputTokensAndEstimateLocally",
+        "internal/gateway/provider:TestPrepareInputTokens_CorpusAndWireValidation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Auxiliary /v1/messages/count_tokens -> /v1/responses/input_tokens preflight endpoint is not deterministically invoked by standalone CLIs; verified across OpenAI OAuth and API Key in T3 and T5."
+    },
+    {
+      "line_number": 85,
+      "section": "[off_table]",
+      "route_spec": "local_input_token_estimation\tanthropic_messages\topenai:oauth;grok:oauth,apikey;kimi:apikey;zhipu:apikey;deepseek:apikey;opencode:apikey\topenai_responses\ttokenestimate_responses_projection\tlocal_tiktoken_count",
+      "t3_tests": [
+        "internal/gateway/tokenestimate:TestCountingPayloadAndResponsesBytes_LosslessProjectionAndExactParity",
+        "internal/gateway/tokenestimate:TestAnthropicAndResponsesBytes_CorpusValidation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Local tiktoken input estimation backs auxiliary /v1/messages/count_tokens without a dedicated CLI invocation mode; verified across all eight platform/auth scopes in T3 and T5."
+    },
+    {
+      "line_number": 86,
+      "section": "[off_table]",
+      "route_spec": "responses_legacy_messages_ingress\topenai_responses\topenai:oauth;anthropic:oauth,setup-token,apikey,bedrock,service_account\topenai_responses\tlegacy_chat_messages_to_responses_input\tnone",
+      "t3_tests": [
+        "internal/gateway/provider:TestNormalizeOpenAIResponsesLegacyIngress_LosslessHybridAndUint64Preservation",
+        "internal/gateway/provider:TestNormalizeOpenAIResponsesLegacyIngress_CorpusValidation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Non-standard Responses payloads carrying legacy Chat messages[] come from custom SDK shims rather than Codex, Claude Code, or pi CLIs; verified over HTTP and WebSocket in T3 and T5."
+    },
+    {
+      "line_number": 87,
+      "section": "[off_table]",
+      "route_spec": "responses_legacy_messages_ingress\topenai_responses_websocket\topenai:oauth\topenai_responses\tlegacy_chat_messages_to_responses_input\tnone",
+      "t3_tests": [
+        "internal/gateway/provider:TestNormalizeOpenAIResponsesLegacyIngress_LosslessHybridAndUint64Preservation",
+        "internal/gateway/provider:TestNormalizeOpenAIResponsesLegacyIngress_CorpusValidation"
+      ],
+      "t5_tests": [
+        "internal/app:TestProtocolLabStage7RouteMatrixComplete"
+      ],
+      "t6_status": "exempt",
+      "t6_exempt_reason": "Non-standard Responses payloads carrying legacy Chat messages[] come from custom SDK shims rather than Codex, Claude Code, or pi CLIs; verified over HTTP and WebSocket in T3 and T5."
+    }
+  ]
+}

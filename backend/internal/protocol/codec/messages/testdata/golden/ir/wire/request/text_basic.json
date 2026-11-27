@@ -1,0 +1,18 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Explain in one sentence why deterministic JSON serialization helps HTTP prompt caching."
+        }
+      ]
+    }
+  ],
+  "sampling": {
+    "temperature": 0.2
+  },
+  "max_output_tokens": 256
+}

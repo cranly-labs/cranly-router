@@ -1,0 +1,26 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_image",
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          "detail": "high"
+        },
+        {
+          "type": "input_image",
+          "image_url": "https://assets.example.com/diagrams/architecture-overview.png",
+          "detail": "auto"
+        },
+        {
+          "type": "input_text",
+          "text": "Compare the inline PNG calibration swatch with the remote architecture diagram and state whether their aspect ratios match."
+        }
+      ]
+    }
+  ]
+}

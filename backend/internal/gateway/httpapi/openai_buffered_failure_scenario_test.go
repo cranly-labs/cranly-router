@@ -16,6 +16,8 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
+	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -24,8 +26,8 @@ import (
 )
 
 // openai_buffered_failure_scenario_test.go covers buffered failure callbacks in
-// openai_chat_response_output.go, openai_messages_response_output.go, and
-// openai_response_buffered_failure.go through their Responses readers.
+// openai_response_converted_output.go and openai_response_buffered_failure.go
+// through ReadConvertedBuffered across Chat and Messages client protocols.
 // Each reader consumes the same failed SSE terminal
 // so assertions compare protocol presentation with request state and health writes.
 
@@ -170,21 +172,27 @@ func TestOpenAIBufferedFailureProtocols(t *testing.T) {
 					Body:       io.NopCloser(strings.NewReader("data: " + payload + "\n\n")),
 				}
 				sink := upstream.NewDeferredOutputContext(ResponseSink{Writer: c.Writer})
-				var result *openai.CompatResponseResult
-				var err error
-				if protocol == "chat" {
-					result, err = openai.ReadChatBuffered(
-						resp, sink,
-						output.ChatOptions(c, provider, resp, "client-model", "gpt-5.4", "gpt-5.4"),
-						"client-model", "gpt-5.4", time.Now(),
-					)
-				} else {
-					result, err = openai.ReadMessagesBuffered(
-						resp, sink,
-						output.MessagesOptions(c, provider, resp, "client-model", "gpt-5.4", "gpt-5.4"),
-						"client-model", "gpt-5.4", time.Now(),
-					)
+				sourceProto := protocolcore.ProtocolOpenAIChatCompletions
+				reqBody := []byte(`{"model":"client-model","stream":false,"messages":[{"role":"user","content":"hi"}]}`)
+				if protocol == "messages" {
+					sourceProto = protocolcore.ProtocolAnthropicMessages
+					reqBody = []byte(`{"model":"client-model","max_tokens":64,"stream":false,"messages":[{"role":"user","content":"hi"}]}`)
 				}
+				ex, exErr := convert.NewExchange(reqBody, convert.Options{
+					Route: convert.Route{
+						Client:   sourceProto,
+						Upstream: protocolcore.ProtocolOpenAIResponses,
+					},
+					ClientModel: "client-model",
+				})
+				require.NoError(t, exErr)
+				_, exErr = ex.UpstreamRequest()
+				require.NoError(t, exErr)
+				result, err := openai.ReadConvertedBuffered(
+					resp, sink, ex,
+					output.ConvertedOptions(c, provider, resp, sourceProto, "client-model", "gpt-5.4", "gpt-5.4", len(reqBody)),
+					"client-model", "gpt-5.4", time.Now(),
+				)
 				require.Error(t, err)
 				require.Nil(t, result)
 				require.Equal(t, tt.wantHealth, store.SetErrCalls)

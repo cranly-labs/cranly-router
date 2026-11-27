@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl_image_input","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"The inline swatch is a 1x1 square pixel, "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_image_input","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"whereas the linked architecture diagram uses a wide 16:9 canvas, "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_image_input","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"so their aspect ratios do not match."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_image_input","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_image_input","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":312,"completion_tokens":28,"total_tokens":340,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]
+

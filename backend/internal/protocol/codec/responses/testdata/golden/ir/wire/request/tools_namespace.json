@@ -1,0 +1,162 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Inspect service.yaml, delegate trace review, and query checkout distributed trace spans."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "tool_call",
+          "id": "fc_ns_read_1",
+          "call": {
+            "call_id": "call_ns_read_1",
+            "tool": {
+              "kind": "function",
+              "namespace": "functions",
+              "name": "read_text_file"
+            },
+            "arguments": "{\"path\":\"service.yaml\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_ns_read_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "service: checkout\ntimeout_ms: 2500"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "tool_call",
+          "id": "fc_ns_spawn_1",
+          "call": {
+            "call_id": "call_ns_spawn_1",
+            "tool": {
+              "kind": "function",
+              "namespace": "collaboration",
+              "name": "spawn_agent"
+            },
+            "arguments": "{\"task\":\"inspect checkout config\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_ns_spawn_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"agent_id\":\"worker_1\",\"status\":\"ready\"}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "namespace": "functions",
+      "name": "read_text_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "strict": false
+    },
+    {
+      "kind": "function",
+      "namespace": "collaboration",
+      "name": "spawn_agent",
+      "description": "Spawn a worker agent for a subtask.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "strict": false
+    },
+    {
+      "kind": "function",
+      "namespace": "enterprise_observability_telemetry_connector",
+      "name": "query_distributed_trace_spans_by_service",
+      "description": "Query recent distributed trace spans for a backend service.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "service"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "namespaces": [
+    {
+      "name": "functions",
+      "description": "Built-in workspace file helpers."
+    },
+    {
+      "name": "collaboration",
+      "description": "Multi-agent task delegation tools."
+    },
+    {
+      "name": "enterprise_observability_telemetry_connector",
+      "description": "Distributed tracing and telemetry query connector."
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "parallel_tool_calls": true,
+  "max_output_tokens": 512
+}

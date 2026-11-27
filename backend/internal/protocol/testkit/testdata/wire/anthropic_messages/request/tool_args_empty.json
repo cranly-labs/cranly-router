@@ -1,0 +1,28 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "tools": [
+    {
+      "name": "get_clock",
+      "description": "Return the current UTC timestamp.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_uptime",
+      "description": "Return server uptime seconds.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Read the current UTC clock and server uptime using the parameterless tools."
+    }
+  ]
+}

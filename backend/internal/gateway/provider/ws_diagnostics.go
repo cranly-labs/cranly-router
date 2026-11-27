@@ -58,12 +58,6 @@ var openAIWSLogValueReplacer = strings.NewReplacer(
 	"failed", "fail",
 )
 
-// WarnReasoningCacheFailure records a cache-write failure with its reasoning
-// item ID.
-func WarnReasoningCacheFailure(itemID string, err error) {
-	logging.L().Warn("openai responses chat fallback: cache reasoning content failed", zap.Error(err), zap.String("item_id", itemID))
-}
-
 // NormalizeOpenAIWSLogValue trims a log value and applies the diagnostic token
 // replacer. Empty text becomes a dash placeholder; substitution can change
 // words inside larger strings, so this is diagnostic text normalization.

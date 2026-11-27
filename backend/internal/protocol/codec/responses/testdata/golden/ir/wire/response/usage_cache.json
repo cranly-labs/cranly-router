@@ -1,0 +1,24 @@
+{
+  "id": "resp_usage_cache",
+  "model": "gpt-5",
+  "created_at": 1760002000,
+  "parts": [
+    {
+      "kind": "text",
+      "id": "msg_usage_cache_out",
+      "text": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 120,
+    "cache_read": 640,
+    "cache_write": 300,
+    "cache_write_30m": 180,
+    "cache_write_12h": 120,
+    "output": 28
+  },
+  "service_tier": "priority"
+}

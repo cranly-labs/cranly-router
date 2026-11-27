@@ -1,0 +1,49 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Check the weather in Tokyo, then check Osaka."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_weather_tok_1",
+      "call_id": "call_weather_tok_1",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"Tokyo\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_weather_tok_1",
+      "output": "{\"city\":\"Tokyo\",\"temp_c\":18,\"condition\":\"clear\"}"
+    }
+  ]
+}

@@ -3,7 +3,10 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -13,9 +16,11 @@ import (
 
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -141,8 +146,24 @@ func (s *GeminiOutput) GeminiNativeUpstreamError(provider *gatewayprovider.Execu
 // returned error retains diagnostic status and message for the caller.
 func (s *GeminiOutput) GeminiMappedError(provider *gatewayprovider.ExecutionProvider, upstreamStatus int, upstreamRequestID string, body []byte) error {
 	c := s.Context
-
 	MarkResponseCommitted(c)
+	statusCode, errType, errMsg, retErr := s.resolveMessagesMappedError(provider, upstreamStatus, upstreamRequestID, body)
+	WriteAnthropicStreamError(c, statusCode, errType, "", errMsg, CommittedSSE(c), MarkOpsStreamError)
+	return retErr
+}
+
+// resolveMessagesMappedError records Gemini Ops diagnostics and resolves the
+// Anthropic Messages status, type, message, and returned diagnostic error
+// without writing HTTP output. Administrator passthrough rules take precedence
+// over body-derived Google category overrides and HTTP status defaults.
+func (s *GeminiOutput) resolveMessagesMappedError(
+	provider *gatewayprovider.ExecutionProvider,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+) (int, string, string, error) {
+	c := s.Context
+
 	upstreamMsg := strings.TrimSpace(upstream.ExtractErrorMessage(body))
 	upstreamMsg = logredact.SanitizeUpstreamQueries(upstreamMsg)
 	upstreamDetail := ""
@@ -156,45 +177,44 @@ func (s *GeminiOutput) GeminiMappedError(provider *gatewayprovider.ExecutionProv
 		upstreamDetail = logredact.TruncateUTF8(string(body), maxBytes)
 	}
 	SetOpsUpstreamError(c, upstreamStatus, upstreamMsg, upstreamDetail)
-	AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
-		Platform: provider.Record.Platform,
-
-		ProviderID: provider.Record.ID,
-
-		ProviderName: provider.Record.Name,
-
-		UpstreamStatusCode: upstreamStatus,
-
-		UpstreamRequestID: upstreamRequestID,
-
-		Kind: "http_error",
-
-		Message: upstreamMsg,
-
-		Detail: upstreamDetail,
-	})
+	if provider != nil {
+		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
+			Platform:           provider.Record.Platform,
+			ProviderID:         provider.Record.ID,
+			ProviderName:       provider.Record.Name,
+			UpstreamStatusCode: upstreamStatus,
+			UpstreamRequestID:  upstreamRequestID,
+			Kind:               "http_error",
+			Message:            upstreamMsg,
+			Detail:             upstreamDetail,
+		})
+	}
 
 	if s.Options.LogErrorBody {
 		logging.LegacyPrintf("service.gemini_messages_compat", "[Gemini] upstream error %d: %s", upstreamStatus, logredact.TruncateLine(body, s.Options.LogErrorBodyMaxBytes))
 	}
 
+	platform := capability.PlatformGemini
+	if provider != nil {
+		platform = provider.Record.Platform
+	}
 	if status, errType, errMsg, matched := ApplyErrorPassthroughRule(
 		c,
-		provider.Record.Platform,
+		platform,
 		upstreamStatus,
 		body,
 		http.StatusBadGateway,
 		"upstream_error",
 		"Upstream request failed",
 	); matched {
-		WriteAnthropicStreamError(c, status, errType, "", errMsg, CommittedSSE(c), MarkOpsStreamError)
-		if upstreamMsg == "" {
-			upstreamMsg = errMsg
+		diagMsg := upstreamMsg
+		if diagMsg == "" {
+			diagMsg = errMsg
 		}
-		if upstreamMsg == "" {
-			return fmt.Errorf("upstream error: %d (passthrough rule matched)", upstreamStatus)
+		if diagMsg == "" {
+			return status, errType, errMsg, fmt.Errorf("upstream error: %d (passthrough rule matched)", upstreamStatus)
 		}
-		return fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", upstreamStatus, upstreamMsg)
+		return status, errType, errMsg, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", upstreamStatus, diagMsg)
 	}
 
 	var statusCode int
@@ -306,11 +326,10 @@ func (s *GeminiOutput) GeminiMappedError(provider *gatewayprovider.ExecutionProv
 		}
 	}
 
-	WriteAnthropicStreamError(c, statusCode, errType, "", errMsg, CommittedSSE(c), MarkOpsStreamError)
 	if upstreamMsg == "" {
-		return fmt.Errorf("upstream error: %d", upstreamStatus)
+		return statusCode, errType, errMsg, fmt.Errorf("upstream error: %d", upstreamStatus)
 	}
-	return fmt.Errorf("upstream error: %d message=%s", upstreamStatus, upstreamMsg)
+	return statusCode, errType, errMsg, fmt.Errorf("upstream error: %d message=%s", upstreamStatus, upstreamMsg)
 }
 
 // ClaudeError commits and writes the supplied Messages error envelope, then
@@ -348,8 +367,22 @@ func (s *GeminiOutput) GeminiOpenAICompatMappedError(
 	upstreamStatus int,
 	upstreamRequestID string,
 	body []byte,
-	protocol gemininative.OpenAICompatProtocol,
+	compatProtocol gemininative.OpenAICompatProtocol,
 ) error {
+	statusCode, errType, errMsg := s.resolveOpenAICompatMappedError(provider, upstreamStatus, upstreamRequestID, body)
+	return s.GeminiOpenAICompatError(compatProtocol, statusCode, errType, errMsg)
+}
+
+// resolveOpenAICompatMappedError records Gemini Ops diagnostics and resolves
+// the OpenAI-compatible status, type, and message without writing HTTP output.
+// Administrator passthrough rules win first, while pool-mode providers expose
+// sanitized upstream error messages for every HTTP status at or above 400.
+func (s *GeminiOutput) resolveOpenAICompatMappedError(
+	provider *gatewayprovider.ExecutionProvider,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+) (int, string, string) {
 	c := s.Context
 
 	upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(body)))
@@ -358,19 +391,13 @@ func (s *GeminiOutput) GeminiOpenAICompatMappedError(
 	if provider != nil {
 		platform = provider.Record.Platform
 		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
-			Platform: provider.Record.Platform,
-
-			ProviderID: provider.Record.ID,
-
-			ProviderName: provider.Record.Name,
-
+			Platform:           provider.Record.Platform,
+			ProviderID:         provider.Record.ID,
+			ProviderName:       provider.Record.Name,
 			UpstreamStatusCode: upstreamStatus,
-
-			UpstreamRequestID: upstreamRequestID,
-
-			Kind: "http_error",
-
-			Message: upstreamMsg,
+			UpstreamRequestID:  upstreamRequestID,
+			Kind:               "http_error",
+			Message:            upstreamMsg,
 		})
 	}
 
@@ -383,7 +410,7 @@ func (s *GeminiOutput) GeminiOpenAICompatMappedError(
 		"upstream_error",
 		"Upstream request failed",
 	); matched {
-		return s.GeminiOpenAICompatError(protocol, status, errType, errMsg)
+		return status, errType, errMsg
 	}
 
 	statusCode := http.StatusBadGateway
@@ -448,12 +475,13 @@ func (s *GeminiOutput) GeminiOpenAICompatMappedError(
 	if provider != nil && provider.View().IsPoolMode() && upstreamStatus >= http.StatusBadRequest && upstreamMsg != "" {
 		errMsg = upstreamMsg
 	}
-	return s.GeminiOpenAICompatError(protocol, statusCode, errType, errMsg)
+	return statusCode, errType, errMsg
 }
 
 // GeminiOpenAICompatError writes the envelope selected by the compatible
-// client protocol. Responses uses ForwardConversionOutput and a commit
-// callback; other values use ChatError, with the message returned as an error.
+// client protocol. Responses writes JSON or a streaming error frame once
+// beginGoogleError claims final error output; other values use ChatError, with
+// the message returned as an error.
 func (s *GeminiOutput) GeminiOpenAICompatError(
 	protocol gemininative.OpenAICompatProtocol,
 	status int,
@@ -547,3 +575,192 @@ func writeGoogleErrorBody(c *gin.Context, status int, body []byte) {
 // HTTPStatusToGoogleStatus returns the shared Google status name for an HTTP
 // status.
 func HTTPStatusToGoogleStatus(status int) string { return httpx.HTTPStatusToGoogleStatus(status) }
+
+// CommittedSSE reports whether downstream HTTP 200 text/event-stream headers
+// have already been committed on s.Context, including by waiting heartbeats.
+// Nil receivers or absent Gin contexts return false safely.
+func (s *GeminiOutput) CommittedSSE() bool {
+	return s != nil && s.Context != nil && CommittedSSE(s.Context)
+}
+
+// ReadConvertedBody reads bounded upstream bytes using source's oversize error
+// envelope and reports whether an oversize error response was already written.
+// Callers retain ownership of closing body after this method returns.
+func (s *GeminiOutput) ReadConvertedBody(body io.Reader, limit int64, source protocol.ProtocolID) ([]byte, bool, error) {
+	tooLarge := OpenAIResponseTooLarge
+	if source == protocol.ProtocolAnthropicMessages {
+		tooLarge = AnthropicResponseTooLarge
+	}
+	raw, err := ReadUpstreamResponseBody(body, limit, s.Context, func(c *gin.Context) {
+		if beginGoogleError(c) {
+			tooLarge(c)
+		}
+	})
+	return raw, errors.Is(err, httpclient.ErrResponseBodyTooLarge), err
+}
+
+// MapGeminiStreamFailure records upstream failure diagnostics once on s.Context
+// and resolves client status, type, code, message, and diagnostic error without
+// writing HTTP output. Custom-code misses record http_error diagnostics and
+// resolve to a generic 500 api_error message.
+func (s *GeminiOutput) MapGeminiStreamFailure(
+	provider *gatewayprovider.ExecutionProvider,
+	source protocol.ProtocolID,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+	customSkipped bool,
+) (int, string, string, string, error) {
+	c := s.Context
+	if customSkipped {
+		upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(body)))
+		upstreamDetail := s.Options.ErrorDetail(body)
+		SetOpsUpstreamError(c, upstreamStatus, upstreamMsg, upstreamDetail)
+		if provider != nil {
+			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
+				Platform:           provider.Record.Platform,
+				ProviderID:         provider.Record.ID,
+				ProviderName:       provider.Record.Name,
+				UpstreamStatusCode: upstreamStatus,
+				UpstreamRequestID:  upstreamRequestID,
+				Kind:               "http_error",
+				Message:            upstreamMsg,
+				Detail:             upstreamDetail,
+			})
+		}
+		code := ""
+		if source == protocol.ProtocolOpenAIResponses {
+			code = "api_error"
+		}
+		var retErr error
+		if upstreamMsg == "" {
+			retErr = fmt.Errorf("gemini upstream error: %d (not in custom error codes)", upstreamStatus)
+		} else {
+			retErr = fmt.Errorf("gemini upstream error: %d (not in custom error codes) message=%s", upstreamStatus, upstreamMsg)
+		}
+		return http.StatusInternalServerError, "api_error", code, "Upstream gateway error", retErr
+	}
+
+	if source == protocol.ProtocolAnthropicMessages {
+		st, tp, msg, retErr := s.resolveMessagesMappedError(provider, upstreamStatus, upstreamRequestID, body)
+		return st, tp, "", msg, retErr
+	}
+	st, tp, msg := s.resolveOpenAICompatMappedError(provider, upstreamStatus, upstreamRequestID, body)
+	code := ""
+	if source == protocol.ProtocolOpenAIResponses {
+		code = tp
+	}
+	return st, tp, code, msg, fmt.Errorf("%s", msg)
+}
+
+// MapAntigravityFailure delegates single-pass Antigravity diagnostic recording,
+// optional body logging, and Messages passthrough-rule resolution to an
+// AntigravityOutput sharing s.GoogleOutput and s.Options. Callers invoke this
+// before writing terminal SSE errors so CommittedSSE branches match uncommitted rules.
+func (s *GeminiOutput) MapAntigravityFailure(
+	provider *gatewayprovider.ExecutionProvider,
+	source protocol.ProtocolID,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+) (int, string, string, string, error) {
+	ag := AntigravityOutput{GoogleOutput: s.GoogleOutput, Options: s.Options}
+	return ag.MapAntigravityFailure(provider, source, upstreamStatus, upstreamRequestID, body)
+}
+
+// WriteConvertedError writes an uncommitted client-protocol HTTP JSON error on
+// s.Context or promotes to an untimed terminal SSE error when CommittedSSE is
+// true. Deduplication through beginGoogleError prevents duplicate error writes.
+func (s *GeminiOutput) WriteConvertedError(
+	source protocol.ProtocolID,
+	originalModel string,
+	status int,
+	errType, code, message string,
+) {
+	if s == nil || s.Context == nil {
+		return
+	}
+	if CommittedSSE(s.Context) {
+		s.WriteLocalTerminalError(source, originalModel, status, errType, code, message)
+		return
+	}
+	if !beginGoogleError(s.Context) {
+		return
+	}
+	switch source {
+	case protocol.ProtocolAnthropicMessages:
+		WriteAnthropicStreamError(s.Context, status, errType, "", message, false, MarkOpsStreamError)
+	case protocol.ProtocolOpenAIResponses:
+		errCode := code
+		if errCode == "" {
+			errCode = errType
+		}
+		// responsesErrorBody formats the code and message fields of an uncommitted Responses HTTP error.
+		type responsesErrorBody struct {
+			Code    string `json:"code"`    // Responses error code
+			Message string `json:"message"` // client-safe error message
+		}
+		// responsesErrorEnvelope wraps responsesErrorBody under a top-level "error" key.
+		type responsesErrorEnvelope struct {
+			Error responsesErrorBody `json:"error"` // top-level Responses error object
+		}
+		encoded, err := jsonv2.Marshal(responsesErrorEnvelope{
+			Error: responsesErrorBody{Code: errCode, Message: message},
+		})
+		if err != nil {
+			encoded = []byte(`{"error":{"code":"upstream_error","message":"Upstream request failed"}}`)
+		}
+		s.Context.Data(status, "application/json; charset=utf-8", encoded)
+	default:
+		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(s.Context, status, errType, code, message, false, true)
+	}
+}
+
+// WriteLocalTerminalError writes an untimed client-protocol terminal SSE error
+// onto s.Context, emitting synthetic response.failed frames on Responses
+// streams. Deduplication via beginGoogleError ensures at most one final error
+// reaches the active client connection.
+func (s *GeminiOutput) WriteLocalTerminalError(
+	source protocol.ProtocolID,
+	originalModel string,
+	status int,
+	errType, code, message string,
+) {
+	if s == nil || s.Context == nil || !beginGoogleError(s.Context) {
+		return
+	}
+	c := s.Context
+	switch {
+	case source == protocol.ProtocolAnthropicMessages:
+		DefaultOpenAIErrorOutput().WriteAnthropicStreamingError(c, status, errType, message, true)
+	case source == protocol.ProtocolOpenAIResponses || InboundIsResponses(c):
+		MarkOpsStreamFailure(c, errType, code, message, status)
+		if WriteResponsesFailedSSE(c, errType, code, message, ErrorRequestID(c), firstNonBlankModel(originalModel, ErrorRequestModel(c))) {
+			return
+		}
+		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, status, errType, code, message, true, false)
+	default:
+		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, status, errType, code, message, true, true)
+	}
+}
+
+// WriteRawTerminalSSE records stream error diagnostics once and delivers
+// pre-encoded terminal SSE frame bytes through the untimed terminal barrier on
+// s.Context. Nil contexts, cancelled requests, or writers without http.Flusher
+// return false.
+func (s *GeminiOutput) WriteRawTerminalSSE(
+	source protocol.ProtocolID,
+	status int,
+	errType, code, message string,
+	data []byte,
+) bool {
+	if s == nil || s.Context == nil || !beginGoogleError(s.Context) {
+		return false
+	}
+	if source == protocol.ProtocolAnthropicMessages {
+		MarkOpsStreamError(s.Context, errType, message, status)
+	} else {
+		MarkOpsStreamFailure(s.Context, errType, code, message, status)
+	}
+	return emitLocalTerminalSSE(s.Context, data)
+}

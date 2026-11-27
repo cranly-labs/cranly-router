@@ -1,0 +1,36 @@
+{
+  "id": "resp_tool_parallel",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "fc_weather_tyo_1",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_weather_tyo_1",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"Tokyo\"}"
+    },
+    {
+      "id": "fc_time_tyo_2",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_time_tyo_2",
+      "name": "get_time",
+      "arguments": "{\"timezone\":\"Asia/Tokyo\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 96,
+    "output_tokens": 32,
+    "total_tokens": 128,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

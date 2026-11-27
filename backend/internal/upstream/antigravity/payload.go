@@ -1,32 +1,50 @@
 package antigravity
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/google/uuid"
 
-	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
-	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
 // payload.go prepares Antigravity request envelopes, identity instructions,
-// schemas, and token-limit overrides.
+// and Gemini tool schemas.
 // Antigravity generation payloads carry a project and internal model route
 // outside the Gemini request object. The envelope carries the model supplied by
 // the caller alongside a new agent request ID and a fixed client identity.
 //
-// Identity injection and schema cleanup decode mutable JSON maps and reencode
-// when their conditions require changes. Existing camelCase declaration arrays take
-// precedence, and mixed Search/function declarations enable server-side
-// invocations. Token limits preserve max_completion_tokens presence precedence
-// even when its value prevents a positive override. Directly supplied schema
-// maps can be mutated by bridge cleaners; byte wrappers work on separately
-// decoded objects.
+// InjectIdentityPatchToGeminiRequestWithPrompt prepends custom or default
+// identity instructions through lossless jsontext member rewriting, whereas
+// InjectIdentityPatchToGeminiRequest and CleanGeminiRequest decode mutable JSON
+// maps and reencode when their conditions require changes. Existing camelCase
+// declaration arrays take precedence. Directly supplied schema maps can be
+// mutated by schema cleaners; byte wrappers work on separately decoded objects.
+
+const (
+	// MaxTokensBudgetPadding defines the additional output allowance above
+	// thinking budgets for callers enforcing the Claude max-token relationship.
+	MaxTokensBudgetPadding = 1000
+
+	// antigravityIdentity supplies the built-in platform instruction when
+	// identity patching is enabled and no user identity marker is present.
+	antigravityIdentity = `<identity>
+You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
+The USER will send you requests, which you must always prioritize addressing. Along with each USER request, we will attach additional metadata about their current state, such as what files they have open and where their cursor is.
+This information may or may not be relevant to the coding task, it is up for you to decide.
+</identity>
+<communication_style>
+- **Proactiveness**. As an agent, you are allowed to be proactive, but only in the course of completing the user's task. For example, if the user asks you to add a new component, you can edit the code, verify build and test statuses, and take any other obvious follow-up actions, such as performing additional research. However, avoid surprising the user. For example, if the user asks HOW to approach something, you should answer their question and instead of jumping into editing a file.</communication_style>`
+)
 
 var (
 	// AntigravityPassthroughErrorMessages lists lowercase fragments that permit upstream
@@ -55,6 +73,12 @@ type PromptTooLongError struct {
 // Error returns the prompt-length failure label and its upstream HTTP status.
 func (e *PromptTooLongError) Error() string {
 	return fmt.Sprintf("prompt too long: status=%d", e.StatusCode)
+}
+
+// GetDefaultIdentityPatch returns the built-in Antigravity identity
+// instruction for request preparation.
+func GetDefaultIdentityPatch() string {
+	return antigravityIdentity
 }
 
 // ApplyThinkingModelSuffix selects the Sonnet 4.5 thinking name when enabled
@@ -119,6 +143,182 @@ func InjectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(request)
+}
+
+// InjectIdentityPatchToGeminiRequestWithPrompt prepends customPrompt (or
+// GetDefaultIdentityPatch when customPrompt trims to empty) before existing
+// camelCase systemInstruction parts via lossless jsontext token rewriting.
+// Requests whose existing systemInstruction.parts already contain the
+// "You are Antigravity" marker return body unchanged, while non-object inputs
+// or malformed JSON return a parse error.
+func InjectIdentityPatchToGeminiRequestWithPrompt(body []byte, customPrompt string) ([]byte, error) {
+	// rawObjectMember preserves exact JSON member order and borrowed raw value bytes during patching.
+	type rawObjectMember struct {
+		name  string // decoded object member key
+		value []byte // validated raw JSON member slice
+	}
+	// textPartPayload encodes a single Gemini text part inside systemInstruction.parts.
+	type textPartPayload struct {
+		Text string `json:"text"` // injected identity instruction text
+	}
+
+	readObjectMembers := func(raw []byte) ([]rawObjectMember, bool) {
+		dec := jsontext.NewDecoder(bytes.NewReader(raw), jsontext.AllowInvalidUTF8(true))
+		tok, err := dec.ReadToken()
+		if err != nil || tok.Kind() != '{' {
+			return nil, false
+		}
+		var members []rawObjectMember
+		for dec.PeekKind() != '}' {
+			kTok, kErr := dec.ReadToken()
+			if kErr != nil {
+				return nil, false
+			}
+			keyName := kTok.String()
+			vStart := int(dec.InputOffset())
+			if vErr := dec.SkipValue(); vErr != nil {
+				return nil, false
+			}
+			vEnd := int(dec.InputOffset())
+			span := bytes.TrimSpace(raw[vStart:vEnd])
+			if len(span) > 0 && span[0] == ':' {
+				span = bytes.TrimSpace(span[1:])
+			}
+			members = append(members, rawObjectMember{
+				name:  keyName,
+				value: span,
+			})
+		}
+		if _, err := dec.ReadToken(); err != nil {
+			return nil, false
+		}
+		if _, err := dec.ReadToken(); err != io.EOF {
+			return nil, false
+		}
+		return members, true
+	}
+
+	topMembers, ok := readObjectMembers(body)
+	if !ok {
+		return nil, fmt.Errorf("parse Gemini request: invalid JSON object")
+	}
+
+	sysIdx := -1
+	for i, m := range topMembers {
+		if m.name == "systemInstruction" {
+			sysIdx = i
+		}
+	}
+
+	var sysMembers []rawObjectMember
+	var existingParts [][]byte
+	hasSysObject := false
+	partsIdx := -1
+	if sysIdx >= 0 {
+		if parsedSys, sysOK := readObjectMembers(topMembers[sysIdx].value); sysOK {
+			hasSysObject = true
+			sysMembers = parsedSys
+			for i, sm := range sysMembers {
+				if sm.name == "parts" {
+					partsIdx = i
+				}
+			}
+			if partsIdx >= 0 {
+				partsRaw := sysMembers[partsIdx].value
+				pDec := jsontext.NewDecoder(bytes.NewReader(partsRaw), jsontext.AllowInvalidUTF8(true))
+				if pTok, pErr := pDec.ReadToken(); pErr == nil && pTok.Kind() == '[' {
+					var elems [][]byte
+					validArr := true
+					for pDec.PeekKind() != ']' {
+						eStart := int(pDec.InputOffset())
+						if eErr := pDec.SkipValue(); eErr != nil {
+							validArr = false
+							break
+						}
+						eEnd := int(pDec.InputOffset())
+						elemSlice := bytes.TrimSpace(partsRaw[eStart:eEnd])
+						if len(elemSlice) > 0 && elemSlice[0] == ',' {
+							elemSlice = bytes.TrimSpace(elemSlice[1:])
+						}
+						if partMembers, pOK := readObjectMembers(elemSlice); pOK {
+							for _, pm := range partMembers {
+								if pm.name == "text" {
+									var txt string
+									if jsonv2.Unmarshal(pm.value, &txt, jsontext.AllowInvalidUTF8(true)) == nil &&
+										strings.Contains(txt, "You are Antigravity") {
+										return body, nil
+									}
+								}
+							}
+						}
+						elems = append(elems, elemSlice)
+					}
+					if validArr {
+						if _, endErr := pDec.ReadToken(); endErr == nil {
+							existingParts = elems
+						}
+					}
+				}
+			}
+		}
+	}
+
+	identityPatch := strings.TrimSpace(customPrompt)
+	if identityPatch == "" {
+		identityPatch = GetDefaultIdentityPatch()
+	}
+	newPartBytes, err := jsonv2.Marshal(textPartPayload{Text: identityPatch}, jsontext.AllowInvalidUTF8(true))
+	if err != nil {
+		return nil, fmt.Errorf("marshal identity patch part: %w", err)
+	}
+
+	newPartsValue := make([]byte, 0, len(newPartBytes)+64)
+	newPartsValue = append(newPartsValue, '[')
+	newPartsValue = append(newPartsValue, newPartBytes...)
+	for _, ep := range existingParts {
+		newPartsValue = append(newPartsValue, ',')
+		newPartsValue = append(newPartsValue, ep...)
+	}
+	newPartsValue = append(newPartsValue, ']')
+
+	encodeObject := func(members []rawObjectMember, sizeHint int) ([]byte, error) {
+		out := make([]byte, 0, max(sizeHint, 2))
+		out = append(out, '{')
+		for i, m := range members {
+			if i > 0 {
+				out = append(out, ',')
+			}
+			keyBytes, kErr := jsonv2.Marshal(m.name, jsontext.AllowInvalidUTF8(true))
+			if kErr != nil {
+				return nil, kErr
+			}
+			out = append(out, keyBytes...)
+			out = append(out, ':')
+			out = append(out, m.value...)
+		}
+		out = append(out, '}')
+		return out, nil
+	}
+
+	if hasSysObject {
+		if partsIdx >= 0 {
+			sysMembers[partsIdx].value = newPartsValue
+		} else {
+			sysMembers = append(sysMembers, rawObjectMember{name: "parts", value: newPartsValue})
+		}
+	} else {
+		sysMembers = []rawObjectMember{{name: "parts", value: newPartsValue}}
+	}
+	sysBytes, err := encodeObject(sysMembers, len(newPartsValue)+32)
+	if err != nil {
+		return nil, err
+	}
+	if sysIdx >= 0 {
+		topMembers[sysIdx].value = sysBytes
+	} else {
+		topMembers = append(topMembers, rawObjectMember{name: "systemInstruction", value: sysBytes})
+	}
+	return encodeObject(topMembers, len(body)+len(newPartBytes)+64)
 }
 
 // WrapV1InternalRequest adds project/model routing and a fresh agent ID around
@@ -275,86 +475,16 @@ func CleanGeminiRequest(body []byte) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-// PreserveChatCompletionTokenLimit copies the selected positive Chat token
-// limit into claudeRequest. Nil request pointers leave the destination
-// unchanged, and an absent limit supplies no override.
-//
-// Selection uses max_completion_tokens presence before testing positivity. For
-// example, max_tokens=100 with max_completion_tokens=0 keeps the existing
-// Claude value rather than copying 100. A positive completion limit wins over
-// max_tokens; when the completion field is absent, a positive max_tokens value
-// becomes the converted limit.
-func PreserveChatCompletionTokenLimit(request *protocolopenai.ChatCompletionsRequest, claudeRequest *protocolanthropic.AnthropicRequest) {
-	if request == nil || claudeRequest == nil {
-		return
-	}
-	limit := request.MaxTokens
-	// Select by presence before positivity so an explicit completion limit can
-	// suppress the older max_tokens value, matching the Chat request precedence
-	// used by conversion.
-	if request.MaxCompletionTokens != nil {
-		limit = request.MaxCompletionTokens
-	}
-	if limit != nil && *limit > 0 {
-		claudeRequest.MaxTokens = *limit
-	}
-}
+// CleanJSONSchema delegates recursive schema adaptation to protocol/gemini and
+// returns the mutated schema map. Schema and nested maps can be mutated, so
+// callers copy mutable schema data shared with other requests before cleanup.
+// Acyclic containers, terminating references, and comparable union-required
+// entries are required by the shared cleaner; malformed values can panic.
+func CleanJSONSchema(schema map[string]any) map[string]any { return gemini.CleanJSONSchema(schema) }
 
-// EnableMixedGeminiToolInvocations sets the server-side invocation flag when
-// decoded tools contain both camelCase search-key presence and a nonempty
-// function declaration array. Callers supply a nonnull JSON object, and
-// invalid JSON returns an error.
-//
-// The observations can come from different tool entries. Search-key presence
-// counts even when its value is null, while an empty declaration array does
-// not count. Requests missing either observation return their supplied bytes;
-// qualifying requests retain other object toolConfig fields and reencode the
-// request after replacing any nonobject toolConfig.
-func EnableMixedGeminiToolInvocations(body []byte) ([]byte, error) {
-	var request map[string]any
-	if err := json.Unmarshal(body, &request); err != nil {
-		return nil, err
-	}
-
-	// Combine search presence and nonempty function declarations across tool
-	// entries because either observation alone leaves server-side invocation
-	// configuration untouched.
-	var hasGoogleSearch, hasFunctionDeclarations bool
-	if tools, ok := request["tools"].([]any); ok {
-		for _, rawTool := range tools {
-			tool, ok := rawTool.(map[string]any)
-			if !ok {
-				continue
-			}
-			_, hasSearch := tool["googleSearch"]
-			declarations, hasFunctions := tool["functionDeclarations"].([]any)
-			hasGoogleSearch = hasGoogleSearch || hasSearch
-			hasFunctionDeclarations = hasFunctionDeclarations || hasFunctions && len(declarations) > 0
-		}
-	}
-	if !hasGoogleSearch || !hasFunctionDeclarations {
-		return body, nil
-	}
-
-	toolConfig, _ := request["toolConfig"].(map[string]any)
-	if toolConfig == nil {
-		toolConfig = make(map[string]any)
-		request["toolConfig"] = toolConfig
-	}
-	toolConfig["includeServerSideToolInvocations"] = true
-	return json.Marshal(request)
-}
-
-// CleanJSONSchema delegates recursive schema adaptation and returns the
-// bridge-selected map. Schema and nested maps can be mutated, so callers copy
-// mutable schema data shared with other requests before cleanup. Acyclic
-// containers, terminating references, and comparable union-required entries
-// are required by the shared cleaner; malformed values can panic.
-func CleanJSONSchema(schema map[string]any) map[string]any { return bridge.CleanJSONSchema(schema) }
-
-// DeepCleanUndefined delegates recursive undefined-field removal to the
-// bridge. Object maps within value can be mutated, so callers isolate mutable
-// schema data they share with other requests before applying cleanup. The
-// input needs acyclic ordinary maps and arrays because recursive traversal
+// DeepCleanUndefined delegates recursive undefined-field removal to
+// protocol/gemini. Object maps within value can be mutated, so callers isolate
+// mutable schema data they share with other requests before applying cleanup.
+// The input needs acyclic ordinary maps and arrays because recursive traversal
 // has no cycle guard.
-func DeepCleanUndefined(value any) { bridge.DeepCleanUndefined(value) }
+func DeepCleanUndefined(value any) { gemini.DeepCleanUndefined(value) }

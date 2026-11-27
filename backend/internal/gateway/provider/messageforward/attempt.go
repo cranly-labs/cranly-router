@@ -280,6 +280,12 @@ func (a *attempt) NormalizeDateline(ctx context.Context, body []byte) ([]byte, b
 	return a.s.normalizeDateline(ctx, a.provider, body)
 }
 
+// PrepareNativeReplay unpacks matching trc1 continuity envelopes or strips
+// incompatible envelopes for native Messages forwarding.
+func (a *attempt) PrepareNativeReplay(ctx context.Context, body []byte, model string) ([]byte, error) {
+	return a.s.prepareNativeMessagesReplay(ctx, a.provider, model, body)
+}
+
 // CacheLimit delegates Anthropic cache breakpoint limit enforcement for
 // prepared bytes.
 func (a *attempt) CacheLimit(body []byte) []byte {

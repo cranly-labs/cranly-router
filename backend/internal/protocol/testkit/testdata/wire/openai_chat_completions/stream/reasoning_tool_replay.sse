@@ -1,0 +1,16 @@
+data: {"id":"chatcmpl_reasoning_tool_replay","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"SKU-42 has 4 units against a reorder point of 20; "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_tool_replay","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"now query SKU-99 stock."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_tool_replay","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_inv_sku99_2","type":"function","function":{"name":"query_inventory","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_tool_replay","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"sku\":"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_tool_replay","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"SKU-99\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_tool_replay","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl_reasoning_tool_replay","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[],"usage":{"prompt_tokens":96,"completion_tokens":52,"total_tokens":148,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":28}}}
+
+data: [DONE]
+

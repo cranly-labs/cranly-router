@@ -1,0 +1,3 @@
+data: {"responseId":"gem_tools_hosted_search","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Go 1.27 ships encoding/json/v2 and "}]}}]}
+
+data: {"responseId":"gem_tools_hosted_search","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"encoding/json/jsontext in the standard library."}]},"groundingMetadata":{"webSearchQueries":["Go 1.27 encoding json v2 release notes"],"groundingChunks":[{"web":{"uri":"https://go.dev/doc/go1.27","title":"Go 1.27 Release Notes"}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":84,"candidatesTokenCount":24,"totalTokenCount":108}}

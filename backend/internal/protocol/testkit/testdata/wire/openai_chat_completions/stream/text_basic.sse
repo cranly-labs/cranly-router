@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl_text_basic","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Deterministic JSON serialization "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_basic","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"keeps identical inputs byte-for-byte stable, "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_basic","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"preserving prompt cache prefixes."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_text_basic","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_text_basic","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":24,"completion_tokens":16,"total_tokens":40,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]
+

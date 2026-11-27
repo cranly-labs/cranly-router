@@ -72,6 +72,30 @@ type FastDecision struct {
 	Blocked     error  // optional policy rejection error
 }
 
+// convertedCodexValidationError marks an upstream Codex OAuth request
+// validation failure that should be presented as HTTP 400 to the client.
+type convertedCodexValidationError struct {
+	cause error // underlying Codex transformation validation error
+}
+
+// convertedCodexTransformInput supplies model identities, flags, and request-
+// scoped callbacks to applyConvertedCodexTransform.
+type convertedCodexTransformInput struct {
+	ForMessages      bool                                                     // true for Messages-to-Responses, false for Chat-to-Responses
+	IsResponsesShape bool                                                     // true when Chat received a Cursor input-shaped body
+	IsJSONObject     bool                                                     // true when text.format.type equals "json_object"
+	OriginalModel    string                                                   // client-requested model identifier
+	NormalizedModel  string                                                   // pre-mapping client model identifier
+	BillingModel     string                                                   // resolved charge model identifier
+	UpstreamModel    string                                                   // vendor model before Codex normalization
+	PromptCacheKey   string                                                   // current prompt-cache seed before Codex normalization
+	APIKeyID         int64                                                    // authenticated downstream API key identifier
+	ForcedTemplate   string                                                   // optional Messages-to-Codex instruction template
+	ToolNameReverse  func(map[string]string)                                  // publishes reverse Codex tool aliases
+	RenderTemplate   func(map[string]any, string, TemplateData) (bool, error) // renders configured instructions
+	ProviderIdentity func(map[string]any, int64)                              // injects Codex namespace metadata
+}
+
 // TransformRequest prepares an ordinary Responses body and returns its final
 // view, model identities, and header inputs. The Prelude supplies matching
 // bytes and decoded scalar observations, and decoded request maps are borrowed
@@ -606,4 +630,108 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		ImageIntent: imageIntent, ImageMainModelAdapted: imageMainModelAdapted,
 		Fingerprint: fingerprintIDs, DefaultInstructions: defaultInstructions,
 	}, nil
+}
+
+// Error returns the underlying Codex OAuth validation error message string.
+func (e *convertedCodexValidationError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap returns the underlying Codex OAuth validation error for errors.AsType inspection.
+func (e *convertedCodexValidationError) Unwrap() error {
+	return e.cause
+}
+
+// applyConvertedCodexTransform runs wire-level Codex OAuth request preparation
+// on number-preserving decoded JSON for RunConvertedResponses and re-encodes
+// the resulting body alongside normalized upstream model and prompt-cache key
+// strings. Upstream Codex validation failures return a wrapped
+// convertedCodexValidationError so callers present HTTP 400 client rejections.
+func applyConvertedCodexTransform(body []byte, in convertedCodexTransformInput) ([]byte, string, string, error) {
+	reqBody, err := requeststate.DecodeOpenAIRequestBody(body)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("decode for codex transform: %w", err)
+	}
+
+	upstreamModel := in.UpstreamModel
+	promptCacheKey := in.PromptCacheKey
+
+	if in.ForMessages {
+		codexResult := gatewayprovider.ApplyCodexOAuthTransformWithOptions(reqBody, openai.CodexOAuthTransformOptions{
+			SkipDefaultInstructions: true,
+			PreserveToolCallIDs:     true,
+		})
+		if codexResult.Error != nil {
+			return nil, "", "", &convertedCodexValidationError{cause: codexResult.Error}
+		}
+		if in.ToolNameReverse != nil {
+			in.ToolNameReverse(codexResult.ToolNameReverse)
+		}
+		templateUpstreamModel := upstreamModel
+		if codexResult.NormalizedModel != "" {
+			templateUpstreamModel = codexResult.NormalizedModel
+		}
+		existingInstructions, _ := reqBody["instructions"].(string)
+		// Fall back to prompt-like input text when instructions are blank so forced
+		// template rendering still receives converted instruction context.
+		if strings.TrimSpace(existingInstructions) == "" {
+			existingInstructions = openai.ExtractPromptLikeInstructionsFromInput(reqBody)
+		}
+		if in.RenderTemplate != nil {
+			if _, err := in.RenderTemplate(reqBody, in.ForcedTemplate, TemplateData{
+				ExistingInstructions: strings.TrimSpace(existingInstructions),
+				OriginalModel:        in.OriginalModel,
+				NormalizedModel:      in.NormalizedModel,
+				BillingModel:         in.BillingModel,
+				UpstreamModel:        templateUpstreamModel,
+			}); err != nil {
+				return nil, "", "", err
+			}
+		}
+		protocolopenai.EnsureCodexInstructionsField(reqBody)
+		if gatewayprovider.ShouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
+			gatewayprovider.AppendOpenAICompatClaudeCodeTodoGuardToRequestBody(reqBody)
+		}
+		if codexResult.NormalizedModel != "" {
+			upstreamModel = codexResult.NormalizedModel
+		}
+		if codexResult.PromptCacheKey != "" {
+			promptCacheKey = codexResult.PromptCacheKey
+		}
+		if in.ProviderIdentity != nil {
+			in.ProviderIdentity(reqBody, in.APIKeyID)
+		}
+		delete(reqBody, "prompt_cache_key")
+	} else {
+		codexResult := gatewayprovider.ApplyCodexOAuthTransformWithOptions(reqBody, openai.CodexOAuthTransformOptions{
+			SkipDefaultInstructions:             !in.IsResponsesShape,
+			OmitPromotedSystemMessagesFromInput: !in.IsResponsesShape && !in.IsJSONObject,
+		})
+		if codexResult.Error != nil {
+			return nil, "", "", &convertedCodexValidationError{cause: codexResult.Error}
+		}
+		if in.ToolNameReverse != nil {
+			in.ToolNameReverse(codexResult.ToolNameReverse)
+		}
+		if !in.IsResponsesShape {
+			protocolopenai.EnsureCodexInstructionsField(reqBody)
+		}
+		if codexResult.NormalizedModel != "" {
+			upstreamModel = codexResult.NormalizedModel
+		}
+		if codexResult.PromptCacheKey != "" {
+			promptCacheKey = codexResult.PromptCacheKey
+		} else if promptCacheKey != "" {
+			reqBody["prompt_cache_key"] = promptCacheKey
+		}
+		if in.ProviderIdentity != nil {
+			in.ProviderIdentity(reqBody, in.APIKeyID)
+		}
+	}
+
+	encoded, err := wirejson.Marshal(reqBody)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("remarshal after codex transform: %w", err)
+	}
+	return encoded, upstreamModel, promptCacheKey, nil
 }

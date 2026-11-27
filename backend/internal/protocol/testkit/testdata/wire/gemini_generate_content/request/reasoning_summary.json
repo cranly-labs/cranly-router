@@ -1,0 +1,19 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Compare merge sort and quicksort stability in two sentences."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingBudget": 2048,
+      "includeThoughts": true
+    }
+  }
+}

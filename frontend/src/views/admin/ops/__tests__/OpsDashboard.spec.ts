@@ -115,7 +115,6 @@ function mountDashboard() {
         OpsLatencyChart: LatencyChartStub,
         OpsErrorDistributionChart: EmptyStub,
         OpsErrorTrendChart: EmptyStub,
-        OpsTokenStatsCard: EmptyStub,
         OpsAlertEventsCard: EmptyStub,
         OpsSystemLogTable: EmptyStub,
         OpsSettingsDialog: EmptyStub,
@@ -138,7 +137,6 @@ describe('OpsDashboard latency bucket refresh', () => {
     mocks.getMetricThresholds.mockResolvedValue(null)
     mocks.getAdvancedSettings.mockResolvedValue({
       display_alert_events: true,
-      display_openai_token_stats: false,
       auto_refresh_enabled: false,
       auto_refresh_interval_seconds: 30,
     })

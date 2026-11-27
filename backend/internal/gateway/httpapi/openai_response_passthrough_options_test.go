@@ -25,7 +25,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -380,7 +380,7 @@ func TestOpenAIStreamingPassthroughNamespaceRestoreErrorFlushesWrittenResidualOn
 		io.NopCloser(strings.NewReader(writtenPrefix+overflowData)),
 		-1,
 		func(c *gin.Context) {
-			SetOpenAIResponsesNamespaceNames(c, map[string]bridge.ResponsesNamespaceName{
+			SetOpenAIResponsesNamespaceNames(c, map[string]openai.ResponsesNamespaceName{
 				"collaboration__spawn_agent": {Namespace: "collaboration", Name: "spawn_agent"},
 			})
 		},
@@ -896,7 +896,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_NamespaceNonStreamingResponse(t *
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[{"type":"function_call","name":"collaboration__spawn_agent","call_id":"call_1","arguments":"{}"}],"usage":{"input_tokens":1,"output_tokens":1}}`)),
 	}
-	names := map[string]bridge.ResponsesNamespaceName{
+	names := map[string]openai.ResponsesNamespaceName{
 		"collaboration__spawn_agent": {Namespace: "collaboration", Name: "spawn_agent"},
 	}
 	SetOpenAIResponsesNamespaceNames(c, names)

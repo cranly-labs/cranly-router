@@ -1,0 +1,31 @@
+{
+  "responseId": "gem_tool_args_fragmented",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "id": "call_frag_1",
+              "name": "write_note",
+              "args": {
+                "path": "notes/a.txt",
+                "text": "say \"hi\"\n日本\\end"
+              }
+            },
+            "thoughtSignature": "sig_fc_frag_1"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 46,
+    "candidatesTokenCount": 29,
+    "totalTokenCount": 75
+  }
+}

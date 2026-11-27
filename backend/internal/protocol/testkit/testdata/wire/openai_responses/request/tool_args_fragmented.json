@@ -1,0 +1,42 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "stream": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "write_note",
+      "description": "Write text content to a note path.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path"
+          },
+          "text": {
+            "type": "string",
+            "description": "Note body"
+          }
+        },
+        "required": [
+          "path",
+          "text"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Write notes/a.txt containing quotes, a newline, Japanese text, and a literal backslash."
+        }
+      ]
+    }
+  ]
+}

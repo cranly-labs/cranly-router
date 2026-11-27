@@ -68,54 +68,6 @@ func TestNativeSSEValidationAndFraming(t *testing.T) {
 	}
 }
 
-// TestConvertGeminiToClaudeMessageOmitsInlineDataForAnthropicMessages converts
-// text, image, and tool parts with the image option enabled and disabled. It
-// checks generated message identity, content order, tool retention, and
-// option-specific image text omission.
-func TestConvertGeminiToClaudeMessageOmitsInlineDataForAnthropicMessages(t *testing.T) {
-	geminiResp := map[string]any{
-		"candidates": []any{map[string]any{
-			"content": map[string]any{"parts": []any{
-				map[string]any{"text": "before"},
-
-				map[string]any{"inlineData": map[string]any{"mimeType": "image/png", "data": "aW1hZ2U="}},
-
-				map[string]any{"functionCall": map[string]any{"name": "get_weather", "args": map[string]any{"city": "Paris"}}},
-
-				map[string]any{"text": "after"},
-			}},
-
-			"finishReason": "STOP",
-		}},
-	}
-	rawData, err := json.Marshal(geminiResp)
-	require.NoError(t, err)
-
-	withInlineData, _ := ConvertGeminiToClaudeMessage(geminiResp, "gemini-test", rawData, true)
-	require.Regexp(t, `^msg_01[0-9A-Za-z]{22}$`, withInlineData["id"])
-	contentWithInlineData, ok := withInlineData["content"].([]any)
-	require.True(t, ok)
-	require.Len(t, contentWithInlineData, 4)
-	require.Equal(t, map[string]any{"type": "text", "text": "before"}, contentWithInlineData[0])
-	require.Equal(t, map[string]any{"type": "text", "text": "![image](data:image/png;base64,aW1hZ2U=)"}, contentWithInlineData[1])
-	toolUse, ok := contentWithInlineData[2].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "tool_use", toolUse["type"])
-	require.Equal(t, "get_weather", toolUse["name"])
-	require.Equal(t, map[string]any{"type": "text", "text": "after"}, contentWithInlineData[3])
-
-	withoutInlineData, _ := ConvertGeminiToClaudeMessage(geminiResp, "gemini-test", rawData, false)
-	contentWithoutInlineData, ok := withoutInlineData["content"].([]any)
-	require.True(t, ok)
-	require.Len(t, contentWithoutInlineData, 3)
-	require.Equal(t, map[string]any{"type": "text", "text": "before"}, contentWithoutInlineData[0])
-	toolUseWithoutInlineData, ok := contentWithoutInlineData[1].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "tool_use", toolUseWithoutInlineData["type"])
-	require.Equal(t, "get_weather", toolUseWithoutInlineData["name"])
-	require.Equal(t, map[string]any{"type": "text", "text": "after"}, contentWithoutInlineData[2])
-}
-
 // TestUnwrapGeminiResponse supplies wrapped, direct, scalar, null, malformed,
 // nested, and large response bodies. It checks one-layer object extraction and
 // unchanged raw spelling when no object wrapper is selected.

@@ -1,0 +1,30 @@
+{
+  "responseId": "gem_tools_custom",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "id": "call_patch_2",
+              "name": "apply_patch",
+              "args": {
+                "input": "*** Begin Patch\n*** Update File: README.md\n@@\n-Default timeout: 5s\n+Default timeout: 15s\n*** End Patch\n"
+              }
+            },
+            "thoughtSignature": "sig_fc_patch_2"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 104,
+    "candidatesTokenCount": 42,
+    "totalTokenCount": 146
+  }
+}

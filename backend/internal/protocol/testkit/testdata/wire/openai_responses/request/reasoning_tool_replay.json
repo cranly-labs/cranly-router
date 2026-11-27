@@ -1,0 +1,67 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto"
+  },
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "query_inventory",
+      "description": "Query warehouse stock counts for an SKU.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Catalog SKU code"
+          }
+        },
+        "required": [
+          "sku"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Check warehouse stock for SKU-42 and SKU-99, then recommend reorder quantities."
+        }
+      ]
+    },
+    {
+      "id": "rs_inv_turn1",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "First inspect SKU-42 stock levels before querying SKU-99."
+        }
+      ],
+      "encrypted_content": "gAAAAABnInvSku42Turn1Enc01"
+    },
+    {
+      "id": "fc_inv_sku42_1",
+      "type": "function_call",
+      "call_id": "call_inv_sku42_1",
+      "name": "query_inventory",
+      "arguments": "{\"sku\":\"SKU-42\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_inv_sku42_1",
+      "output": "{\"sku\":\"SKU-42\",\"on_hand\":4,\"reorder_point\":20}"
+    }
+  ]
+}

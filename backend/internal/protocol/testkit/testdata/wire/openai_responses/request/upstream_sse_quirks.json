@@ -1,0 +1,16 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Confirm that quirky SSE framing normalizes without dropping tokens."
+        }
+      ]
+    }
+  ]
+}

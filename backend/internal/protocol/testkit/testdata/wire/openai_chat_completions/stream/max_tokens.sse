@@ -1,0 +1,10 @@
+data: {"id":"chatcmpl_max_tokens","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Token bucket rate limiters absorb short traffic bursts by spending accumulated permits, "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_max_tokens","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"while sliding window counters enforce stricter rolling boundaries at the cost of per-window "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_max_tokens","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: {"id":"chatcmpl_max_tokens","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":28,"completion_tokens":32,"total_tokens":60,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]
+

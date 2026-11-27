@@ -1,0 +1,47 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "service_health_report",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "description": "Canonical service identifier"
+          },
+          "healthy": {
+            "type": "boolean",
+            "description": "Whether all SLO probes passed"
+          },
+          "error_rate": {
+            "type": "number",
+            "description": "Observed 5xx fraction between 0 and 1"
+          },
+          "open_incidents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "service",
+          "healthy",
+          "error_rate",
+          "open_incidents"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize the health of edge-gateway: all probes passed, 5xx fraction is 0.0015, and no incidents are open."
+    }
+  ]
+}

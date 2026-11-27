@@ -1,0 +1,68 @@
+{
+  "id": "msg_tools_hosted_search",
+  "model": "claude-sonnet-4-5",
+  "parts": [
+    {
+      "kind": "opaque",
+      "opaque": {
+        "origin": "anthropic_messages",
+        "type": "server_tool_use",
+        "raw": {
+          "type": "server_tool_use",
+          "id": "srvtoolu_search_go127_2",
+          "name": "web_search",
+          "input": {
+            "query": "Go 1.27 encoding json v2 release notes"
+          }
+        }
+      }
+    },
+    {
+      "kind": "opaque",
+      "opaque": {
+        "origin": "anthropic_messages",
+        "type": "web_search_tool_result",
+        "raw": {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_search_go127_2",
+          "content": [
+            {
+              "type": "web_search_result",
+              "url": "https://go.dev/doc/go1.27",
+              "title": "Go 1.27 Release Notes",
+              "encrypted_content": "enc_ws_go127_snippet_2",
+              "page_age": "2 days ago"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Go 1.27 ships encoding/json/v2 and encoding/json/jsontext in the standard library.",
+      "annotations": [
+        {
+          "kind": "web_search_result_location",
+          "url": "https://go.dev/doc/go1.27",
+          "title": "Go 1.27 Release Notes",
+          "extra": {
+            "origin": "anthropic_messages",
+            "members": {
+              "cited_text": "encoding/json/v2 and encoding/json/jsontext",
+              "encrypted_index": "enc_idx_go127_2"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 84,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 24
+  }
+}

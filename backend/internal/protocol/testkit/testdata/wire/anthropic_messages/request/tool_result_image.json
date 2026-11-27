@@ -1,0 +1,67 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "tools": [
+    {
+      "name": "capture_chart",
+      "description": "Capture a PNG snapshot of a dashboard chart panel.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "panel": {
+            "type": "string",
+            "description": "Dashboard panel identifier"
+          }
+        },
+        "required": [
+          "panel"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Capture the latency_p99 chart and summarize what you see."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_chart_1",
+          "name": "capture_chart",
+          "input": {
+            "panel": "latency_p99"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_chart_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "Captured panel latency_p99 (1x1 preview)."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

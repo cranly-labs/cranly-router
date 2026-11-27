@@ -1,0 +1,56 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_text_basic",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Deterministic JSON serialization "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "keeps identical inputs byte-for-byte stable, "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "preserving prompt cache prefixes."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 24,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 16
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Deterministic JSON serialization keeps identical inputs byte-for-byte stable, preserving prompt cache prefixes."
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

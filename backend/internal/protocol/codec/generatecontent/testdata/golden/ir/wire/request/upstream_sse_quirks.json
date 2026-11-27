@@ -1,0 +1,34 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Confirm that quirky SSE framing normalizes without dropping tokens."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "get_region_health",
+      "description": "Reads regional gateway health metrics.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "region": {
+            "type": "STRING",
+            "description": "Cloud region identifier"
+          }
+        },
+        "required": [
+          "region"
+        ]
+      }
+    }
+  ],
+  "max_output_tokens": 256
+}

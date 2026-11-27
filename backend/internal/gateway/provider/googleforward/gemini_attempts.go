@@ -11,20 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidwall/sjson"
-
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	egressadapter "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -33,13 +29,12 @@ import (
 	geminicli "github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
-// gemini_attempts.go executes Gemini Messages and native actions and assembles
-// their response observations.
-// Gemini Messages and native actions use one selected-provider exchange while
-// keeping the client model and upstream model separate. Project-bearing OAuth
-// generation can request an upstream stream for a buffered client, and native
-// counting can return an estimate when the OAuth token lacks the required
-// scope.
+// gemini_attempts.go executes native Gemini actions and shared exchange retries,
+// assembling response observations and provider error classifications. Native
+// generation and counting use one selected-provider exchange while keeping the
+// client model and upstream model separate. Project-bearing OAuth generation
+// can request an upstream stream for a buffered client, and native counting can
+// return an estimate when the OAuth token lacks the required scope.
 //
 // Temporary error rules can be applied inside the retry loop before final
 // presentation. An internal response marker carries that completed decision so
@@ -61,11 +56,10 @@ const (
 
 	geminiAppliedTempPolicyHeader = "X-TokenRouter-Internal-Temp-Policy-Applied" // applied temporary-policy marker
 
-	// Missing functionCall thought signatures receive this sentinel through the
-	// shared bridge so converted tool history can use the compatibility request
-	// representation.
+	// Missing functionCall thought signatures receive this sentinel through
+	// protocol/gemini so native tool history uses the compatibility marker.
 	// Protocol reference: https://ai.google.dev/gemini-api/docs/thought-signatures
-	geminiDummyThoughtSignature = "skip_thought_signature_validator"
+	geminiDummyThoughtSignature = gemini.DummyThoughtSignature
 
 	geminiCustomCodeSkippedClientMessage = "Upstream gateway error" // custom-code miss client message
 )
@@ -127,215 +121,6 @@ func (s *Gemini) validateUpstreamBaseURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// Forward converts one selected-provider Messages request into Gemini and
-// returns separate client and wire model metadata. It resolves model attributes
-// before conversion controls and builds fresh attempt image state.
-//
-// Project-bearing OAuth can use an upstream stream for a buffered client.
-// Signature recovery retains the original Claude body for cleanup and
-// reconversion, while later policy and HTTP presentation classify the selected
-// response before output. Successful completion combines actual token usage
-// with request image-size hints and per-attempt image count selection.
-// @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
-func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, body []byte) (*forwardcore.MessagesResult, error) {
-	c := &attempt{Output: output}
-
-	c.Images = 0
-	startTime := time.Now()
-
-	var req struct {
-		Model  string `json:"model"`  // client request model identifier
-		Stream bool   `json:"stream"` // client streaming response flag
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("parse request: %w", err)
-	}
-	if strings.TrimSpace(req.Model) == "" {
-		return nil, fmt.Errorf("missing model")
-	}
-
-	originalModel := req.Model
-	// Resolve provider mapping before conversion capabilities and request
-	// planning so OAuth, API key, and service-account attempts send the
-	// same selected wire model.
-	mappedModel := gatewayprovider.ExecutionModelPolicy(provider).UpstreamModel(ctx, req.Model)
-	toolScope := session.GeminiToolScope{APIKeyID: c.APIKeyID(), ProviderID: provider.Record.ID, Model: mappedModel}
-
-	geminiReq, err := bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(s.geminiToolOptions(toolScope), body)
-	if err != nil {
-		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
-	}
-	attributes, err := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
-	if err != nil {
-		return nil, err
-	}
-	geminiReq, err = applyGeminiModelParameters(geminiReq, body, attributes, true)
-	if err != nil {
-		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
-	}
-	stripWireEffort := gatewayprovider.ExecutionModelPolicy(provider).ShouldStripWireEffort(ctx, originalModel)
-	if stripWireEffort {
-		geminiReq = requeststate.StripWireReasoningEffort(geminiReq, protocolcore.ProtocolGeminiGenerateContent)
-	}
-	originalClaudeBody := body
-
-	proxyURL := ""
-	if provider.Record.ProxyID != nil && provider.Record.Proxy != nil {
-		proxyURL = provider.Record.Proxy.URL()
-	}
-
-	requestIDHeader := "x-request-id"
-	switch provider.Record.Type {
-	case capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth, capability.ProviderTypeServiceAccount:
-	default:
-		return nil, fmt.Errorf("unsupported provider type: %s", provider.Record.Type)
-	}
-	useUpstreamStream := req.Stream
-	// Project-bearing OAuth can collect upstream events for a buffered
-	// Messages client, so the request plan tracks client and upstream
-	// stream choices separately.
-	if provider.Record.Type == capability.ProviderTypeOAuth && !req.Stream && strings.TrimSpace(provider.View().GetCredential("project_id")) != "" {
-		useUpstreamStream = true
-	}
-	plan := s.geminiRequestPlan(provider, mappedModel, "", false, req.Stream, useUpstreamStream, false, c.GetHeader)
-	buildReq := func(ctx context.Context) (*http.Request, string, error) {
-		return gemininative.BuildRequest(ctx, geminiReq, plan)
-	}
-
-	options := s.geminiExchangeOptions(c, ctx, provider, mappedModel, geminiExchangeMessages, gemininative.OpenAICompatChatCompletions)
-	options.Build = buildReq
-	options.RequestIDHeader = requestIDHeader
-	options.Do = func(req *http.Request) (*http.Response, error) {
-		return s.Transport.Do(req, proxyURL, provider.Record.ID, provider.Record.Concurrency)
-	}
-	options.FilterThinking = func() []byte { return gatewayprovider.FilterThinkingBlocksForRetry(originalClaudeBody, originalModel) }
-	options.FilterTools = func() []byte {
-		return gatewayprovider.FilterSignatureSensitiveBlocksForRetry(originalClaudeBody, originalModel)
-	}
-	options.ConvertRetry = func(stripped []byte) ([]byte, error) {
-		// A provider rejected the original signature. Rebuild with the
-		// compatibility marker so the retry does not send that signature again.
-		converted, err := convertClaudeMessagesToGeminiGenerateContent(stripped)
-		if err != nil {
-			return nil, err
-		}
-		converted, err = applyGeminiModelParameters(converted, stripped, attributes, false)
-		// After signature cleanup and reconversion succeed, disable
-		// thinking when the resolved toggle permits it so recovery
-		// sends the stripped history with compatible controls.
-		if err == nil && attributes.Attributes.HasReasoningOption("toggle") {
-			converted, err = sjson.SetBytes(converted, "generationConfig.thinkingConfig", bridge.GeminiThinkingConfig{BudgetSet: true})
-		}
-		if err == nil && stripWireEffort {
-			converted = requeststate.StripWireReasoningEffort(converted, protocolcore.ProtocolGeminiGenerateContent)
-		}
-		return converted, err
-	}
-	options.ReplaceBody = func(value []byte) { geminiReq = value }
-	var requestID string
-	var compatibilityResult *forwardcore.MessagesResult
-	stopped := false
-	target := &gemininative.Target{
-		ProviderID:     provider.Record.ID,
-		Model:          mappedModel,
-		Mode:           gemininative.MessagesResponse,
-		Exchange:       options,
-		Response:       s.geminiResponseAdapter(c, toolScope).Options,
-		StartedAt:      startTime,
-		UpstreamStream: useUpstreamStream,
-		OAuth:          provider.Record.Type == capability.ProviderTypeOAuth,
-		Enter:          s.Enter,
-	}
-	target.BeforeResponse = func(ctx context.Context, resp *http.Response, requestIDHeader string) (bool, error) {
-		var callbackErr error
-		compatibilityResult, callbackErr = func() (*forwardcore.MessagesResult, error) {
-			if resp.StatusCode >= 400 {
-				respBody := s.readUpstreamErrorBody(resp)
-				outcome := s.buildGeminiFailureOutcome(ctx, provider, resp, respBody, mappedModel)
-				upstreamReqID := resp.Header.Get(requestIDHeader)
-				if upstreamReqID == "" {
-					upstreamReqID = resp.Header.Get("x-goog-request-id")
-				}
-				if outcome.failover != nil {
-					upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(respBody)))
-					c.Observe(ops.OpsUpstreamErrorEvent{
-						Platform:           provider.Record.Platform,
-						ProviderID:         provider.Record.ID,
-						ProviderName:       provider.Record.Name,
-						UpstreamStatusCode: resp.StatusCode,
-						UpstreamRequestID:  upstreamReqID,
-						Kind:               "failover",
-						Message:            upstreamMsg,
-						Detail:             s.upstreamErrorDetail(respBody),
-					})
-					if outcome.googleConfigError {
-						logger.LegacyPrintf("gateway.gemini", "[Gemini] status=400 google_config_error failover=true upstream_message=%q provider=%d", upstreamMsg, provider.Record.ID)
-					}
-					return nil, outcome.failover
-				}
-				if outcome.policy == providercore.ErrorPolicyCustomSkipped {
-					return nil, c.GeminiCustomCodeSkippedError(provider, resp.StatusCode, upstreamReqID, respBody, func() {
-						_ = c.ClaudeError(http.StatusInternalServerError, "api_error", geminiCustomCodeSkippedClientMessage)
-					})
-				}
-				return nil, c.GeminiMappedError(provider, resp.StatusCode, upstreamReqID, respBody)
-			}
-
-			requestID = resp.Header.Get(requestIDHeader)
-			if requestID == "" {
-				requestID = resp.Header.Get("x-goog-request-id")
-			}
-
-			return nil, nil
-		}()
-		stopped = resp.StatusCode >= 400 || callbackErr != nil || compatibilityResult != nil
-		return stopped, callbackErr
-	}
-	result, executeErr := (gemininative.Executor{}).Execute(ctx, upstream.AttemptInput{
-		Protocol:      protocolcore.ProtocolAnthropicMessages,
-		Body:          body,
-		Stream:        req.Stream,
-		ResponseModel: originalModel,
-		Target:        target,
-	}, c.Sink())
-	if stopped {
-		return compatibilityResult, executeErr
-	}
-	if executeErr != nil {
-		executeErr = s.streamFailure(ctx, c, provider, result, executeErr, func(status int, body []byte) error {
-			return c.GeminiMappedError(provider, status, result.RequestID, body)
-		})
-		if !result.HasUsage && !result.Served {
-			return nil, executeErr
-		}
-	}
-	requestID = result.RequestID
-	usage := &result.Usage
-
-	// Combine request size hints with the attempt observation after
-	// reading; completion uses observed image counts independently of model
-	// naming or declared output capability.
-	imageInputSize := s.extractImageInputSize(body)
-	imageSize := media.NormalizeImageSizeTier(imageInputSize)
-	imageCount := c.imageCount(originalModel, mappedModel)
-
-	return &forwardcore.MessagesResult{
-		RequestID:             requestID,
-		UpstreamHeaders:       result.UpstreamHeaders,
-		UpstreamResponseModel: result.UpstreamResponseModel,
-		Usage:                 *usage,
-		Model:                 originalModel,
-		UpstreamModel:         mappedModel,
-		Stream:                req.Stream,
-		Duration:              result.Duration,
-		Timings:               result.Timings,
-		ClientDisconnect:      result.ClientDisconnect,
-		ImageCount:            imageCount,
-		ImageSize:             imageSize,
-		ImageInputSize:        imageInputSize,
-	}, executeErr
-}
-
 // ForwardNative executes generateContent, streamGenerateContent, or countTokens
 // for a selected provider. Missing model, action, or body receives a local
 // Google error, and native part/signature cleanup precedes attribute
@@ -345,8 +130,9 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 // client mode. Insufficient OAuth counting scope selects a local estimate with
 // empty result usage, before custom error policy handling. Other HTTP failures
 // use provider policy and protocol presentation, while successful generation
-// returns separate logical model, wire model, token usage, and image
-// observations.
+// returns separate logical model, wire model, token usage, recorded reasoning
+// effort, and image observations.
+// @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
 func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, originalModel string, action string, stream bool, body []byte) (*forwardcore.MessagesResult, error) {
 	c := &attempt{Output: output}
 
@@ -376,9 +162,9 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		return nil, c.GoogleError(http.StatusNotFound, "Unsupported action: "+action)
 	}
 
-	// Supply the bridge compatibility signature for missing functionCall
-	// history before model attribute preparation, leaving existing
-	// signature values available to platform handling.
+	// Supply the protocol/gemini compatibility signature for missing
+	// functionCall history before model attribute preparation, leaving
+	// existing signature values available to platform handling.
 	body = ensureGeminiFunctionCallThoughtSignatures(body)
 
 	// Resolve the group-mapped model through provider mappings for every
@@ -388,9 +174,15 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	if err != nil {
 		return nil, err
 	}
-	body, err = applyGeminiModelParameters(body, body, attributes, false)
+	body, err = applyGeminiModelParameters(body, attributes)
 	if err != nil {
 		return nil, err
+	}
+	// Capture native Gemini thinkingLevel before effort_model_mapping_strip_effort
+	// deletes the wire field so generation usage logs keep the executed effort.
+	var reasoningEffort *string
+	if action != "countTokens" {
+		reasoningEffort = requeststate.ExtractGeminiReasoningEffortFromBody(body)
 	}
 	if gatewayprovider.ExecutionModelPolicy(provider).ShouldStripWireEffort(ctx, originalModel) {
 		body = requeststate.StripWireReasoningEffort(body, protocolcore.ProtocolGeminiGenerateContent)
@@ -423,7 +215,7 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		return gemininative.BuildRequest(ctx, body, plan)
 	}
 
-	options := s.geminiExchangeOptions(c, ctx, provider, mappedModel, geminiExchangeNative, gemininative.OpenAICompatChatCompletions)
+	options := s.geminiExchangeOptions(c, provider, mappedModel)
 	options.Build = buildReq
 	options.RequestIDHeader = requestIDHeader
 	options.Do = func(req *http.Request) (*http.Response, error) {
@@ -439,7 +231,7 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		Model:          mappedModel,
 		Mode:           gemininative.NativeResponse,
 		Exchange:       options,
-		Response:       s.geminiResponseAdapter(c, session.GeminiToolScope{}).Options,
+		Response:       s.geminiResponseAdapter(c).Options,
 		StartedAt:      startTime,
 		UpstreamStream: useUpstreamStream,
 		OAuth:          provider.Record.Type == capability.ProviderTypeOAuth,
@@ -563,6 +355,7 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		Stream:                result.Stream,
 		Duration:              result.Duration,
 		Timings:               result.Timings,
+		ReasoningEffort:       reasoningEffort,
 		ClientDisconnect:      result.ClientDisconnect,
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,
@@ -794,18 +587,10 @@ func (s *Gemini) applyGeminiUpstreamErrorPolicy(
 }
 
 // ensureGeminiFunctionCallThoughtSignatures delegates missing function-call
-// signature compatibility to the native bridge. It supplies the configured
-// sentinel while the bridge owns JSON parsing and returned byte-slice handling.
+// signature compatibility to protocol/gemini. It supplies the configured
+// sentinel while protocol/gemini owns JSON parsing and byte-slice fallback.
 func ensureGeminiFunctionCallThoughtSignatures(body []byte) []byte {
-	return bridge.NativeEnsureGeminiFunctionCallThoughtSignatures(bridge.NativeGeminiOptions{DummyThoughtSignature: geminiDummyThoughtSignature}, body)
-}
-
-// convertClaudeMessagesToGeminiGenerateContent delegates Messages conversion
-// using native Gemini bridge options. The compatibility signature is supplied
-// to the converter, and conversion errors return before an upstream request is
-// planned.
-func convertClaudeMessagesToGeminiGenerateContent(body []byte) ([]byte, error) {
-	return bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(bridge.NativeGeminiOptions{DummyThoughtSignature: geminiDummyThoughtSignature}, body)
+	return gemini.NativeEnsureGeminiFunctionCallThoughtSignatures(geminiDummyThoughtSignature, body)
 }
 
 // extractImageInputSize returns the trimmed camelCase request image-size hint.

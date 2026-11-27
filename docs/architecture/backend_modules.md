@@ -15,7 +15,7 @@
 <a id="package_map"></a>
 ## 目录与包职责
 
-以下路径相对仓库根。每个含手写 Go 代码的包均有一行说明，包括只在特定构建标签或平台下使用的包，以及测试包。`infra`、`pkg`、`upstream/internal` 是分类目录；Ent 生成子包合并显示。目录同级不代表可以任意相互导入。
+以下路径相对仓库根。每个含手写 Go 代码的包均有一行说明，包括只在特定构建标签或平台下使用的包，以及测试包。`infra`、`pkg`、`protocol/codec`、`upstream/internal` 是分类目录；Ent 生成子包合并显示。目录同级不代表可以任意相互导入。
 
 ```text
 backend/
@@ -122,7 +122,7 @@ backend/
 │   │   ├── rediscache/                                  Redis 缓存、计数或会话适配
 │   │   ├── requeststate/                                请求及尝试副本、路由提示、工具恢复与凭据预算
 │   │   ├── searchtools/                                 工具识别、启用规则、搜索模拟与合成输出
-│   │   ├── session/                                     会话摘要、隔离、归属、续接与推理历史
+│   │   ├── session/                                     会话摘要、隔离、归属与续接状态
 │   │   │   └── testkit/                                 该模块测试所需的替身与夹具
 │   │   ├── telemetry/                                   完成观测、诊断与缺失用量采样
 │   │   ├── testkit/                                     该模块测试所需的替身与夹具
@@ -201,12 +201,24 @@ backend/
 │   │   └── postgres/                                    PostgreSQL 持久化及事务适配
 │   ├── protocol/                                        协议 ID、报文与纯转换
 │   │   ├── anthropic/                                   Messages 报文、beta、签名和用量事件
-│   │   ├── bridge/                                      协议间转换、工具修复与流转换状态
+│   │   ├── codec/                                       单协议 IR 编解码器；分类目录
+│   │   │   ├── chat/                                    OpenAI Chat Completions 请求、响应与流编解码
+│   │   │   ├── generatecontent/                         Google Gemini GenerateContent 请求、响应与流编解码
+│   │   │   ├── messages/                                Anthropic Messages 请求、响应与流编解码
+│   │   │   ├── qoderchat/                               Qoder 上游请求编码与包裹式 SSE 流解码
+│   │   │   └── responses/                               OpenAI Responses 请求、响应与流编解码
+│   │   ├── convert/                                     跨协议转换引擎、连续性信封、工具降级与原生重放
 │   │   ├── gemini/                                      Gemini/Code Assist 报文、图片及签名处理
 │   │   ├── google/                                      Google 错误、OAuth、服务账号和共享报文
 │   │   ├── grok/                                        Grok token 估算的协议常量
+│   │   ├── ir/                                          协议转换的中间表示、流事件、丢失记录与语义摘要
 │   │   ├── openai/                                      Responses、Chat、媒体、WS、Codex 与用量报文
+│   │   ├── qoder/                                       Qoder 归一化请求载荷、会话控制与能力拒绝错误
+│   │   ├── sse/                                         SSE 帧、增量读取器与写出函数
 │   │   ├── systemone/                                   SystemOne 请求、答案与用量的纯校验
+│   │   ├── testkit/                                     协议语料、黄金快照、语法与请求校验器及客户端模拟器
+│   │   │   ├── cmd/corpus/                              录制语料清洗入库与合规检查命令
+│   │   │   └── mockupstream/                            脚本化假上游、录制回放与代理捕获处理器
 │   │   └── wirejson/                                    保持报文结构的 JSON 读取与修改
 │   ├── modelcatalog/                                    models.dev 目录、内嵌官方补充、供应商身份索引、目录查表和属性合并
 │   │   ├── provider/                                    统一目录加载、条件同步、内嵌与自定义补充、价格和属性原子快照
@@ -361,9 +373,9 @@ flowchart TB
     core --> values["protocol 协议包"]
     app --> adapter["gateway/provider"]
     adapter --> up["upstream/openai"]
-    up --> bridge["protocol/bridge"]
+    up --> conv["protocol/convert"]
     up --> net["infra/httpclient"]
-    bridge --> values
+    conv --> values
     net --> util["pkg 工具"]
 ```
 
@@ -445,7 +457,7 @@ app/lifecycle 管理这些组件的启动和关闭。audit 独立记录操作审
 | provider | [提供商能力矩阵](../interfaces/upstream_provider_matrix.md)、[提供商维护](../operations/provider_maintenance.md)、[上游用量](../interfaces/upstream_usage.md) |
 | scheduler | [提供商调度与缓存](provider_scheduling_and_cache.md) |
 | gateway | [请求生命周期](gateway_request_lifecycle.md)、[网关策略](../domains/gateway_policy_controls.md)、[错误策略](../interfaces/gateway_error_policy.md) |
-| protocol、upstream | [协议能力](../interfaces/protocol_capabilities.md)、[接口目录中的平台专题](../interfaces/index.md) |
+| protocol、upstream | [协议转换与中间表示](protocol_conversion.md)、[协议能力](../interfaces/protocol_capabilities.md)、[接口目录中的平台专题](../interfaces/index.md) |
 | egress | [传输安全](../operations/upstream_transport_security.md) |
 | billing | [路由与结算](../domains/routing_and_billing.md)、[支付与权益](../domains/payments_and_entitlements.md) |
 | payment、promotion | [支付与权益](../domains/payments_and_entitlements.md)、[推广与返利](../domains/promotions_and_affiliates.md) |

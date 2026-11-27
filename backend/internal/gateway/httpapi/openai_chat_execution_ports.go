@@ -10,8 +10,6 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
-	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -19,7 +17,7 @@ import (
 )
 
 // openai_chat_execution_ports.go binds selected Chat attempts to protocol
-// dispatch, client policy, request conversion, and response options.
+// dispatch, client policy, and request preparation callbacks.
 // Chat requests can execute as native Chat, converted Responses, Anthropic, or
 // Grok depending on the selected attempt profile. The adapter keeps that
 // attempt's provider and request state together while the shared runner
@@ -29,7 +27,7 @@ import (
 // state.
 type openAIChatExecutionAdapter struct {
 	// openAIMessagesExecutionAdapter shares the current attempt provider, context
-	// and services with RunChat; mutations during preparation remain visible here.
+	// and services with RunConvertedResponses; mutations during preparation remain visible here.
 	*openAIMessagesExecutionAdapter
 }
 
@@ -56,7 +54,7 @@ func (p *openAIChatExecutionAdapter) PrepareChat(ctx context.Context) (openaiexe
 }
 
 // DispatchChat delegates the selected route and converts its forward result
-// for RunChat. An unhandled Grok conversion with no error falls back to
+// for RunConvertedResponses. An unhandled Grok conversion with no error falls back to
 // RawChat using the same body, model, key and TLS selection.
 func (p *openAIChatExecutionAdapter) DispatchChat(ctx context.Context, route openaiexecution.Dispatch, body []byte, key, model string) (*openaiexecution.Result, error) {
 	var r *protocolforward.OpenAIResult
@@ -104,14 +102,6 @@ func (p *openAIChatExecutionAdapter) Reject(status int, kind, message string) {
 	WriteOpenAIForwardRejection(p.c, status, kind, message, "")
 }
 
-// ResponsesToChat converts Responses input using the bound reasoning-history
-// lookup. Conversion errors are returned to RunChat; the request is passed to
-// the bridge with the current history service rather than copied by this
-// adapter.
-func (p *openAIChatExecutionAdapter) ResponsesToChat(r *protocolopenai.ResponsesRequest) (*protocolopenai.ChatCompletionsRequest, error) {
-	return protocolbridge.ResponsesToChatCompletionsRequestWithOptions(r, &protocolbridge.ResponsesToChatOptions{ReasoningContentByID: p.s.Output.Reasoning.Lookup})
-}
-
 // ChatError commits response state before writing the Chat protocol rejection.
 // Callers terminate the failed preparation path afterward so the outer attempt
 // handler does not replace this dedicated error.
@@ -130,33 +120,6 @@ func (p *openAIChatExecutionAdapter) DefaultChat() bool {
 // API-key identifier.
 func (p *openAIChatExecutionAdapter) IsolateCacheKey(key string) string {
 	return upstream.IsolateSessionID(APIKeyIDFromContext(p.c), key)
-}
-
-// NormalizeBodyTier rewrites the body's service tier through the Responses
-// codec. It returns the normalized tier alongside updated bytes, or an error
-// that prevents RunChat from preparing the outgoing request.
-func (p *openAIChatExecutionAdapter) NormalizeBodyTier(body []byte) ([]byte, string, error) {
-	return normalizeResponsesBodyServiceTier(body)
-}
-
-// ChatToResponses resolves model capabilities and supplies their conversion
-// options to the bridge. Successful resolution installs
-// ExecutionProvider.Capabilities before serialization, so a later
-// serialization or conversion error can leave that provider update visible to
-// the caller.
-func (p *openAIChatExecutionAdapter) ChatToResponses(r *protocolopenai.ChatCompletionsRequest) (*protocolopenai.ResponsesRequest, error) {
-	result, err := p.modelResolution(r.Model, r, "openai_responses")
-	if err != nil {
-		return nil, err
-	}
-	return protocolbridge.ChatCompletionsToResponses(r, gatewayprovider.ModelConversionOptions(result))
-}
-
-// NormalizeRequestTier replaces the request's tier with its canonical wire
-// value. A nil request is ignored; unsupported tier text becomes empty before
-// RunChat serializes the outgoing body.
-func (p *openAIChatExecutionAdapter) NormalizeRequestTier(r *protocolopenai.ResponsesRequest) {
-	normalizeResponsesRequestServiceTier(r)
 }
 
 // ApplyChatFast applies the provider's current fast-tier policy to the
@@ -192,16 +155,9 @@ func (p *openAIChatExecutionAdapter) UpstreamSessionKey(id int64, key string) st
 }
 
 // ChatErrorResponse applies Chat HTTP-error handling to the supplied response
-// and model. It returns the handler error with no result; RunChat has already
+// and model. It returns the handler error with no result; RunConvertedResponses has already
 // installed the captured error body for this handler to read.
 func (p *openAIChatExecutionAdapter) ChatErrorResponse(r *http.Response, model string) (*openaiexecution.Result, error) {
 	_, err := p.s.chatError(r, p.c, p.provider, model)
 	return nil, err
-}
-
-// ChatResponseOptions binds this request and provider to Chat response-reading
-// callbacks. The caller owns response closure and keeps its header and request
-// state available until the delegated reader completes.
-func (p *openAIChatExecutionAdapter) ChatResponseOptions(r *http.Response, original, billing, model string) openai.ChatResponseOptions {
-	return p.s.Output.ChatOptions(p.c, p.provider, r, original, billing, model)
 }

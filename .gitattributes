@@ -20,3 +20,6 @@ backend/migrations/*.sql text eol=lf
 
 # Dockerfile
 Dockerfile text eol=lf
+
+# 协议测试 SSE 夹具保留原始 CRLF 与行尾空白
+backend/internal/protocol/testkit/testdata/**/*.sse -text -whitespace

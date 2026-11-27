@@ -67,12 +67,9 @@ func (s *executionSink) Emit(e upstream.OutputEvent) error {
 // delegated closer determines the returned error.
 func (b *executionBody) Close() error { b.closes.Add(1); return b.ReadCloser.Close() }
 
-// executionResponseOptions builds identity tool restoration and deterministic
-// error/failover callbacks for execution tests. The fixture uses callback
-// errors to expose adapter outcomes without mutating provider health or
-// external state.
+// executionResponseOptions builds identity tool restoration for execution tests.
 func executionResponseOptions() ResponseOptions {
-	return ResponseOptions{ReverseTools: func(b []byte) []byte { return b }, ClaudeError: func(status int, kind, message string) error { return fmt.Errorf("%d %s %s", status, kind, message) }, CompatError: func(status int, kind, message string) error { return fmt.Errorf("%d %s %s", status, kind, message) }, MapCollectionError: func(err error) error { return err }, Failover: func(body []byte) error { return fmt.Errorf("failover: %s", body) }, IsFailover: func(err error) bool { return strings.HasPrefix(err.Error(), "failover:") }, MarkCommitted: func() {}}
+	return ResponseOptions{ReverseTools: func(b []byte) []byte { return b }}
 }
 
 // TestExecuteProtocolOutputsAndRelease runs all four client representations in
@@ -84,7 +81,12 @@ func TestExecuteProtocolOutputsAndRelease(t *testing.T) {
 		name string              // human-readable client representation name
 		mode ResponseMode        // selected output adapter mode
 		wire protocol.ProtocolID // admitted client protocol identity
-	}{{"claude", ModeClaudeResponse, protocol.ProtocolAnthropicMessages}, {"gemini", ModeGeminiResponse, protocol.ProtocolGeminiGenerateContent}, {"chat", ModeChatResponse, protocol.ProtocolOpenAIChatCompletions}, {"responses", ModeResponsesResponse, protocol.ProtocolOpenAIResponses}}
+	}{
+		{"claude", ModeConvertedResponse, protocol.ProtocolAnthropicMessages},
+		{"gemini", ModeGeminiResponse, protocol.ProtocolGeminiGenerateContent},
+		{"chat", ModeConvertedResponse, protocol.ProtocolOpenAIChatCompletions},
+		{"responses", ModeConvertedResponse, protocol.ProtocolOpenAIResponses},
+	}
 	for _, tc := range cases {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%v", tc.name, stream), func(t *testing.T) {
@@ -96,17 +98,30 @@ func TestExecuteProtocolOutputsAndRelease(t *testing.T) {
 				defer server.Close()
 				var closes, releases atomic.Int32
 				sink := &executionSink{}
-				target := &Target{ProviderID: 12, Model: "gemini-fixture", Mode: tc.mode, IncludeUsage: true, Response: executionResponseOptions(), Enter: func() (func(), error) { return func() { releases.Add(1) }, nil }, Exchange: func(ctx context.Context) (*http.Response, error) {
-					req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, nil)
-					if err != nil {
-						return nil, err
+				target := &Target{
+					ProviderID: 12,
+					Model:      "gemini-fixture",
+					Mode:       tc.mode,
+					Response:   executionResponseOptions(),
+					Enter:      func() (func(), error) { return func() { releases.Add(1) }, nil },
+					Exchange: func(ctx context.Context) (*http.Response, error) {
+						req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, nil)
+						if err != nil {
+							return nil, err
+						}
+						resp, err := server.Client().Do(req)
+						if resp != nil {
+							resp.Body = &executionBody{ReadCloser: resp.Body, closes: &closes}
+						}
+						return resp, err
+					},
+				}
+				if tc.mode == ModeConvertedResponse {
+					reqBytes := buildTestClientRequest(tc.wire, "public-model", stream)
+					target.Converted = ConvertedOptions{
+						Exchange: newTestAntigravityExchange(t, tc.wire, reqBytes, "gemini-fixture", false, nil),
 					}
-					resp, err := server.Client().Do(req)
-					if resp != nil {
-						resp.Body = &executionBody{ReadCloser: resp.Body, closes: &closes}
-					}
-					return resp, err
-				}}
+				}
 				result, err := (Executor{}).Execute(context.Background(), upstream.AttemptInput{Protocol: tc.wire, ResponseModel: "public-model", Stream: stream, Target: target}, sink)
 				require.NoError(t, err)
 				require.Contains(t, sink.body.String(), "hello")
@@ -116,16 +131,13 @@ func TestExecuteProtocolOutputsAndRelease(t *testing.T) {
 				require.Equal(t, 1, result.Usage.OutputTokens)
 				require.True(t, result.HasUsage)
 				require.True(t, result.Served)
-				require.True(t, result.Served)
 				require.EqualValues(t, 1, closes.Load())
 				require.EqualValues(t, 1, releases.Load())
-				{
-					var semantic bool
-					for _, event := range sink.events {
-						semantic = semantic || event.Semantic
-					}
-					require.True(t, semantic, "实际输出必须报告语义内容")
+				var semantic bool
+				for _, event := range sink.events {
+					semantic = semantic || event.Semantic
 				}
+				require.True(t, semantic, "emitted output must report semantic content")
 			})
 		}
 	}
@@ -138,9 +150,17 @@ func TestExecuteProtocolOutputsAndRelease(t *testing.T) {
 func TestExecuteDisconnectedStreamStillObservesTailUsage(t *testing.T) {
 	body := "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]}}]}}\n\ndata: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":9,\"candidatesTokenCount\":4}}}\n\n"
 	var closes, releases atomic.Int32
-	target := &Target{Mode: ModeClaudeResponse, Response: executionResponseOptions(), Enter: func() (func(), error) { return func() { releases.Add(1) }, nil }, Exchange: func(context.Context) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: &executionBody{ReadCloser: io.NopCloser(strings.NewReader(body)), closes: &closes}}, nil
-	}}
+	reqBytes := buildTestClientRequest(protocol.ProtocolAnthropicMessages, "fixture", true)
+	ex := newTestAntigravityExchange(t, protocol.ProtocolAnthropicMessages, reqBytes, "claude-sonnet-4-5", true, nil)
+	target := &Target{
+		Mode:      ModeConvertedResponse,
+		Response:  executionResponseOptions(),
+		Converted: ConvertedOptions{Exchange: ex},
+		Enter:     func() (func(), error) { return func() { releases.Add(1) }, nil },
+		Exchange: func(context.Context) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: &executionBody{ReadCloser: io.NopCloser(strings.NewReader(body)), closes: &closes}}, nil
+		},
+	}
 	result, err := (Executor{}).Execute(context.Background(), upstream.AttemptInput{Protocol: protocol.ProtocolAnthropicMessages, ResponseModel: "fixture", Stream: true, Target: target}, &executionSink{fail: true})
 	require.NoError(t, err)
 	require.True(t, result.ClientDisconnect)
@@ -184,16 +204,113 @@ func (r failedAfterPayload) Read(p []byte) (int, error) {
 // observed token counts and report served content and usage.
 func TestExecutePartialUsageSurvivesReadFailure(t *testing.T) {
 	body := "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]}}],\"usageMetadata\":{\"promptTokenCount\":9}}}\n\ndata: {\"response\":{\"usageMetadata\":{\"candidatesTokenCount\":4}}}\n\n"
-	target := &Target{Mode: ModeClaudeResponse, Response: executionResponseOptions(), Exchange: func(context.Context) (*http.Response, error) {
-		// Replace only EOF after fixture payload delivery so the failure follows
-		// separately observed usage fields rather than preventing their initial
-		// reads.
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(failedAfterPayload{Reader: strings.NewReader(body)})}, nil
-	}}
+	reqBytes := buildTestClientRequest(protocol.ProtocolAnthropicMessages, "fixture", true)
+	ex := newTestAntigravityExchange(t, protocol.ProtocolAnthropicMessages, reqBytes, "claude-sonnet-4-5", true, nil)
+	target := &Target{
+		Mode:      ModeConvertedResponse,
+		Response:  executionResponseOptions(),
+		Converted: ConvertedOptions{Exchange: ex},
+		Exchange: func(context.Context) (*http.Response, error) {
+			// Replace only EOF after fixture payload delivery so the failure follows
+			// separately observed usage fields rather than preventing their initial
+			// reads.
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(failedAfterPayload{Reader: strings.NewReader(body)})}, nil
+		},
+	}
 	result, err := (Executor{}).Execute(context.Background(), upstream.AttemptInput{Protocol: protocol.ProtocolAnthropicMessages, Stream: true, ResponseModel: "fixture", Target: target}, &executionSink{})
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	require.True(t, result.Served)
 	require.True(t, result.HasUsage)
 	require.Equal(t, 9, result.Usage.InputTokens)
 	require.Equal(t, 4, result.Usage.OutputTokens)
+}
+
+// TestExecuteConvertedModeStreamingBufferedAndCollisionGuard runs
+// ModeConvertedResponse across Anthropic Messages, OpenAI Responses, and OpenAI
+// Chat Completions in streaming and buffered modes, then checks colliding usage
+// rejection. Executor must record UpstreamResponseModel, retain sparse usage
+// across read failures, and reject colliding usageMetadata keys via wirejson.
+func TestExecuteConvertedModeStreamingBufferedAndCollisionGuard(t *testing.T) {
+	for _, proto := range []protocol.ProtocolID{
+		protocol.ProtocolAnthropicMessages,
+		protocol.ProtocolOpenAIResponses,
+		protocol.ProtocolOpenAIChatCompletions,
+	} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", proto, stream), func(t *testing.T) {
+				reqBytes := buildTestClientRequest(proto, "claude-opus-4-6-thinking", stream)
+				ex := newTestAntigravityExchange(t, proto, reqBytes, "claude-opus-4-6-thinking", true, nil)
+
+				sseBody := "data: {\"responseId\":\"exec_conv_1\",\"modelVersion\":\"claude-opus-4-6-runtime\",\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"converted ok\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":14,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":6,\"thoughtsTokenCount\":2}}}\n\n"
+				var closes, releases atomic.Int32
+				sink := &convertedTestSink{}
+				target := &Target{
+					ProviderID: 21,
+					Model:      "claude-opus-4-6-thinking",
+					Mode:       ModeConvertedResponse,
+					Converted:  ConvertedOptions{Exchange: ex},
+					Enter:      func() (func(), error) { return func() { releases.Add(1) }, nil },
+					Exchange: func(context.Context) (*http.Response, error) {
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"X-Request-Id": []string{"exec-conv-req"}},
+							Body:       &executionBody{ReadCloser: io.NopCloser(strings.NewReader(sseBody)), closes: &closes},
+						}, nil
+					},
+				}
+
+				result, err := (Executor{}).Execute(
+					t.Context(),
+					upstream.AttemptInput{
+						Protocol:      proto,
+						ResponseModel: "claude-opus-4-6-thinking",
+						Stream:        stream,
+						Target:        target,
+					},
+					sink,
+				)
+				require.NoError(t, err)
+				require.Contains(t, sink.body.String(), "converted ok")
+				require.Equal(t, "exec-conv-req", result.RequestID)
+				require.Equal(t, "claude-opus-4-6-runtime", result.UpstreamResponseModel)
+				require.Equal(t, 10, result.Usage.InputTokens)
+				require.Equal(t, 4, result.Usage.CacheReadInputTokens)
+				require.Equal(t, 8, result.Usage.OutputTokens)
+				require.True(t, result.HasUsage)
+				require.True(t, result.Served)
+				require.EqualValues(t, 1, closes.Load())
+				require.EqualValues(t, 1, releases.Load())
+			})
+		}
+	}
+
+	t.Run("colliding_usage_never_marks_has_usage", func(t *testing.T) {
+		reqBytes := buildTestClientRequest(protocol.ProtocolOpenAIResponses, "gemini-3.1-pro-high", true)
+		ex := newTestAntigravityExchange(t, protocol.ProtocolOpenAIResponses, reqBytes, "gemini-3.1-pro-high", false, nil)
+		colliding := "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]}}],\"usageMetadata\":{\"promptTokenCount\":1,\"promptTokenCount\":99}}}\n\n"
+		target := &Target{
+			Mode:      ModeConvertedResponse,
+			Converted: ConvertedOptions{Exchange: ex},
+			Exchange: func(context.Context) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{},
+					Body:       io.NopCloser(strings.NewReader(colliding)),
+				}, nil
+			},
+		}
+		res, err := (Executor{}).Execute(
+			t.Context(),
+			upstream.AttemptInput{
+				Protocol:      protocol.ProtocolOpenAIResponses,
+				ResponseModel: "gemini-3.1-pro-high",
+				Stream:        true,
+				Target:        target,
+			},
+			&convertedTestSink{},
+		)
+		require.Error(t, err)
+		require.False(t, res.HasUsage)
+		require.Zero(t, res.Usage.InputTokens)
+	})
 }

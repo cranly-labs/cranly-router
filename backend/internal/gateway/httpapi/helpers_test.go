@@ -1136,17 +1136,6 @@ func (c *comboCacheAndStore) ReleaseGrokVideoBilled(_ context.Context, _ string)
 	return nil
 }
 
-// SetReasoningContent accepts fixture content and stores no reasoning history.
-func (c *comboCacheAndStore) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
-	return nil
-}
-
-// GetReasoningContent returns the reasoning-content-missing sentinel for every
-// fixture lookup.
-func (c *comboCacheAndStore) GetReasoningContent(_ context.Context, _ string) (string, error) {
-	return "", gatewaysession.ErrReasoningContentNotFound
-}
-
 // SetCyberSessionBlocked delegates fixture block marking to the embedded
 // in-memory store. TTL reaches that store but is ignored there; callers
 // serialize the map mutation before subsequent scoped lookup assertions.
@@ -1381,11 +1370,6 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	}
 	output.Responses = state
 	output.ProxyCircuit = egress.NewProxyStreamCircuit(egress.DefaultProxyStreamCircuitSettings())
-	// Use reasoning history only when the supplied cache exposes that
-	// interface; other cache fixtures leave the history dependency absent
-	// for its own read handling.
-	history, _ := v.cache.(gatewaysession.ReasoningContentCache)
-	output.Reasoning = &gatewaysession.ReasoningHistory{Cache: history, Warn: gatewayprovider.WarnReasoningCacheFailure}
 	output.Redact = requests.Identity.Redact
 	choicesOptions := selection.DefaultOptions()
 	if v.options != nil {
@@ -1892,16 +1876,26 @@ func collectPassthroughArgsSSEDataPayloads(t *testing.T, body string) []string {
 // identity instead of returning usable event text.
 func findPassthroughArgsSSEEvent(t *testing.T, events []string, eventType, callID string) string {
 	t.Helper()
+	itemIDForCall := ""
+	if callID != "" {
+		for _, ev := range events {
+			if gjson.Get(ev, "type").String() == "response.output_item.added" &&
+				gjson.Get(ev, "item.call_id").String() == callID {
+				itemIDForCall = gjson.Get(ev, "item.id").String()
+				break
+			}
+		}
+	}
 	for _, event := range events {
 		if gjson.Get(event, "type").String() != eventType {
 			continue
 		}
-		// Accept the requested identity in either supported event shape
-		// so root-level argument deltas and nested output items can
-		// identify the same fixture call.
+		// Accept the requested identity via root call_id, nested item.call_id, or the
+		// item_id announced on response.output_item.added for that call_id.
 		if callID == "" ||
 			gjson.Get(event, "call_id").String() == callID ||
-			gjson.Get(event, "item.call_id").String() == callID {
+			gjson.Get(event, "item.call_id").String() == callID ||
+			(itemIDForCall != "" && gjson.Get(event, "item_id").String() == itemIDForCall) {
 			return event
 		}
 	}
@@ -1911,8 +1905,9 @@ func findPassthroughArgsSSEEvent(t *testing.T, events []string, eventType, callI
 
 // accumulateFunctionArgumentDeltas joins argument delta text for one exact call
 // ID in the supplied event order. It reads
-// response.function_call_arguments.delta events and compares the root call_id;
-// a blank requested ID also matches an absent or empty field.
+// response.function_call_arguments.delta events and compares the root call_id
+// or the item_id bound to callID in response.output_item.added; a blank
+// requested ID also matches an absent or empty field.
 //
 // Interleaved calls can contribute fragments to the same stream. Filtering by
 // identity before appending keeps another call's argument text out of this
@@ -1921,6 +1916,16 @@ func findPassthroughArgsSSEEvent(t *testing.T, events []string, eventType, callI
 // returns accumulated text without parsing it as an argument object.
 func accumulateFunctionArgumentDeltas(events []string, callID string) string {
 	var b strings.Builder
+	itemIDForCall := ""
+	if callID != "" {
+		for _, ev := range events {
+			if gjson.Get(ev, "type").String() == "response.output_item.added" &&
+				gjson.Get(ev, "item.call_id").String() == callID {
+				itemIDForCall = gjson.Get(ev, "item.id").String()
+				break
+			}
+		}
+	}
 	// Filter type and call identity before appending so interleaved tools
 	// retain separate argument strings while each matching fragment keeps
 	// its arrival order.
@@ -1928,7 +1933,9 @@ func accumulateFunctionArgumentDeltas(events []string, callID string) string {
 		if gjson.Get(event, "type").String() != "response.function_call_arguments.delta" {
 			continue
 		}
-		if gjson.Get(event, "call_id").String() != callID {
+		evCallID := gjson.Get(event, "call_id").String()
+		evItemID := gjson.Get(event, "item_id").String()
+		if evCallID != callID && (itemIDForCall == "" || evItemID != itemIDForCall) {
 			continue
 		}
 		_, _ = b.WriteString(gjson.Get(event, "delta").String())
@@ -2447,11 +2454,6 @@ func newResponsesFixture(v responsesFixtureInputs) *OpenAIResponsesExecutor {
 	}
 	aux.Output.Corrector = openaicore.NewCodexToolCorrector()
 	aux.Output.Turns = aux.Requests.Turns
-	// A cache without reasoning-history support leaves that optional
-	// dependency absent; the shared history reader owns the resulting
-	// missing-content handling during forwarding.
-	history, _ := v.cache.(gatewaysession.ReasoningContentCache)
-	aux.Output.Reasoning = &gatewaysession.ReasoningHistory{Cache: history}
 	store := gatewaysession.NewOpenAIWSStateStore(v.cache, gatewayprovider.LogOpenAIWSModeInfo)
 	aux.Output.Responses = store
 	aux.Output.ResponseTTL = func() time.Duration { return time.Hour }
@@ -2959,8 +2961,8 @@ func newObservedLogger(t *testing.T) (*zap.Logger, *observer.ObservedLogs) {
 
 // newResponseOutputForTest constructs output with shared runtime and
 // transient-model health state. A zero read limit selects 64 MiB, while other
-// values remain supplied; turns, response sticky TTL, proxy circuit and
-// reasoning warnings receive fixture dependencies.
+// values remain supplied; turns, response sticky TTL, and proxy circuit receive
+// fixture dependencies.
 func newResponseOutputForTest(options OpenAIResponseOptions) *OpenAIResponseOutput {
 	if options.ReadLimit == 0 {
 		options.ReadLimit = 64 << 20
@@ -2975,7 +2977,6 @@ func newResponseOutputForTest(options OpenAIResponseOptions) *OpenAIResponseOutp
 		}},
 		Turns:        &CodexTurnStateHeaders{Origins: gatewaysession.NewCodexTurnOrigins(time.Now), TTL: func() time.Duration { return time.Hour }},
 		ProxyCircuit: egress.NewProxyStreamCircuit(egress.DefaultProxyStreamCircuitSettings()),
-		Reasoning:    &gatewaysession.ReasoningHistory{Warn: gatewayprovider.WarnReasoningCacheFailure},
 		ResponseTTL:  func() time.Duration { return time.Hour },
 	}
 }

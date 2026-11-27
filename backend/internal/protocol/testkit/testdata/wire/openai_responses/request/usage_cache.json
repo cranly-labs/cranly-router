@@ -1,0 +1,38 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "service_tier": "priority",
+  "prompt_cache_key": "tenant-42-cache-policy-v1",
+  "instructions": "You are a gateway billing auditor. Keep answers concise and cite exact token bucket relationships.\nReference policy: Anthropic input_tokens excludes cached reads and writes, whereas OpenAI input_tokens and prompt_tokens include them.",
+  "tools": [
+    {
+      "type": "function",
+      "name": "lookup_cache_policy",
+      "description": "Reads active prompt cache TTL settings.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Tenant cache namespace"
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      }
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Summarize how the cached system prefix and fresh context were accounted in this turn."
+        }
+      ]
+    }
+  ]
+}

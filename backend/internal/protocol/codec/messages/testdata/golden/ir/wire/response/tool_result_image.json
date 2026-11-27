@@ -1,0 +1,19 @@
+{
+  "id": "msg_tool_result_image",
+  "model": "claude-sonnet-4-5",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "The latency_p99 panel shows a flat 12 ms baseline with no spike."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 96,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 16
+  }
+}

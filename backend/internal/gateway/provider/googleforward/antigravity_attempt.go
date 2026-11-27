@@ -14,7 +14,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -98,7 +97,7 @@ func (a *geminiExecutionAdapter) ModelParameters(ctx context.Context, model stri
 	if err != nil {
 		return nil, err
 	}
-	prepared, err := applyGeminiModelParameters(body, body, resolved, false)
+	prepared, err := applyGeminiModelParameters(body, resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +244,7 @@ func (a *geminiExecutionAdapter) Recover(ctx context.Context, in forwardcore.Gem
 		IsModelNotFound: upstream.IsModelNotFoundOrBare404,
 
 		CleanSignatures: func(body []byte) []byte {
-			return protocolgemini.CleanNativeThoughtSignatures(body, bridge.DummyThoughtSignature)
+			return protocolgemini.CleanNativeThoughtSignatures(body, protocolgemini.DummyThoughtSignature)
 		},
 		ReadErrorBody: a.s.readUpstreamErrorBody,
 		ErrorDetail:   a.s.getUpstreamErrorDetail,

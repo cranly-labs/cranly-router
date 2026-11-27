@@ -1,14 +1,25 @@
 package gemini
 
-import "github.com/tidwall/gjson"
+import (
+	"github.com/tidwall/gjson"
+
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+)
 
 // observation.go extracts independent usage, content, and completion evidence
-// from Gemini response payloads.
-// Gemini execution can report usage without content, and candidate output can
-// arrive before a finish reason. Independent observations let completion code
-// distinguish those cases: explicit zero counters establish usage presence,
-// while content requires a recognized nonempty part value and termination
-// requires a candidate's nonempty finish reason.
+// and projects native usageMetadata token buckets from Gemini response payloads.
+// Gemini execution can report usage without candidate content, and candidate
+// output can arrive frames ahead of a finishReason or trailing usageMetadata
+// update. Independent observations let stream and buffered completion loops
+// distinguish those states: explicit zero counters establish usage presence,
+// while semantic output requires a recognized non-empty part value and terminal
+// completion requires a candidate's non-empty finishReason.
+//
+// Native billing extraction partitions promptTokenCount into uncached input and
+// cachedContentTokenCount, sums candidatesTokenCount with thoughtsTokenCount for
+// output, and selects the first uppercase IMAGE candidatesTokensDetails entry
+// as an overlapping output subset without clamping or range-filtering observed
+// integers.
 
 // Observation records independent usage, output, and termination evidence.
 type Observation struct {
@@ -26,6 +37,19 @@ type Observation struct {
 	// payload-level completion evidence; delivery and error handling belong to the caller.
 	HasUsage, Semantic, Terminal bool /* HasUsage: nonnull counter presence;
 	Semantic: recognized content presence; Terminal: candidate finish evidence */
+}
+
+// NativeGeminiUsage holds observed Gemini response token counts in disjoint
+// input/cache buckets plus inclusive candidate+thought output and image subset counts.
+type NativeGeminiUsage struct {
+	// InputTokens and CacheReadInputTokens partition promptTokenCount into
+	// uncached and cached prompt tokens, while OutputTokens sums candidate and
+	// thinking tokens and ImageOutputTokens records the first exact IMAGE
+	// candidatesTokensDetails entry as an overlapping output subset.
+	InputTokens          int // uncached prompt tokens (promptTokenCount - cachedContentTokenCount)
+	OutputTokens         int // candidate plus thinking tokens
+	CacheReadInputTokens int // cached prompt tokens (cachedContentTokenCount)
+	ImageOutputTokens    int // first IMAGE modality candidate token count
 }
 
 // ObservePayload reads usage and candidate evidence from a top-level Gemini
@@ -57,4 +81,62 @@ func ObservePayload(payload []byte) Observation {
 		return true
 	})
 	return observed
+}
+
+// NativeExtractGeminiUsage reads usageMetadata from data and returns disjoint
+// prompt/cache and inclusive output token counts. Missing usageMetadata returns
+// nil, whereas present metadata (including explicit zero counters) returns a
+// non-nil NativeGeminiUsage populated via gjson integer conversion.
+//
+// Cached content tokens are subtracted from promptTokenCount so InputTokens
+// holds uncached input, thoughtsTokenCount is added to candidatesTokenCount,
+// and the first exact "IMAGE" candidatesTokensDetails entry populates
+// ImageOutputTokens without being added a second time to OutputTokens.
+func NativeExtractGeminiUsage(data []byte) *NativeGeminiUsage {
+	usage := gjson.GetBytes(data, "usageMetadata")
+	if !usage.Exists() {
+		return nil
+	}
+	prompt := int(usage.Get("promptTokenCount").Int())
+	cand := int(usage.Get("candidatesTokenCount").Int())
+	cached := int(usage.Get("cachedContentTokenCount").Int())
+	thoughts := int(usage.Get("thoughtsTokenCount").Int())
+
+	// Record the first IMAGE modality detail as an overlapping subset of
+	// candidate output while keeping OutputTokens equal to candidates + thoughts.
+	imageTokens := 0
+	candidateDetails := usage.Get("candidatesTokensDetails")
+	if candidateDetails.Exists() {
+		candidateDetails.ForEach(func(_, detail gjson.Result) bool {
+			if detail.Get("modality").String() == "IMAGE" {
+				imageTokens = int(detail.Get("tokenCount").Int())
+				return false
+			}
+			return true
+		})
+	}
+
+	// Subtract cached prompt tokens from inclusive promptTokenCount and fold
+	// thinking tokens into OutputTokens to match shared gateway billing buckets.
+	return &NativeGeminiUsage{
+		InputTokens:          prompt - cached,
+		OutputTokens:         cand + thoughts,
+		CacheReadInputTokens: cached,
+		ImageOutputTokens:    imageTokens,
+	}
+}
+
+// NativeUsageProjection copies usage into a fresh protocol.TokenUsage value for
+// gateway and upstream billing consumers. Nil input returns nil, and non-nil
+// input preserves all four integer token buckets verbatim.
+func NativeUsageProjection(usage *NativeGeminiUsage) *protocol.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	return &protocol.TokenUsage{
+		InputTokens:          usage.InputTokens,
+		OutputTokens:         usage.OutputTokens,
+		CacheReadInputTokens: usage.CacheReadInputTokens,
+		ImageOutputTokens:    usage.ImageOutputTokens,
+	}
 }

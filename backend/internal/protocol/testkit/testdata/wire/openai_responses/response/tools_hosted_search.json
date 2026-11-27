@@ -1,0 +1,50 @@
+{
+  "id": "resp_tools_hosted_search",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "ws_go127_2",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "query": "Go 1.27 encoding json v2 release notes"
+      }
+    },
+    {
+      "id": "msg_tools_hosted_search_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Go 1.27 ships encoding/json/v2 and encoding/json/jsontext in the standard library.",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://go.dev/doc/go1.27",
+              "title": "Go 1.27 Release Notes",
+              "start_index": 0,
+              "end_index": 83
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 84,
+    "output_tokens": 24,
+    "total_tokens": 108,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

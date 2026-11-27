@@ -1,0 +1,14 @@
+data: {"id":"chatcmpl_reasoning_carrier_roundtrip","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"Both replica lag (45ms) and 3-voter quorum on db-east-1 "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_carrier_roundtrip","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"satisfy failover safety thresholds."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_carrier_roundtrip","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"Cluster db-east-1 is ready for planned failover: "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_carrier_roundtrip","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"replication lag is 45ms and all 3 quorum voters are healthy."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_carrier_roundtrip","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_reasoning_carrier_roundtrip","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[],"usage":{"prompt_tokens":132,"completion_tokens":64,"total_tokens":196,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":28}}}
+
+data: [DONE]
+

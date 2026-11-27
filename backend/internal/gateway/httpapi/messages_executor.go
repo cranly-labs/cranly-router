@@ -10,14 +10,14 @@ import (
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/messageforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
 // messages_executor.go creates synchronous HTTP output adapters for calls to
 // the shared Messages forwarding runtime.
-// Anthropic, Bedrock compatibility, Count Tokens, Chat and
-// Responses entry adapters share the bound runtime and response header filter,
-// keeping platform attempts in that runtime while HTTP writers remain
-// request-local.
+// Native Messages, Bedrock compatibility, Count Tokens, and converted OpenAI
+// entry adapters share the bound runtime and response header filter, keeping
+// platform attempts in that runtime while HTTP writers remain request-local.
 
 // MessagesExecutor creates an HTTP output adapter for each runtime call.
 type MessagesExecutor struct {
@@ -57,17 +57,9 @@ func (e *MessagesExecutor) ForwardCountTokens(ctx context.Context, c *gin.Contex
 	return e.runtime.Count(ctx, NewMessageForwardBoundary(c, e.filter), target, parsed)
 }
 
-// ForwardAsChatCompletions delegates Chat conversion and output for the
-// selected provider using body bytes. Its parsed-request argument is unused
-// because runtime.Chat performs its own preparation for the client protocol.
-func (e *MessagesExecutor) ForwardAsChatCompletions(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, _ *requeststate.ParsedRequest) (*forward.MessagesResult, error) {
-	return e.runtime.Chat(ctx, NewMessageForwardBoundary(c, e.filter), target, body)
-}
-
-// ForwardAsResponses delegates Responses conversion and output for the
-// selected provider using body bytes. Its parsed-request argument is unused
-// because runtime.Responses owns preparation and the attempt's conversion
-// state.
-func (e *MessagesExecutor) ForwardAsResponses(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, _ *requeststate.ParsedRequest) (*forward.MessagesResult, error) {
-	return e.runtime.Responses(ctx, NewMessageForwardBoundary(c, e.filter), target, body)
+// ForwardConverted delegates IR-based OpenAI Chat or Responses conversion across
+// Anthropic, Vertex, and Bedrock providers through e.runtime.Converted with a
+// fresh request-local MessageForwardBoundary.
+func (e *MessagesExecutor) ForwardConverted(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, source protocol.ProtocolID, body []byte) (*forward.MessagesResult, error) {
+	return e.runtime.Converted(ctx, NewMessageForwardBoundary(c, e.filter), target, source, body)
 }

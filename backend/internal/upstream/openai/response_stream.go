@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -482,8 +481,8 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	}
 
 	needModelReplace := originalModel != mappedModel
-	responseAccumulator := bridge.NewBufferedResponseAccumulator()
-	streamDoneItems := bridge.NewResponsesStreamOutputItems()
+	responseAccumulator := wire.NewBufferedResponseAccumulator()
+	streamDoneItems := wire.NewResponsesStreamOutputItems()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
 	searchCounter := 0
@@ -773,7 +772,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 					responseAccumulator.ProcessEvent(&streamEvent)
 				}
 			}
-			if normalizedData, normalized := bridge.NormalizeResponsesStreamingTerminalOutput(dataBytes, responseAccumulator, streamDoneItems, streamImageOutputs); normalized {
+			if normalizedData, normalized := wire.NormalizeResponsesStreamingTerminalOutput(dataBytes, responseAccumulator, streamDoneItems, streamImageOutputs); normalized {
 				dataBytes = normalizedData
 				data = string(normalizedData)
 				line = "data: " + data

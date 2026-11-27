@@ -1,0 +1,57 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "instructions": "You are a concise protocol engineer.",
+  "input": [
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Always include unit names next to numbers."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What is the default HTTP keepalive timeout?"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "The default timeout is 30 seconds."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Also include the equivalent in milliseconds."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Restate the timeout."
+        }
+      ]
+    }
+  ]
+}

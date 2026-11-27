@@ -95,7 +95,7 @@ func (s *OpenAIWebSocketExecutor) EnsureSessionIsolation(ctx context.Context, ke
 
 // forTurn captures current Runtime parameters for one execution turn. With no
 // Runtime it returns the receiver; otherwise it returns a new executor sharing
-// injected services and using an independent Options value. The session's
+// injected services while using an independent Options value. The session's
 // existing preemption registration remains on its original owner.
 func (s *OpenAIWebSocketExecutor) forTurn() *OpenAIWebSocketExecutor {
 	if s.Runtime == nil {

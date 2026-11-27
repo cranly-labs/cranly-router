@@ -5,7 +5,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/modelidentity"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
 // thinking_request.go resolves model-family options for thinking-history
@@ -74,7 +74,7 @@ func NormalizeChineseLLMThinking(body []byte, mappedModel string) ([]byte, bool)
 // passback identity, native DeepSeek effort, GLM family, and exact GLM 5.3 are
 // resolved independently.
 func thinkingRequestOptions(models ...string) requeststate.ThinkingRequestOptions {
-	options := requeststate.ThinkingRequestOptions{PreFilter: true, RetryFilters: true, DummySignature: antigravity.DummyThoughtSignature}
+	options := requeststate.ThinkingRequestOptions{PreFilter: true, RetryFilters: true, DummySignature: gemini.DummyThoughtSignature}
 	if len(models) == 0 {
 		return options
 	}

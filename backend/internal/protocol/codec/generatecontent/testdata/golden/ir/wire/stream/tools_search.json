@@ -1,0 +1,98 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_tools_search",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_search_2",
+        "tool": {
+          "kind": "function",
+          "name": "tool_search"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"query\":\"slack notify\",\"limit\":3}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_search_2",
+        "tool": {
+          "kind": "function",
+          "name": "tool_search"
+        },
+        "arguments": "{\"query\":\"slack notify\",\"limit\":3}",
+        "token": {
+          "data": "sig_fc_search_2"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inc_2",
+        "tool": {
+          "kind": "function",
+          "name": "pager__list_incidents"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"severity\":\"sev2\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 148,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 36
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inc_2",
+        "tool": {
+          "kind": "function",
+          "name": "pager__list_incidents"
+        },
+        "arguments": "{\"severity\":\"sev2\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

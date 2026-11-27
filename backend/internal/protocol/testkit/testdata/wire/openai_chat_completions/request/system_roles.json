@@ -1,0 +1,30 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a concise protocol engineer."
+    },
+    {
+      "role": "developer",
+      "content": "Always include unit names next to numbers."
+    },
+    {
+      "role": "user",
+      "content": "What is the default HTTP keepalive timeout?"
+    },
+    {
+      "role": "assistant",
+      "content": "The default timeout is 30 seconds."
+    },
+    {
+      "role": "developer",
+      "content": "Also include the equivalent in milliseconds."
+    },
+    {
+      "role": "user",
+      "content": "Restate the timeout."
+    }
+  ]
+}

@@ -307,3 +307,62 @@ func TestVideoUsageKeepsOneDiagnosticID(t *testing.T) {
 		require.NotEqual(t, "upstream", alias.Kind, "usage must not add an unclassified truncated alias")
 	}
 }
+
+// TestCaptureMessages_GeminiThinkingLevel captures a native Gemini result and
+// request body carrying thinkingLevel in camelCase and snake_case. Both
+// RequestedReasoningEffort and executed ReasoningEffort must survive snapshot
+// capture independently of subsequent source mutations.
+func TestCaptureMessages_GeminiThinkingLevel(t *testing.T) {
+	tests := []struct {
+		name      string // scenario label for diagnostics
+		body      string // native Gemini request payload
+		executed  string // executed effort attached by native forwarding
+		wantReq   string // expected canonical requested effort
+		wantFinal string // expected recorded effort
+	}{
+		{
+			name:      "camelCase HIGH",
+			body:      `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			executed:  "high",
+			wantReq:   "high",
+			wantFinal: "high",
+		},
+		{
+			name:      "snake_case MINIMAL keeps requested only",
+			body:      `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generation_config":{"thinking_config":{"thinking_level":"MINIMAL"}}}`,
+			executed:  "",
+			wantReq:   "minimal",
+			wantFinal: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var finalEffort *string
+			if tc.executed != "" {
+				v := tc.executed
+				finalEffort = &v
+			}
+			body := []byte(tc.body)
+			res := &forward.MessagesResult{
+				RequestID:       "req-gemini-1",
+				Model:           "gemini-4-hydrogen",
+				UpstreamModel:   "gemini-4-hydrogen",
+				ReasoningEffort: finalEffort,
+			}
+			out := CaptureMessages(context.Background(), &MessagesCapture{
+				Result:      res,
+				RequestBody: body,
+			})
+			require.NotNil(t, out)
+			require.NotNil(t, out.RequestedReasoningEffort)
+			require.Equal(t, tc.wantReq, *out.RequestedReasoningEffort)
+			if tc.wantFinal == "" {
+				require.Nil(t, out.Result.ReasoningEffort)
+			} else {
+				require.NotNil(t, out.Result.ReasoningEffort)
+				require.Equal(t, tc.wantFinal, *out.Result.ReasoningEffort)
+			}
+		})
+	}
+}

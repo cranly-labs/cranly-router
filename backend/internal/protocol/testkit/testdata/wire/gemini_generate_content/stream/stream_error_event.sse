@@ -1,0 +1,4 @@
+data: {"responseId":"gem_stream_error_event","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Synthesizing regional failover plan: "}]}}]}
+
+data: {"error":{"code":503,"message":"Upstream model capacity exhausted during stream generation.","status":"UNAVAILABLE"}}
+

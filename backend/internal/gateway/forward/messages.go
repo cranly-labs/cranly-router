@@ -175,6 +175,21 @@ func Messages(ctx context.Context, p MessagePorts, in MessageInput, parsed *requ
 		}
 	}
 
+	if preparer, ok := p.(nativeMessagesReplayPreparer); ok {
+		// Unpack matching trc1 continuity envelopes or delete incompatible blocks
+		// against the resolved platform wire model before cache-limit counting and
+		// thinking-block filters inspect message content.
+		rewritten, prepErr := preparer.PrepareNativeReplay(ctx, body, p.PlatformModel(reqModel))
+		if prepErr != nil {
+			return nil, prepErr
+		}
+		if !bytes.Equal(rewritten, body) {
+			if err := replaceBody(rewritten); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if err := replaceBody(p.CacheLimit(body)); err != nil {
 		return nil, err
 	}

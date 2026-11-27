@@ -231,6 +231,12 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		Source:                   "passthrough",
 	})
 	p.SetUpstreamModel(firstUpstreamModel)
+	// Prepare outbound trc1 carrier replay before dialing upstream so invalid
+	// token-path JSON closes locally while turnPayloads retains pre-replay bytes.
+	preparedFirstOutbound, replayErr := prepareOutboundNativeReplay(ctx, p, o.ProviderID, firstUpstreamModel, firstClientMessage)
+	if replayErr != nil {
+		return p.CloseError(1008, "invalid websocket request payload", replayErr)
+	}
 	if err := p.PrepareDial(ctx, firstClientMessage, promptCacheKey); err != nil {
 		return err
 	}
@@ -472,6 +478,12 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			// succeed. Rejected frames retain those two fields, while requested effort
 			// was captured earlier and can already reflect this rejected request.
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				// Validate and prepare outbound trc1 carrier replay before turn
+				// admission and queue publication so rejected payloads cancel cleanly.
+				preparedOutbound, replayErr := prepareOutboundNativeReplay(ctx, p, o.ProviderID, model, out)
+				if replayErr != nil {
+					return payload, nil, p.CloseError(1008, "invalid websocket request payload", replayErr)
+				}
 				if hooks != nil && hooks.BeforeTurn != nil {
 					if err := hooks.BeforeTurn(turnNo); err != nil {
 						return payload, nil, err
@@ -508,7 +520,7 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				acceptedTurn = true
 				// Strip wire effort only on the outbound copy after usageMeta and
 				// turnPayloads have recorded the intact effective effort for accounting.
-				out = stripOutboundEffort(ctx, p, routingModel, out)
+				out = stripOutboundEffort(ctx, p, routingModel, preparedOutbound)
 			}
 			return out, blocked, policyErr
 		},
@@ -565,7 +577,7 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	firstPerformance := beginPerformance(1, time.Now())
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, o.WriteTimeout)
-	outboundFirstMessage := stripOutboundEffort(ctx, p, firstRoutingModel, firstClientMessage)
+	outboundFirstMessage := stripOutboundEffort(ctx, p, firstRoutingModel, preparedFirstOutbound)
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, TextFrame, outboundFirstMessage)
 	cancelFirstWrite()
 	if firstWriteErr != nil {

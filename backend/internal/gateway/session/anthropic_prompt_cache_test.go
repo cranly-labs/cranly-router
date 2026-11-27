@@ -1,12 +1,15 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
 // TestAnthropicPromptCacheScopePrefixAndExpiry binds and extends a Messages digest
@@ -54,4 +57,44 @@ func TestAnthropicPromptCacheConcurrentBindings(t *testing.T) {
 		require.Equal(t, fmt.Sprint(id), key)
 		require.Equal(t, "s:a-u:b", chain)
 	}
+}
+
+// TestBuildAnthropicDigestChainBytesAndMetadataKeyParity feeds spaced JSON,
+// null system fields, 64-bit integers, and malformed payloads into the raw-byte
+// prompt-cache helpers. Valid inputs match the legacy struct helpers exactly,
+// while nil, invalid JSON, and session-free metadata return empty strings.
+func TestBuildAnthropicDigestChainBytesAndMetadataKeyParity(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"extra_int64": 9007199254740993,
+		"system": [
+			{"type": "text", "text": "Follow repo rules."}
+		],
+		"metadata": {
+			"user_id": "user_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_account_11111111-2222-3333-4444-555555555555_session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			"custom_tag": "preserve"
+		},
+		"messages": [
+			{"role": "user", "content": "Open main.go"},
+			{"role": "assistant", "content": [{"type": "text", "text": "Reading main.go"}]},
+			{"role": "user", "content": [{"type": "text", "text": "Run tests"}]}
+		]
+	}`)
+
+	var req protocolanthropic.AnthropicRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+
+	require.Equal(t, BuildAnthropicDigestChain(&req), BuildAnthropicDigestChainBytes(body))
+	require.NotEmpty(t, BuildAnthropicDigestChainBytes(body))
+	require.Equal(t, AnthropicMetadataPromptCacheKey(&req), AnthropicMetadataPromptCacheKeyBytes(body))
+	require.NotEmpty(t, AnthropicMetadataPromptCacheKeyBytes(body))
+
+	nullSysBody := []byte(`{"model":"claude-sonnet-4-5","system":null,"messages":[{"role":"user","content":"hi"}]}`)
+	var nullSysReq protocolanthropic.AnthropicRequest
+	require.NoError(t, json.Unmarshal(nullSysBody, &nullSysReq))
+	require.Equal(t, BuildAnthropicDigestChain(&nullSysReq), BuildAnthropicDigestChainBytes(nullSysBody))
+
+	require.Empty(t, BuildAnthropicDigestChainBytes(nil))
+	require.Empty(t, BuildAnthropicDigestChainBytes([]byte(`{invalid`)))
+	require.Empty(t, AnthropicMetadataPromptCacheKeyBytes([]byte(`{"metadata":{"user_id":"plain"}}`)))
 }

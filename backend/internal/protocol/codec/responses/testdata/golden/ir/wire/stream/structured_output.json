@@ -1,0 +1,58 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_structured_output",
+      "model": "gpt-5",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text",
+      "id": "msg_structured_output_out"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "{\"service\":\"edge-gateway\","
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "\"healthy\":true,\"error_rate\":0.0015,"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "\"open_incidents\":[]}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "id": "msg_structured_output_out",
+      "text": "{\"service\":\"edge-gateway\",\"healthy\":true,\"error_rate\":0.0015,\"open_incidents\":[]}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 96,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 24
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

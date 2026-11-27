@@ -1,0 +1,51 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_reasoning_encrypted_only","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_reasoning_encrypted_only","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"rs_enconly_reply_2","type":"reasoning","summary":[]}}
+
+event: response.reasoning_summary_part.added
+data: {"type":"response.reasoning_summary_part.added","sequence_number":3,"item_id":"rs_enconly_reply_2","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":4,"item_id":"rs_enconly_reply_2","output_index":0,"summary_index":0,"delta":"Step go-test exited with code 1 in TestPoolTimeout; "}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":5,"item_id":"rs_enconly_reply_2","output_index":0,"summary_index":0,"delta":"summarize the root cause."}
+
+event: response.reasoning_summary_text.done
+data: {"type":"response.reasoning_summary_text.done","sequence_number":6,"item_id":"rs_enconly_reply_2","output_index":0,"summary_index":0,"text":"Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."}
+
+event: response.reasoning_summary_part.done
+data: {"type":"response.reasoning_summary_part.done","sequence_number":7,"item_id":"rs_enconly_reply_2","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":8,"output_index":0,"item":{"id":"rs_enconly_reply_2","type":"reasoning","summary":[{"type":"summary_text","text":"Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."}],"encrypted_content":"gAAAAABnEncOnlyReplyOpenAI02"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":9,"output_index":1,"item":{"id":"msg_enconly_reply_2","type":"message","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":10,"item_id":"msg_enconly_reply_2","output_index":1,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":11,"item_id":"msg_enconly_reply_2","output_index":1,"content_index":0,"delta":"Build job-8841 failed during the go-test step with exit code 1 "}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":12,"item_id":"msg_enconly_reply_2","output_index":1,"content_index":0,"delta":"because TestPoolTimeout timed out."}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":13,"item_id":"msg_enconly_reply_2","output_index":1,"content_index":0,"text":"Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":14,"item_id":"msg_enconly_reply_2","output_index":1,"content_index":0,"part":{"type":"output_text","text":"Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out.","annotations":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":15,"output_index":1,"item":{"id":"msg_enconly_reply_2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out.","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":16,"response":{"id":"resp_reasoning_encrypted_only","object":"response","created_at":1760000000,"status":"completed","model":"gpt-5","output":[{"id":"rs_enconly_reply_2","type":"reasoning","summary":[{"type":"summary_text","text":"Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."}],"encrypted_content":"gAAAAABnEncOnlyReplyOpenAI02"},{"id":"msg_enconly_reply_2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out.","annotations":[]}]}],"usage":{"input_tokens":88,"output_tokens":54,"total_tokens":142,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":24}}}}
+

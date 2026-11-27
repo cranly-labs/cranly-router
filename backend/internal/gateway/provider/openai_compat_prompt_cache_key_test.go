@@ -192,3 +192,46 @@ func TestDeriveAnthropicCompatPromptCacheKey_UsesCacheControlAnchors(t *testing.
 	require.True(t, strings.HasPrefix(k1, "anthropic-cache-"))
 	require.False(t, strings.HasPrefix(k1, compatPromptCacheKeyPrefix))
 }
+
+// TestDerivePromptCacheKeyBytes_MatchesTypedHelpersAndPreservesStability checks
+// raw JSON byte derivation against typed Chat and Anthropic helpers across multi-
+// turn conversations. Both ordinary seeds and ephemeral cache-control anchors
+// produce identical keys and stay invariant as later turns append history.
+func TestDerivePromptCacheKeyBytes_MatchesTypedHelpersAndPreservesStability(t *testing.T) {
+	chatTurn1 := []byte(`{` +
+		`"model":"gpt-5.4",` +
+		`"reasoning_effort":"high",` +
+		`"tool_choice":"auto",` +
+		`"tools":[{"type":"function","function":{"name":"bash","parameters":{"type":"object"}}}],` +
+		`"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Hello"}]` +
+		`}`)
+	chatTurn2 := []byte(`{` +
+		`"model":"gpt-5.4",` +
+		`"reasoning_effort":"high",` +
+		`"tool_choice":"auto",` +
+		`"tools":[{"type":"function","function":{"name":"bash","parameters":{"type":"object"}}}],` +
+		`"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi"},{"role":"user","content":"Next"}]` +
+		`}`)
+
+	var typedChat protocolopenai.ChatCompletionsRequest
+	require.NoError(t, json.Unmarshal(chatTurn1, &typedChat))
+	expectedChatKey := DeriveCompatPromptCacheKey(&typedChat, "gpt-5.4")
+	require.Equal(t, expectedChatKey, DeriveCompatPromptCacheKeyBytes(chatTurn1, "gpt-5.4"))
+	require.Equal(t, expectedChatKey, DeriveCompatPromptCacheKeyBytes(chatTurn2, "gpt-5.4"))
+
+	anthropicAnchored := []byte(`{` +
+		`"model":"claude-sonnet-4-5",` +
+		`"system":[{"type":"text","text":"project instructions","cache_control":{"type":"ephemeral"},"extra":9007199254740993}],` +
+		`"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"repo anchor","cache_control":{"type":"ephemeral"}}]},` +
+		`{"role":"assistant","content":[{"type":"text","text":"cached reply","cache_control":{"type":"ephemeral"}}]},` +
+		`{"role":"user","content":[{"type":"text","text":"ignored second user","cache_control":{"type":"ephemeral"}}]}` +
+		`]` +
+		`}`)
+	var typedAnthropic protocolanthropic.AnthropicRequest
+	require.NoError(t, json.Unmarshal(anthropicAnchored, &typedAnthropic))
+	expectedAnchorKey := DeriveAnthropicCacheControlPromptCacheKey(&typedAnthropic)
+	require.NotEmpty(t, expectedAnchorKey)
+	require.Equal(t, expectedAnchorKey, DeriveAnthropicCacheControlPromptCacheKeyBytes(anthropicAnchored))
+	require.Equal(t, expectedAnchorKey, DeriveAnthropicCompatPromptCacheKeyBytes(anthropicAnchored, "gpt-5.4"))
+}

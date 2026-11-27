@@ -16,8 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -90,13 +90,17 @@ func (s *OpenAIAuxiliary) ForwardCountTokensAsAnthropic(
 		return nil
 	}
 
-	prepared, err := gatewayprovider.PrepareAnthropicInputTokens(body, provider, defaultMappedModel)
+	var attrService *routing.ModelAttributeService
+	if s.Requests != nil && s.Requests.Readers != nil {
+		attrService = s.Requests.Readers.Attributes
+	}
+	prepared, err := gatewayprovider.PrepareAnthropicInputTokensWithAttributes(ctx, body, provider, defaultMappedModel, attrService)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return err
 	}
 
-	upstreamBody, err := wirejson.Marshal(prepared.Request)
+	upstreamBody, err := prepared.MarshalBody()
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
 		return fmt.Errorf("marshal openai input_tokens body: %w", err)
@@ -296,7 +300,7 @@ func writeOpenAIOAuthInputTokensFallback(c *gin.Context, provider *gatewayprovid
 	// count. Keep the minimum unless the prepared Responses estimator
 	// supplies positive evidence.
 	estimated := openAIInputTokensFallbackMinimum
-	if got, err := tokenestimate.Responses(prepared.Request); err == nil {
+	if got, err := prepared.EstimateLocal(); err == nil {
 		if got > 0 {
 			estimated = got
 		}

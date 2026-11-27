@@ -7,13 +7,13 @@
 //
 // Reading entry points:
 //   - prelude.go: request preparation and protocol and transport selection.
-//   - chat.go: Chat Completions conversion and upstream response handling.
+//   - responses_converted.go: merged IR Responses conversion for Messages and Chat clients.
 //   - http.go: HTTP exchanges and retries on the same provider.
 //
 // File groups:
-//   - requests.go, transform.go: upstream request construction and body transformation.
-//   - messages.go, passthrough.go: Messages and passthrough execution.
-//   - raw_chat*.go, raw_fallback*.go: Chat forwarding and protocol conversion.
-//   - anthropic*.go: Anthropic requests, stream reading, response conversion, and usage.
-//   - result_projection.go: conversion between gateway, compatibility, and package result types.
+//   - requests.go, transform*.go: upstream request construction and body transformation.
+//   - passthrough*.go, responses_converted*.go: Responses passthrough and merged IR Responses execution.
+//   - raw_chat*.go, raw_fallback_converted.go: native Chat forwarding and merged IR Chat conversion.
+//   - anthropic*.go: native and converted Anthropic requests, stream reading, and line pumping.
+//   - result_projection.go: conversion between gateway, compatibility, and package result and usage types.
 package openaiforward

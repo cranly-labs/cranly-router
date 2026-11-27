@@ -17,7 +17,7 @@ import (
 // Native WSv2 forwards its namespace representation when passthrough is
 // disabled, so the flattening gate leaves those declarations intact even when
 // the provider compatibility setting is enabled. HTTP-compatible paths can
-// restore flattened names through the response bridge. These decisions are
+// restore flattened names through response restoration. These decisions are
 // request hints for the shared protocol transformations, with separate gates
 // for declaration flattening, general input cleanup, and call-history
 // retention.
@@ -72,7 +72,7 @@ func ShouldStripOpenAIResponsesInputNamespaces(provider *ExecutionProvider, tran
 // use flat names and remove obsolete call namespaces. This pairing keeps
 // history names interpretable under the current declarations while Compact
 // uses its narrower input shape; the caller applies the actual byte
-// transformation through the protocol bridge.
+// transformation through protocol/openai.
 func ShouldKeepOpenAIResponsesToolCallNamespaces(
 	provider *ExecutionProvider,
 	transport egress.OpenAIUpstreamTransport,

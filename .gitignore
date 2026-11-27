@@ -162,3 +162,6 @@ output/
 
 # Python 字节码缓存。
 __pycache__/
+
+# 协议实验室未脱敏的原始录制目录。
+backend/internal/protocol/testkit/testdata/corpus/_incoming/

@@ -1,0 +1,38 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_stream_error_event",
+      "model": "gpt-5",
+      "created_at": 1760002100
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text",
+      "id": "msg_stream_error_event_out"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "id": "msg_stream_error_event_out",
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "error",
+    "error": {
+      "code": "server_error",
+      "message": "Upstream model capacity exhausted during stream generation."
+    }
+  }
+]

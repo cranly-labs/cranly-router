@@ -1,0 +1,30 @@
+{
+  "responseId": "gem_tool_single",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "id": "call_weather_osa_2",
+              "name": "get_weather",
+              "args": {
+                "city": "Osaka"
+              }
+            },
+            "thoughtSignature": "sig_fc_weather_osa_2"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 64,
+    "candidatesTokenCount": 18,
+    "totalTokenCount": 82
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Compare merge sort and quicksort stability in two sentences."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "mode": "enabled",
+    "budget_tokens": 2048,
+    "summary": "auto"
+  }
+}

@@ -404,10 +404,6 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	}
 	output.Responses = state
 	output.ProxyCircuit = egress.NewProxyStreamCircuit(egress.DefaultProxyStreamCircuitSettings())
-	// A gateway cache may omit reasoning history capability; bind nil here so
-	// other fixture session operations can still use the supplied cache implementation.
-	history, _ := v.cache.(session.ReasoningContentCache)
-	output.Reasoning = &session.ReasoningHistory{Cache: history, Warn: gatewayadapter.WarnReasoningCacheFailure}
 	output.Redact = requests.Identity.Redact
 	choicesOptions := selection.DefaultOptions()
 	if v.options != nil {

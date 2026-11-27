@@ -18,10 +18,17 @@ import (
 
 // gateway_google.go constructs Gemini and Antigravity forwarding runtimes and
 // their HTTP executors.
-// Gemini and Antigravity forwarding share the application's transport and
-// request activity. Gemini rate-limit observation uses its daily quota reset as
-// a parser fallback, while both runtimes receive startup response limits and
-// platform-specific credential and health services.
+// Gemini and Antigravity forwarding share the application's transport, request
+// activity, and process-local GeminiToolCalls call-binding store. Gemini
+// rate-limit observation uses its daily quota reset as a parser fallback, while
+// both runtimes receive startup response limits and platform-specific
+// credential and health services.
+
+// provideGeminiToolCalls constructs the process-local scoped tool-call store
+// shared by Gemini and Antigravity forwarding runtimes.
+func provideGeminiToolCalls() *session.GeminiToolCalls {
+	return &session.GeminiToolCalls{}
+}
 
 // googleForwardOptions copies Google forwarding limits and destination policy
 // from required cfg. A nonpositive response-read limit selects the
@@ -48,10 +55,10 @@ func googleForwardOptions(cfg *config.Config) googleforward.Options {
 }
 
 // provideGeminiForward assembles Gemini credentials, transport, quota
-// observation, and activity tracking. cfg and activity are required; the reset-
-// time parser receives a daily fallback computed at observation time in the
-// Gemini quota location.
-func provideGeminiForward(store gatewayadapter.ExecutionProviderStore, tokens *provider.GeminiTokenSource, health *provideradapter.UpstreamHealth, precheck *provider.GeminiPrecheck, transport httpclient.UpstreamTransport, filter *egress.CompiledHeaderFilter, cfg *config.Config, activity *gatewayRequestActivity, attributes *routing.ModelAttributeService) *googleforward.Gemini {
+// observation, shared tool-call bindings, and activity tracking. cfg and
+// activity are required; the reset-time parser receives a daily fallback
+// computed at observation time in the Gemini quota location.
+func provideGeminiForward(store gatewayadapter.ExecutionProviderStore, tokens *provider.GeminiTokenSource, health *provideradapter.UpstreamHealth, precheck *provider.GeminiPrecheck, transport httpclient.UpstreamTransport, filter *egress.CompiledHeaderFilter, cfg *config.Config, activity *gatewayRequestActivity, attributes *routing.ModelAttributeService, toolCalls *session.GeminiToolCalls) *googleforward.Gemini {
 	daily := func() *int64 {
 		// The reset parser expects a Unix-second timestamp for the quota deadline.
 		value := provider.GeminiDailyResetTime(time.Now(), geminiQuotaLocation()).Unix()
@@ -64,6 +71,7 @@ func provideGeminiForward(store gatewayadapter.ExecutionProviderStore, tokens *p
 		Health:       health,
 		Transport:    transport,
 		HeaderFilter: filter,
+		ToolCalls:    toolCalls,
 		Enter:        activity.Enter,
 		Errors: &provideradapter.GeminiErrorObserver{
 			Other:          health,
@@ -82,10 +90,10 @@ func provideGeminiExecutor(runtime *googleforward.Gemini) *gatewayhttp.GeminiExe
 }
 
 // provideAntigravityForward assembles Antigravity execution with retry, health,
-// and runtime setting readers. cfg, readers, and activity are required by
-// construction; credential and sticky-session dependencies are shared with the
-// application graph.
-func provideAntigravityForward(store gatewayadapter.ExecutionProviderStore, tokens *provider.AntigravityTokenSource, retry *provideradapter.AntigravityRetry, observer *provideradapter.AntigravityErrorObserver, transport httpclient.UpstreamTransport, readers *gatewayadapter.RuntimeReaders, sticky session.GatewayCache, cfg *config.Config, activity *gatewayRequestActivity) *googleforward.Antigravity {
+// shared tool-call bindings, and runtime setting readers. cfg, readers, and
+// activity are required by construction; credential, tool-call, and
+// sticky-session dependencies are shared with the application graph.
+func provideAntigravityForward(store gatewayadapter.ExecutionProviderStore, tokens *provider.AntigravityTokenSource, retry *provideradapter.AntigravityRetry, observer *provideradapter.AntigravityErrorObserver, transport httpclient.UpstreamTransport, readers *gatewayadapter.RuntimeReaders, sticky session.GatewayCache, cfg *config.Config, activity *gatewayRequestActivity, toolCalls *session.GeminiToolCalls) *googleforward.Antigravity {
 	return &googleforward.Antigravity{
 		Attributes: readers.Attributes,
 		Options:    googleForwardOptions(cfg),
@@ -97,6 +105,7 @@ func provideAntigravityForward(store gatewayadapter.ExecutionProviderStore, toke
 		Gateway:    readers.Gateway,
 		Routing:    readers.Routing,
 		Sticky:     sticky,
+		ToolCalls:  toolCalls,
 		Enter:      activity.Enter,
 	}
 }

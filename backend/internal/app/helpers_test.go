@@ -1,17 +1,21 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
@@ -28,12 +32,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	keyhttp "github.com/TokenFlux/TokenRouter/internal/apikey/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/apikey/httpapi/dto"
+	keytestkit "github.com/TokenFlux/TokenRouter/internal/apikey/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/app/lifecycle"
 	routeaudit "github.com/TokenFlux/TokenRouter/internal/audit/httpapi"
 	routebackup "github.com/TokenFlux/TokenRouter/internal/backup/httpapi"
 	batchhttp "github.com/TokenFlux/TokenRouter/internal/batchimage/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	routebilling "github.com/TokenFlux/TokenRouter/internal/billing/httpapi"
+	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	pricingprovider "github.com/TokenFlux/TokenRouter/internal/billing/provider"
 	billingtestkit "github.com/TokenFlux/TokenRouter/internal/billing/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/config"
@@ -54,12 +60,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/moderationflow"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/promptpolicy"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/messageforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/selection"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/searchtools"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	wshttp "github.com/TokenFlux/TokenRouter/internal/gateway/ws/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	routeidentity "github.com/TokenFlux/TokenRouter/internal/identity/httpapi"
@@ -67,7 +77,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	redisinfra "github.com/TokenFlux/TokenRouter/internal/infra/redis"
+	infratelemetry "github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	catalogtest "github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	routemoderation "github.com/TokenFlux/TokenRouter/internal/moderation/httpapi"
 	moderationadapter "github.com/TokenFlux/TokenRouter/internal/moderation/provider"
@@ -76,10 +88,13 @@ import (
 	routeops "github.com/TokenFlux/TokenRouter/internal/ops/httpapi"
 	paymenthttp "github.com/TokenFlux/TokenRouter/internal/payment/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	routepromotion "github.com/TokenFlux/TokenRouter/internal/promotion/httpapi"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
+	protocolqoder "github.com/TokenFlux/TokenRouter/internal/protocol/qoder"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/testkit/mockupstream"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	routeprovider "github.com/TokenFlux/TokenRouter/internal/provider/httpapi"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
@@ -101,8 +116,11 @@ import (
 	teamhttpapi "github.com/TokenFlux/TokenRouter/internal/team/httpapi"
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi"
 	routeusageadmin "github.com/TokenFlux/TokenRouter/internal/usage/httpapi/admin"
@@ -123,6 +141,14 @@ import (
 // existing memberships. Structured-log capture holds a process-wide lock until
 // the caller restores its sink; moderation cleanup stops runtime workers before
 // joining the separately registered background callbacks.
+
+const (
+	// labCellPass, labCellFail, and labCellSkip classify T5 gateway route and T6
+	// client laboratory scenario cell evaluations across protocol lab suites.
+	labCellPass = "pass" // scenario cell satisfied all protocol and accounting laws
+	labCellFail = "fail" // scenario cell violated one or more validation rules
+	labCellSkip = "skip" // scenario lacks applicable wire fixtures or usage semantics
+)
 
 // The fixture interface assertion verifies task submission compatibility, while
 // handlerStructuredLogCaptureMu and handlerRefresherStarted coordinate
@@ -846,6 +872,299 @@ type mixedHTTPTransport struct {
 	providers []int64    // Observed provider request order.
 }
 
+// heartbeatRouteOptions adjusts model, transport budgets, and telemetry hooks
+// for keepalive and Gemini SDK route fixtures.
+type heartbeatRouteOptions struct {
+	FallbackURL   string                             // optional second provider URL
+	Model         string                             // optional fixture model
+	Stall         time.Duration                      // upstream idle budget
+	HeaderTimeout time.Duration                      // upstream header budget
+	Ops           *opscore.OpsService                // optional Ops logger service
+	OpsQueue      gatewayhttp.OpsErrorLogQueue       // optional synchronous Ops capture queue
+	OnTelemetry   func(infratelemetry.RequestRecord) // optional request record observer
+}
+
+// labProvider declares one provider candidate for newProtocolLabRouter, which
+// fills missing IDs, names, auth types, and concurrency slots in buildProtocolLabProviderRecord.
+type labProvider struct {
+	ID               int64                     // optional explicit provider ID
+	Name             string                    // optional provider display name
+	Platform         string                    // capability platform identifier
+	Type             string                    // capability provider auth type
+	BaseURL          string                    // local upstream server base URL
+	Model            string                    // single whitelisted model name
+	Models           []string                  // whitelisted model identifiers
+	ModelMapping     map[string]string         // optional client-to-upstream model mapping
+	EnabledProtocols []protocolcore.ProtocolID // optional explicit upstream_protocols list
+	Priority         int                       // scheduler priority (lower values win)
+	Concurrency      int                       // maximum concurrent request slots
+	Credentials      map[string]any            // optional extra credential entries
+	Extra            map[string]any            // optional provider Extra settings
+}
+
+// labOptions configures providers, group protocol routing, and timeouts for
+// newProtocolLabRouter.
+type labOptions struct {
+	Providers           []labProvider                                         // ordered provider candidates bound to the lab group
+	AllowedProtocols    []protocolcore.ProtocolID                             // optional group allowed_protocols override
+	ProtocolFallbacks   map[protocolcore.ProtocolID][]protocolcore.ProtocolID // optional group protocol_fallbacks map
+	MaxProviderSwitches int                                                   // optional failover provider switch cap
+	KeepaliveInterval   time.Duration                                         // downstream SSE keepalive ping interval
+	StallTimeout        time.Duration                                         // downstream SSE data idle timeout
+	HeaderTimeout       time.Duration                                         // upstream HTTP response header timeout
+	Ops                 *opscore.OpsService                                   // optional Ops error service
+	OpsQueue            gatewayhttp.OpsErrorLogQueue                          // optional Ops error capture queue
+	OnTelemetry         func(infratelemetry.RequestRecord)                    // optional request record capture hook
+	Pricing             map[string]*pricing.ModelPricing                      // optional model price overrides
+	// HostOverrides redirects outbound HTTP requests matching lowercase target
+	// hostnames to local test server URLs while keeping official vendor BaseURLs
+	// intact on provider credentials.
+	HostOverrides map[string]string // optional target hostname to local URL map
+	// Settings seeds the in-memory runtime settings repository before router
+	// assembly; tests can mutate values live afterward via SetSetting.
+	Settings map[string]string // optional initial runtime setting values
+	// ErrorRules supplies administrator error-passthrough rules bound across
+	// Messages and OpenAI attempt runtimes when non-empty; nil leaves rules unset.
+	ErrorRules []*errorpolicy.ErrorPassthroughRule // optional error-passthrough rules
+	// QoderClient binds a caller-owned gateway/testkit QoderClient inside
+	// protocolLabQoderClient when non-nil; nil allocates a fresh capture client.
+	QoderClient *gatewaytestkit.QoderClient // optional Qoder capture client fixture
+	// ModelAttributeRules seeds active group ModelAttributeRule overrides for
+	// group 42 when non-empty; nil leaves group overrides absent until SetModelAttributeRules runs.
+	ModelAttributeRules []routing.ModelAttributeRule // optional initial group model-attribute rules
+}
+
+// labCellResult records the evaluated outcome and violated rule identifiers of
+// one T5 gateway route or T6 client laboratory cell.
+type labCellResult struct {
+	Client   protocolcore.ProtocolID // client-facing wire protocol
+	Upstream protocolcore.ProtocolID // upstream-facing wire protocol
+	Scenario string                  // evaluated canonical or synthetic scenario slug
+	Law      string                  // evaluated T5 or T6 law identifier
+	Status   string                  // labCellPass, labCellFail, or labCellSkip
+	// Rules lists deduplicated violated rule or error codes when Status is
+	// labCellFail; passing and skipped cells leave Rules empty.
+	Rules []string
+}
+
+// protocolLabRouter bundles the assembled Gin gateway engine with in-memory
+// session, turn-origin, provider, and usage-recording handles for T5 and T6 tests.
+type protocolLabRouter struct {
+	*gin.Engine // embedded HTTP handler for httptest.NewServer
+
+	Origins *session.CodexTurnOrigins // shared Codex turn-state ownership tracker
+	Cache   *protocolLabGatewayCache  // in-memory sticky session and owner cache
+	APIKey  string                    // bearer credential accepted by lab routes
+
+	// groupMu serializes concurrent reads and dynamic replacements of group
+	// across HTTP request admission, group policy lookups, and multi-turn
+	// provider or fallback reconfigurations.
+	groupMu           sync.RWMutex                         // active routing group lock
+	group             *routing.Group                       // active routing group configuration
+	settings          *protocolLabSettingsStore            // thread-safe runtime settings repository
+	attributeRepo     *protocolLabAttributeRepo            // thread-safe group model-attribute profile repository
+	tokenCache        *protocolLabAccessTokenCache         // in-memory OAuth access-token cache
+	antigravityTokens *providercore.AntigravityTokenSource // assembled Antigravity OAuth token source
+	providers         *protocolLabProviderStore            // mutable in-memory provider repository
+	blocks            *providercore.RuntimeBlockState      // shared OpenAI and Grok runtime block state
+	modelTransient    *providercore.ModelTransientState    // shared OpenAI model-transient cooldown state
+	feedback          *scheduler.RuntimeStats              // shared in-memory EWMA scheduling feedback tracker
+	usageStore        *protocolLabUsageStore               // thread-safe captured UsageLog store
+	settlements       *protocolLabSettlementStore          // thread-safe captured billing command store
+	qoderClient       *protocolLabQoderClient              // Qoder stream client bound to lab pool
+	qoderTokens       *provideradapter.QoderTokenProvider  // in-memory Qoder session cache
+	unified           *gatewayhttp.UnifiedTextExecutor     // assembled unified text executor
+	wsExecutor        *wshttp.OpenAIWebSocketExecutor      // assembled Responses WebSocket executor
+	countTokens       *gatewayhttp.CountTokensHandler      // assembled Messages count_tokens handler
+}
+
+// protocolLabTransport executes outbound upstream HTTP requests through a real
+// httpclient.UpstreamPool with a bounded response-header timeout.
+type protocolLabTransport struct {
+	httpclient.UpstreamTransport // unimplemented interface methods remain unused
+	// pool owns local HTTP keep-alive connections and closes idle sockets in test cleanup.
+	pool          *httpclient.UpstreamPool  // real outbound connection pool
+	headerTimeout time.Duration             // response header wait budget
+	providers     *protocolLabProviderStore // optional provider store for local endpoint overrides
+	hostOverrides map[string]string         // optional lowercase target hostname to local URL overrides
+}
+
+// protocolLabNoSearch disables external web searchers while keeping search-tool
+// emulation wired as in production.
+type protocolLabNoSearch struct{}
+
+// protocolLabKeyRepo supplies the active laboratory APIKey and cloned group
+// policies to APIKeyService.GetByKey and Reauthenticate across multi-turn
+// Responses WebSocket sessions.
+type protocolLabKeyRepo struct {
+	apikey.APIKeyRepository                    // unused management methods remain nil
+	lab                     *protocolLabRouter // owning lab router holding APIKey and live group
+	keyID                   int64              // authenticated API key identifier
+	userID                  int64              // authenticated user identifier
+	groupID                 int64              // bound routing group identifier
+	user                    *identity.User     // active user summary with positive balance
+}
+
+// protocolLabGatewayCache implements session.GatewayCache in memory with mutex
+// synchronization.
+type protocolLabGatewayCache struct {
+	// mu serializes concurrent reads, SetNX ownership claims, and writes across
+	// sessionBindings and ownerGroups during parallel HTTP requests and stream
+	// completions.
+	mu              sync.Mutex       // cache map access lock
+	sessionBindings map[string]int64 // sticky provider IDs by group and hash
+	ownerGroups     map[string]int64 // owning group IDs by user, source, and hash
+}
+
+// protocolLabGroupRepo serves cloned snapshots of protocolLabRouter's active
+// routing group to generic and Gemini selectors.
+type protocolLabGroupRepo struct {
+	routing.GroupRepository                    // unused repository mutation methods
+	router                  *protocolLabRouter // owning lab router holding groupMu and group
+}
+
+// protocolLabProviderStore serves thread-safe provider queries, model-list
+// catalogue reads, and live health or rate-limit mutations in memory.
+type protocolLabProviderStore struct {
+	gatewayprovider.ExecutionProviderStore // unused persistence methods
+
+	// mu serializes concurrent candidate reads, retry cooldown lookups, live
+	// health or cooldown mutations, and SetProviders replacements of values
+	// across parallel gateway requests.
+	mu     sync.RWMutex                        // provider slice and health lock
+	values []gatewayprovider.ExecutionProvider // active execution providers with live health state
+}
+
+// protocolLabUsageStore records deep-copied usage.UsageLog entries across both
+// Forward and OpenAI completion recorders under a mutex.
+type protocolLabUsageStore struct {
+	usage.UsageLogRepository // unused query methods
+
+	// mu serializes concurrent completion appends to logs, ResetUsageLogs slice
+	// clears, and detached snapshot reads from UsageLogs across Forward and
+	// OpenAI recorders.
+	mu   sync.Mutex       // settled usage slice lock
+	logs []usage.UsageLog // chronological settled usage logs
+}
+
+// protocolLabSettlementStore records cloned billing.UsageBillingCommand entries
+// and synthesizes applied balance or subscription outcomes under a mutex.
+type protocolLabSettlementStore struct {
+	completion.Store // unused persistence methods
+
+	// mu serializes concurrent settlement appends to commands during Apply and
+	// slice resets of commands during ResetUsageLogs across parallel HTTP
+	// completion paths.
+	mu       sync.Mutex                    // billing command slice lock
+	commands []billing.UsageBillingCommand // chronological applied billing commands
+}
+
+// protocolLabQoderClient records every submitted Qoder payload through a bound
+// gateway/testkit.QoderClient and dispatches per-provider HTTP streams when a
+// provider BaseURL is configured, or returns an in-memory SSE stream when empty.
+type protocolLabQoderClient struct {
+	pool    *httpclient.UpstreamPool // shared outbound HTTP connection pool
+	timeout time.Duration            // response header timeout
+	// mu, capture, baseURLBySession, and fallbackBaseURL coordinate thread-safe
+	// request capture and per-provider endpoint lookup across StreamRequestContext,
+	// StreamRequestContextWithDoer, SetProviders, and protocolLabRouter Qoder
+	// capture accessors.
+	mu               sync.Mutex                       // capture and endpoint map lock
+	capture          *gatewaytestkit.QoderClient      // underlying gateway/testkit Qoder capture fixture
+	baseURLBySession map[*qoder.SessionContext]string // provider-scoped Qoder upstream base URLs
+	fallbackBaseURL  string                           // first configured Qoder base URL fallback
+}
+
+// protocolLabAttributeRepo implements routing.ModelAttributeRepository in
+// memory under RWMutex synchronization so runtime resolution observes live
+// group ModelAttributeRule overrides without PostgreSQL.
+type protocolLabAttributeRepo struct {
+	routing.ModelAttributeRepository // unused administrative persistence methods
+
+	groupID int64 // owning laboratory group identifier
+	// mu and rules synchronize concurrent ForGroup and ForGroups profile reads
+	// against initial seeding in newProtocolLabAttributeRepo and live slice
+	// replacements in setRules when callers invoke protocolLabRouter.SetModelAttributeRules.
+	mu    sync.RWMutex                 // rule slice access lock
+	rules []routing.ModelAttributeRule // active group model-attribute rules
+}
+
+// protocolLabSettingsStore implements settingscore.Repository in memory with
+// RWMutex synchronization so runtime readers observe live test setting updates.
+type protocolLabSettingsStore struct {
+	settingscore.Repository // unused repository methods
+
+	// mu serializes concurrent runtime lookups of values in Get, GetValue,
+	// GetMultiple, and GetAll against live writes to values in Set,
+	// SetMultiple, and Delete.
+	mu     sync.RWMutex      // setting map access lock
+	values map[string]string // stored runtime setting key-value entries
+}
+
+// protocolLabCachedToken pairs an OAuth access token with its expiration deadline.
+type protocolLabCachedToken struct {
+	token string // cached OAuth bearer access token
+	// expiresAt bounds token validity in GetAccessToken; a zero Time leaves
+	// the cached bearer token valid without expiration.
+	expiresAt time.Time // UTC expiration deadline, or zero when unbounded
+}
+
+// protocolLabAccessTokenCache implements providercore.AccessTokenCache in
+// memory with mutex synchronization across token entries and refresh locks.
+type protocolLabAccessTokenCache struct {
+	// mu serializes concurrent GetAccessToken, SetAccessToken, DeleteAccessToken,
+	// AcquireRefreshLock, ReleaseRefreshLock, and Reset operations across both
+	// tokens and locks maps during parallel provider credential lookups.
+	mu     sync.Mutex                        // cache and refresh-lock access lock
+	tokens map[string]protocolLabCachedToken // cached access tokens keyed by provider token hash
+	locks  map[string]time.Time              // active refresh lock deadlines keyed by cache key
+}
+
+// protocolLabAntigravityRequest captures the outer v1internal request envelope
+// and unwrapped inner Gemini JSON payload sent to a local Antigravity upstream.
+type protocolLabAntigravityRequest struct {
+	Path        string      // incoming HTTP URL path such as /v1internal:streamGenerateContent
+	RawQuery    string      // incoming raw URL query string such as alt=sse
+	Headers     http.Header // cloned incoming HTTP headers including Authorization
+	RawEnvelope []byte      // verbatim outer v1internal JSON request payload
+	Project     string      // outer v1internal GCP project identifier
+	Model       string      // outer v1internal target model identifier
+	RequestID   string      // outer v1internal agent request correlation ID
+	UserAgent   string      // outer v1internal userAgent string
+	RequestType string      // outer v1internal requestType string
+	InnerBody   []byte      // verbatim inner Gemini GenerateContent JSON object bytes
+}
+
+// protocolLabAntigravityUpstream adapts a scripted mockupstream.Handler to the
+// Antigravity v1internal wire contract by unwrapping incoming {"project",
+// "model", "request"} envelopes and wrapping outgoing Gemini payloads into
+// {"response": ...} envelopes.
+type protocolLabAntigravityUpstream struct {
+	mock *mockupstream.Handler // underlying scripted Gemini validator and responder
+
+	// mu serializes concurrent ServeHTTP and recordEnvelopeError appends to
+	// envelopes and envelopeErrors against Envelopes, Violations,
+	// AssertNoViolations, and Reset reads or clears from test goroutines.
+	mu             sync.Mutex                      // envelope log access lock
+	envelopes      []protocolLabAntigravityRequest // chronological captured v1internal envelopes
+	envelopeErrors []string                        // outer v1internal envelope validation errors
+}
+
+// protocolLabHijackRecorder buffers an HTTP response from mockupstream.Handler
+// in memory while recording whether Fault.TruncateAfterFrames requested socket
+// hijacking to simulate an abrupt mid-stream disconnect.
+type protocolLabHijackRecorder struct {
+	// header, body, status, wroteHeader, and hijacked capture one synchronous
+	// mockupstream ServeHTTP exchange: wroteHeader latches the first committed
+	// status across WriteHeader, Write, and Flush, while hijacked tells the
+	// outer v1internal handler to close the live TCP socket after wrapping body.
+	header      http.Header  // buffered HTTP response header map
+	body        bytes.Buffer // buffered HTTP response body bytes
+	status      int          // committed HTTP status code, or default 200 before WriteHeader
+	wroteHeader bool         // whether WriteHeader has already latched status
+	hijacked    bool         // whether Hijack was invoked to truncate an SSE stream
+}
+
 // GetValue reads one fixture setting and distinguishes absence from storage failure.
 // Missing keys return the production absence sentinel, allowing the assembled
 // browser-origin reader to skip unconfigured URLs while keeping saved addresses.
@@ -1053,7 +1372,9 @@ func newGatewayHTTPEndpoints(input gatewayHTTPFixtureInput) *gatewayHTTPEndpoint
 			input.Source.Responses = &gatewayhttp.OpenAIResponsesExecutor{Requests: input.Source.Requests, Text: input.Source.Text, Lineage: &gatewayhttp.OpenAIEncryptedLineage{Store: session.NewOpenAIWSStateStore(input.Source.Cache, gatewayprovider.LogOpenAIWSModeInfo), TTL: func() time.Duration { return time.Hour }}}
 		}
 		if input.Source.WebSockets == nil {
-			input.Source.WebSockets = &wshttp.OpenAIWebSocketExecutor{OpenAIWSDependencies: wshttp.OpenAIWSDependencies{State: input.Source.Responses.Lineage.Store}}
+			input.Source.WebSockets = &wshttp.OpenAIWebSocketExecutor{OpenAIWSDependencies: wshttp.OpenAIWSDependencies{
+				State: input.Source.Responses.Lineage.Store,
+			}}
 		}
 		responses, sockets, cache = input.Source.Responses, input.Source.WebSockets, input.Source.Cache
 		if input.Source.Planner != nil {
@@ -1094,7 +1415,9 @@ func newGatewayHTTPEndpoints(input gatewayHTTPFixtureInput) *gatewayHTTPEndpoint
 		// cross-platform executor is supplied, keeping ordinary OpenAI
 		// fixtures usable through unified text entry points.
 		if unified == nil {
-			unified = &gatewayhttp.UnifiedTextExecutor{OpenAI: responses}
+			unified = &gatewayhttp.UnifiedTextExecutor{
+				OpenAI: responses,
+			}
 		}
 		bindings := provideOpenAIAttemptBindings(responses, input.Keys, resources(), cyber, input.Rules, input.Moderator, GatewayCompletionRecorders{OpenAI: recorder}, input.Worker, input.Availability, input.Choices, unified, input.Generic, input.Funding, nil, planner, cache)
 		return bindings, cyber, blocks
@@ -2934,7 +3257,7 @@ func newOpenAIExecutionAndSelectionFixture(
 	}}
 	connections := openaiws.NewOpenAIWSConnections(openAIWSPoolOptions(cfg), nil)
 	identity := gatewayprovider.NewExecutionAgentIdentity(&providercore.OpenAITaskCoordinator{}, providerRepo, nil, connections.InvalidateProvider)
-	output := provideOpenAIResponseOutput(cfg, provideOpenAIResponseHealth(healthObserver, blocks, modelTransient, deferredService), grokHealth, healthObserver, headerFilter, turnHeaders, proxyCircuit, stateStore, choices, provideReasoningHistory(cache), identity)
+	output := provideOpenAIResponseOutput(cfg, provideOpenAIResponseHealth(healthObserver, blocks, modelTransient, deferredService), grokHealth, healthObserver, headerFilter, turnHeaders, proxyCircuit, stateStore, choices, identity)
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("GatewayRequestsAndAttempts")}
 	grokExecutor := provideGrokExecutor(cfg, credentials, httpUpstream, output, grokHealth, tlsFPProfileService, settingService, blocks, deferredService, providerRepo, activity, resolver, connections)
 	var routers *egress.TLSFingerprintRouterService
@@ -4003,3 +4326,2822 @@ func mixedUpstreamResponse(w http.ResponseWriter, r *http.Request, failAnthropic
 		}
 	}
 }
+
+// Do executes req through the lab UpstreamPool with the configured header timeout.
+// Matching hostOverrides or provider-scoped Bedrock, Vertex, and Anthropic OAuth
+// base_url overrides redirect outbound scheme and host to local httptest servers
+// while preserving signed Host and Authorization headers.
+func (t *protocolLabTransport) Do(req *http.Request, proxy string, id int64, _ int) (*http.Response, error) {
+	if req != nil && req.URL != nil {
+		base := ""
+		if len(t.hostOverrides) > 0 {
+			base = strings.TrimSpace(t.hostOverrides[strings.ToLower(req.URL.Hostname())])
+		}
+		if base == "" && id > 0 && t.providers != nil {
+			base = t.localEndpointOverride(id)
+		}
+		if base != "" {
+			if parsed, err := url.Parse(base); err == nil && parsed.Host != "" {
+				cloned := req.Clone(req.Context())
+				if cloned.Host == "" {
+					cloned.Host = req.URL.Host
+				}
+				cloned.URL.Scheme = parsed.Scheme
+				cloned.URL.Host = parsed.Host
+				req = cloned
+			}
+		}
+	}
+	return t.pool.Do(req, httpclient.UpstreamRequestOptions{
+		ProxyURL:   proxy,
+		ProviderID: id,
+		Settings:   httpclient.UpstreamSettings{ResponseHeaderTimeout: t.headerTimeout},
+	})
+}
+
+// localEndpointOverride returns a non-empty base_url credential for Bedrock,
+// Vertex service_account, Qoder cosy, or OpenAI, Anthropic, Gemini, and
+// Antigravity OAuth providers whose request builders otherwise target fixed
+// cloud hostnames. Providers without a configured base_url or outside those
+// auth types return an empty string.
+func (t *protocolLabTransport) localEndpointOverride(id int64) string {
+	t.providers.mu.RLock()
+	defer t.providers.mu.RUnlock()
+	for i := range t.providers.values {
+		rec := &t.providers.values[i].Record
+		if rec.ID != id {
+			continue
+		}
+		if rec.Type == capability.ProviderTypeBedrock ||
+			rec.Type == capability.ProviderTypeServiceAccount ||
+			(rec.Platform == capability.PlatformQoder && rec.Type == capability.ProviderTypeCosy) ||
+			(rec.Platform == capability.PlatformOpenAI && rec.Type == capability.ProviderTypeOAuth) ||
+			(rec.Platform == capability.PlatformGemini && rec.Type == capability.ProviderTypeOAuth) ||
+			(rec.Platform == capability.PlatformAntigravity && rec.Type == capability.ProviderTypeOAuth) ||
+			(rec.Platform == capability.PlatformAnthropic && (rec.Type == capability.ProviderTypeOAuth || rec.Type == capability.ProviderTypeSetupToken)) {
+			return strings.TrimSpace(rec.GetCredential("base_url"))
+		}
+		return ""
+	}
+	return ""
+}
+
+// DoWithTLS delegates fingerprinted outbound requests to Do over local HTTP test servers.
+func (t *protocolLabTransport) DoWithTLS(req *http.Request, proxy string, id int64, n int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return t.Do(req, proxy, id, n)
+}
+
+// Current reports that no external search provider is configured in the lab fixture.
+func (protocolLabNoSearch) Current() searchtools.Searcher { return nil }
+
+// newProtocolLabGatewayCache constructs an empty concurrency-safe in-memory
+// session.GatewayCache for protocol lab routers.
+func newProtocolLabGatewayCache() *protocolLabGatewayCache {
+	return &protocolLabGatewayCache{
+		sessionBindings: make(map[string]int64),
+		ownerGroups:     make(map[string]int64),
+	}
+}
+
+// GetSessionProviderID looks up the sticky provider ID bound to (groupID, sessionHash)
+// under c.mu. Unbound session hashes return a non-nil error so selectors fall
+// back to normal candidate scheduling.
+func (c *protocolLabGatewayCache) GetSessionProviderID(_ context.Context, groupID int64, sessionHash string) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := fmt.Sprintf("%d\x00%s", groupID, sessionHash)
+	if id, ok := c.sessionBindings[key]; ok {
+		return id, nil
+	}
+	return 0, errors.New("session binding not found")
+}
+
+// SetSessionProviderID binds (groupID, sessionHash) to providerID in memory under c.mu.
+func (c *protocolLabGatewayCache) SetSessionProviderID(_ context.Context, groupID int64, sessionHash string, providerID int64, _ time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sessionBindings[fmt.Sprintf("%d\x00%s", groupID, sessionHash)] = providerID
+	return nil
+}
+
+// RefreshSessionTTL accepts sticky-session TTL refresh calls as a no-op in memory.
+func (c *protocolLabGatewayCache) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	return nil
+}
+
+// DeleteSessionProviderID removes any sticky provider binding recorded for (groupID, sessionHash).
+func (c *protocolLabGatewayCache) DeleteSessionProviderID(_ context.Context, groupID int64, sessionHash string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.sessionBindings, fmt.Sprintf("%d\x00%s", groupID, sessionHash))
+	return nil
+}
+
+// SetSessionOwnerGroupID claims (userID, source, sessionHash) for groupID with
+// SetNX semantics under c.mu. Subsequent claims for an already-owned session
+// return false without overwriting the first owner.
+func (c *protocolLabGatewayCache) SetSessionOwnerGroupID(_ context.Context, userID int64, source, sessionHash string, groupID int64, _ time.Duration) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := fmt.Sprintf("%d\x00%s\x00%s", userID, source, sessionHash)
+	if _, exists := c.ownerGroups[key]; exists {
+		return false, nil
+	}
+	c.ownerGroups[key] = groupID
+	return true, nil
+}
+
+// GetSessionOwnerGroupID reads the owning group ID recorded for (userID, source, sessionHash)
+// under c.mu. Unclaimed composite keys return a non-nil error so session-owner
+// admission guards observe a cache miss.
+func (c *protocolLabGatewayCache) GetSessionOwnerGroupID(_ context.Context, userID int64, source, sessionHash string) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := fmt.Sprintf("%d\x00%s\x00%s", userID, source, sessionHash)
+	if id, exists := c.ownerGroups[key]; exists {
+		return id, nil
+	}
+	return 0, errors.New("session owner not found")
+}
+
+// RefreshSessionOwnerTTL accepts session-owner TTL refresh calls as a no-op in memory.
+func (c *protocolLabGatewayCache) RefreshSessionOwnerTTL(context.Context, int64, string, string, time.Duration) error {
+	return nil
+}
+
+// GetByID returns a detached copy of the lab router's active routing group when
+// id matches the configured group ID or is nonpositive. Mismatched positive
+// group IDs return (nil, nil) without error.
+func (g protocolLabGroupRepo) GetByID(_ context.Context, id int64) (*routing.Group, error) {
+	return g.router.cloneGroup(id), nil
+}
+
+// GetByIDLite returns a detached copy of the lab router's active routing group
+// when id matches the configured group ID or is nonpositive. Mismatched
+// positive group IDs return (nil, nil) without error.
+func (g protocolLabGroupRepo) GetByIDLite(_ context.Context, id int64) (*routing.Group, error) {
+	return g.router.cloneGroup(id), nil
+}
+
+// completeGroupProjection marks protocolLabProviderStore as carrying explicit
+// group memberships so withSelectionGroupFixture does not wrap it.
+func (*protocolLabProviderStore) completeGroupProjection() {}
+
+// GetByID returns a detached ExecutionProvider copy reflecting live health and
+// cooldown fields when id exists in s.values. Unknown provider IDs return
+// (nil, nil) so retry cooldown and selection callers treat them as absent.
+func (s *protocolLabProviderStore) GetByID(_ context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			return gatewayprovider.NewExecutionProvider(&s.values[i].Record), nil
+		}
+	}
+	return nil, nil
+}
+
+// GetByIDs returns detached ExecutionProvider copies in caller slice order for
+// every requested ID present in s.values. Unknown IDs are omitted, and wholly
+// absent or empty inputs return (nil, nil).
+func (s *protocolLabProviderStore) GetByIDs(ctx context.Context, ids []int64) ([]*gatewayprovider.ExecutionProvider, error) {
+	var out []*gatewayprovider.ExecutionProvider
+	for _, id := range ids {
+		// GetByID returns a nil error in memory; skip absent IDs while keeping found entries in order.
+		val, _ := s.GetByID(ctx, id)
+		if val != nil {
+			out = append(out, val)
+		}
+	}
+	return out, nil
+}
+
+// ListSchedulable returns detached ExecutionProvider copies for every record in
+// s.values that currently satisfies Record.IsSchedulable.
+func (s *protocolLabProviderStore) ListSchedulable(_ context.Context) ([]gatewayprovider.ExecutionProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []gatewayprovider.ExecutionProvider
+	for i := range s.values {
+		if s.values[i].Record.IsSchedulable() {
+			out = append(out, *gatewayprovider.NewExecutionProvider(&s.values[i].Record))
+		}
+	}
+	return out, nil
+}
+
+// ListSchedulableByGroupID returns detached ExecutionProvider copies belonging
+// to groupID that currently satisfy Record.IsSchedulable.
+func (s *protocolLabProviderStore) ListSchedulableByGroupID(_ context.Context, groupID int64) ([]gatewayprovider.ExecutionProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []gatewayprovider.ExecutionProvider
+	for i := range s.values {
+		rec := &s.values[i].Record
+		if rec.IsSchedulable() && slices.Contains(rec.GroupIDs, groupID) {
+			out = append(out, *gatewayprovider.NewExecutionProvider(rec))
+		}
+	}
+	return out, nil
+}
+
+// catalogueRecords returns cloned schedulable provider.Record values filtered
+// by optional groupID for model-list catalogue queries. Nil groupID includes
+// all currently schedulable records regardless of group membership.
+func (s *protocolLabProviderStore) catalogueRecords(groupID *int64) []providercore.Record {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []providercore.Record
+	for i := range s.values {
+		rec := &s.values[i].Record
+		if !rec.IsSchedulable() {
+			continue
+		}
+		if groupID != nil && !slices.Contains(rec.GroupIDs, *groupID) {
+			continue
+		}
+		out = append(out, *providercore.CloneRecord(rec))
+	}
+	return out
+}
+
+// ListSchedulableByGroupIDAndPlatforms returns detached ExecutionProvider
+// copies belonging to groupID whose Platform appears in platforms and that
+// currently satisfy Record.IsSchedulable.
+func (s *protocolLabProviderStore) ListSchedulableByGroupIDAndPlatforms(_ context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []gatewayprovider.ExecutionProvider
+	for i := range s.values {
+		rec := &s.values[i].Record
+		if rec.IsSchedulable() && slices.Contains(rec.GroupIDs, groupID) && slices.Contains(platforms, rec.Platform) {
+			out = append(out, *gatewayprovider.NewExecutionProvider(rec))
+		}
+	}
+	return out, nil
+}
+
+// ListSchedulableByGroupIDAndPlatform delegates a single platform query for
+// groupID to ListSchedulableByGroupIDAndPlatforms.
+func (s *protocolLabProviderStore) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
+	return s.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+// ListByPlatform returns detached ExecutionProvider copies matching platform regardless of group or cooldown state.
+func (s *protocolLabProviderStore) ListByPlatform(_ context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []gatewayprovider.ExecutionProvider
+	for i := range s.values {
+		if s.values[i].Record.Platform == platform {
+			out = append(out, *gatewayprovider.NewExecutionProvider(&s.values[i].Record))
+		}
+	}
+	return out, nil
+}
+
+// ListSchedulableByPlatform delegates a single platform schedulability query to ListSchedulableByPlatforms.
+func (s *protocolLabProviderStore) ListSchedulableByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
+	return s.ListSchedulableByPlatforms(ctx, []string{platform})
+}
+
+// ListSchedulableByPlatforms returns detached ExecutionProvider copies for
+// stored records that satisfy Record.IsSchedulable and match any platform in
+// platforms. Passing an empty platforms slice returns (nil, nil) immediately
+// without acquiring the provider read lock.
+func (s *protocolLabProviderStore) ListSchedulableByPlatforms(_ context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
+	if len(platforms) == 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []gatewayprovider.ExecutionProvider
+	for i := range s.values {
+		rec := &s.values[i].Record
+		if rec.IsSchedulable() && slices.Contains(platforms, rec.Platform) {
+			out = append(out, *gatewayprovider.NewExecutionProvider(rec))
+		}
+	}
+	return out, nil
+}
+
+// ListSchedulableUngroupedByPlatform delegates a single platform ungrouped query to ListSchedulableUngroupedByPlatforms.
+func (s *protocolLabProviderStore) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
+	return s.ListSchedulableUngroupedByPlatforms(ctx, []string{platform})
+}
+
+// ListSchedulableUngroupedByPlatforms returns detached ExecutionProvider copies
+// with empty GroupIDs that satisfy Record.IsSchedulable and match any platform
+// in platforms. Passing an empty platforms slice returns (nil, nil) immediately
+// without acquiring the provider read lock.
+func (s *protocolLabProviderStore) ListSchedulableUngroupedByPlatforms(_ context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
+	if len(platforms) == 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []gatewayprovider.ExecutionProvider
+	for i := range s.values {
+		rec := &s.values[i].Record
+		if rec.IsSchedulable() && len(rec.GroupIDs) == 0 && slices.Contains(platforms, rec.Platform) {
+			out = append(out, *gatewayprovider.NewExecutionProvider(rec))
+		}
+	}
+	return out, nil
+}
+
+// ListModelAvailabilityCandidates returns active schedulable ExecutionProvider
+// entries filtered by groupID and platforms while ignoring transient rate-limit
+// or cooldown windows for selection-failure diagnostics. When groupID is nil
+// and includeGrouped is false, grouped providers are excluded.
+func (s *protocolLabProviderStore) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]gatewayprovider.ExecutionProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []gatewayprovider.ExecutionProvider
+	for i := range s.values {
+		rec := &s.values[i].Record
+		if rec.Status != billing.StatusActive || !rec.Schedulable {
+			continue
+		}
+		if len(platforms) > 0 && !slices.Contains(platforms, rec.Platform) {
+			continue
+		}
+		if groupID != nil {
+			if !slices.Contains(rec.GroupIDs, *groupID) {
+				continue
+			}
+		} else if !includeGrouped && len(rec.GroupIDs) > 0 {
+			continue
+		}
+		out = append(out, *gatewayprovider.NewExecutionProvider(rec))
+	}
+	return out, nil
+}
+
+// Update accepts provider record persistence calls as a no-op in memory.
+func (s *protocolLabProviderStore) Update(context.Context, *gatewayprovider.ExecutionProvider) error {
+	return nil
+}
+
+// ClearError restores active status and clears ErrorMessage on the stored
+// provider matching id under s.mu without re-enabling Schedulable. Unknown
+// provider IDs return nil without mutating s.values.
+func (s *protocolLabProviderStore) ClearError(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			s.values[i].Record.Status = billing.StatusActive
+			s.values[i].Record.ErrorMessage = ""
+		}
+	}
+	return nil
+}
+
+// SetModelRateLimit writes a UTC RFC3339 model_rate_limits scope entry into the
+// matching provider's Extra map under s.mu. Empty scopes or unknown provider
+// IDs return nil without modifying stored state.
+func (s *protocolLabProviderStore) SetModelRateLimit(_ context.Context, id int64, scope string, resetAt time.Time, reason ...string) error {
+	if scope == "" {
+		return nil
+	}
+	entry := map[string]any{
+		"rate_limited_at":     time.Now().UTC().Format(time.RFC3339),
+		"rate_limit_reset_at": resetAt.UTC().Format(time.RFC3339),
+	}
+	if len(reason) > 0 {
+		if trimmed := strings.TrimSpace(reason[0]); trimmed != "" {
+			entry["reason"] = trimmed
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID != id {
+			continue
+		}
+		if s.values[i].Record.Extra == nil {
+			s.values[i].Record.Extra = make(map[string]any)
+		}
+		scopes, ok := s.values[i].Record.Extra["model_rate_limits"].(map[string]any)
+		if !ok {
+			scopes = make(map[string]any)
+			s.values[i].Record.Extra["model_rate_limits"] = scopes
+		}
+		scopes[scope] = entry
+	}
+	return nil
+}
+
+// SetOverloaded sets OverloadUntil on the stored provider matching id under
+// s.mu so Record.IsSchedulable excludes it until the deadline passes. Unknown
+// provider IDs return nil without mutating s.values.
+func (s *protocolLabProviderStore) SetOverloaded(_ context.Context, id int64, until time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			deadline := until
+			s.values[i].Record.OverloadUntil = &deadline
+		}
+	}
+	return nil
+}
+
+// ClearRateLimit clears RateLimitedAt, RateLimitResetAt, and OverloadUntil on
+// the stored provider record matching id under s.mu while preserving manual
+// Schedulable flags. Unknown provider IDs return nil without mutating s.values.
+func (s *protocolLabProviderStore) ClearRateLimit(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			s.values[i].Record.RateLimitedAt = nil
+			s.values[i].Record.RateLimitResetAt = nil
+			s.values[i].Record.OverloadUntil = nil
+		}
+	}
+	return nil
+}
+
+// ClearAntigravityQuotaScopes accepts Antigravity quota-scope resets as a no-op in memory.
+func (s *protocolLabProviderStore) ClearAntigravityQuotaScopes(context.Context, int64) error {
+	return nil
+}
+
+// ClearModelRateLimits removes the model_rate_limits scope map from Extra on
+// the stored provider record matching id under s.mu while preserving other
+// Extra keys. Unknown provider IDs or nil Extra maps return nil cleanly.
+func (s *protocolLabProviderStore) ClearModelRateLimits(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id && s.values[i].Record.Extra != nil {
+			delete(s.values[i].Record.Extra, "model_rate_limits")
+		}
+	}
+	return nil
+}
+
+// UpdateSessionWindow accepts session-window metadata updates as a no-op in memory.
+func (s *protocolLabProviderStore) UpdateSessionWindow(context.Context, int64, *time.Time, *time.Time, string) error {
+	return nil
+}
+
+// UpdateSessionWindowEnd accepts session-window end timestamp updates as a no-op in memory.
+func (s *protocolLabProviderStore) UpdateSessionWindowEnd(context.Context, int64, time.Time) error {
+	return nil
+}
+
+// UpdateExtra accepts provider Extra map persistence calls as a no-op in memory.
+func (s *protocolLabProviderStore) UpdateExtra(context.Context, int64, map[string]any) error {
+	return nil
+}
+
+// IncrementQuotaUsed accepts provider quota usage increments as a no-op in memory.
+func (s *protocolLabProviderStore) IncrementQuotaUsed(context.Context, int64, float64) error {
+	return nil
+}
+
+// BulkUpdate reports len(ids) affected rows without mutating in-memory provider records.
+func (s *protocolLabProviderStore) BulkUpdate(_ context.Context, ids []int64, _ providercore.ProviderBulkUpdate) (int64, error) {
+	return int64(len(ids)), nil
+}
+
+// SetRateLimited sets RateLimitedAt and RateLimitResetAt on the stored provider
+// matching id under s.mu so subsequent candidate queries observe the cooldown.
+// Unknown provider IDs return nil without mutating s.values.
+func (s *protocolLabProviderStore) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			observed := now
+			reset := resetAt
+			s.values[i].Record.RateLimitedAt = &observed
+			s.values[i].Record.RateLimitResetAt = &reset
+		}
+	}
+	return nil
+}
+
+// SetError marks the stored provider matching id with error status, stores msg,
+// and disables Schedulable under s.mu so subsequent selection skips that
+// candidate. Unknown provider IDs return nil without mutating s.values.
+func (s *protocolLabProviderStore) SetError(_ context.Context, id int64, msg string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			s.values[i].Record.Status = providercore.StatusError
+			s.values[i].Record.ErrorMessage = msg
+			s.values[i].Record.Schedulable = false
+		}
+	}
+	return nil
+}
+
+// SetTempUnschedulable advances TempUnschedulableUntil and records reason on
+// the stored provider matching id under s.mu when until exceeds any existing
+// suspension deadline. Earlier deadlines or unknown provider IDs leave stored
+// state unchanged and return nil.
+func (s *protocolLabProviderStore) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID != id {
+			continue
+		}
+		cur := s.values[i].Record.TempUnschedulableUntil
+		if cur == nil || cur.Before(until) {
+			deadline := until
+			s.values[i].Record.TempUnschedulableUntil = &deadline
+			s.values[i].Record.TempUnschedulableReason = reason
+		}
+	}
+	return nil
+}
+
+// ClearTempUnschedulable clears TempUnschedulableUntil and TempUnschedulableReason
+// on the stored provider record matching id under s.mu so temporary cooldown
+// suspension ends immediately. Unknown provider IDs return nil without mutating s.values.
+func (s *protocolLabProviderStore) ClearTempUnschedulable(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			s.values[i].Record.TempUnschedulableUntil = nil
+			s.values[i].Record.TempUnschedulableReason = ""
+		}
+	}
+	return nil
+}
+
+// UpdateLastUsed accepts provider activity timestamp updates as a no-op in memory.
+func (s *protocolLabProviderStore) UpdateLastUsed(context.Context, int64) error { return nil }
+
+// BatchUpdateLastUsed accepts batched provider activity timestamp updates as a no-op in memory.
+func (s *protocolLabProviderStore) BatchUpdateLastUsed(context.Context, map[int64]time.Time) error {
+	return nil
+}
+
+// Create appends a detached copy of log to s.logs under s.mu and reports
+// whether a UsageLog row was inserted. Passing a nil log pointer returns
+// (false, nil) immediately without mutating s.logs.
+func (s *protocolLabUsageStore) Create(_ context.Context, log *usage.UsageLog) (bool, error) {
+	if log == nil {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logs = append(s.logs, cloneLabUsageLog(*log))
+	return true, nil
+}
+
+// CreateBestEffort appends a detached copy of log to s.logs under s.mu for
+// best-effort completion recording paths. Nil log pointers are ignored without
+// mutating s.logs and always return a nil error.
+func (s *protocolLabUsageStore) CreateBestEffort(_ context.Context, log *usage.UsageLog) error {
+	if log != nil {
+		s.mu.Lock()
+		s.logs = append(s.logs, cloneLabUsageLog(*log))
+		s.mu.Unlock()
+	}
+	return nil
+}
+
+// Apply records a copy of cmd under s.mu and returns an applied settlement
+// result. Subscription billing routes BillableAmountUSD to SubscriptionAmountUSD,
+// while all other modes populate BalanceAmountUSD.
+func (s *protocolLabSettlementStore) Apply(_ context.Context, cmd *billing.UsageBillingCommand) (*billing.UsageBillingApplyResult, error) {
+	res := &billing.UsageBillingApplyResult{Applied: true}
+	if cmd != nil {
+		s.mu.Lock()
+		s.commands = append(s.commands, *cmd)
+		s.mu.Unlock()
+		if cmd.BillingType == usage.BillingTypeSubscription {
+			res.SubscriptionAmountUSD = cmd.BillableAmountUSD
+		} else {
+			res.BalanceAmountUSD = cmd.BillableAmountUSD
+		}
+	}
+	return res, nil
+}
+
+// ResolveUsableSubscriptionForGroup reports no active subscription so lab balance billing applies.
+func (s *protocolLabSettlementStore) ResolveUsableSubscriptionForGroup(context.Context, int64, int64) (*billing.UserSubscription, error) {
+	return nil, nil
+}
+
+// StreamRequestContext captures Qoder inference payloads in c.capture and
+// delegates transport execution to StreamRequestContextWithDoer with a nil doer.
+// Callers consume and close successful HTTP response bodies returned by the stream.
+func (c *protocolLabQoderClient) StreamRequestContext(ctx context.Context, session *qoder.SessionContext, reqPath string, body []byte, headers map[string]string) (*http.Response, error) {
+	return c.StreamRequestContextWithDoer(ctx, session, reqPath, body, headers, nil)
+}
+
+// StreamRequestContextWithDoer records every submitted Qoder payload, cloned
+// header map, and constructed HTTP request onto c.capture under c.mu before
+// dispatching to the selected provider's local BaseURL or returning an
+// in-memory SSE stream. Nil contexts default to context.Background, and empty
+// reqPath values select qoder.GenerationPath.
+//
+// Holding c.mu only around c.capture mutation while releasing it across stream
+// synthesis and outbound HTTP I/O prevents stalled keepalive or failover streams
+// from blocking concurrent provider reconfigurations. Non-200 HTTP responses
+// parse into *qoder.APIError values with redacted diagnostic fields matching
+// production qoder.Client.StreamRequestContextWithDoer.
+func (c *protocolLabQoderClient) StreamRequestContextWithDoer(
+	ctx context.Context,
+	session *qoder.SessionContext,
+	reqPath string,
+	body []byte,
+	headers map[string]string,
+	targetDoer qoder.RequestDoer,
+) (*http.Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	clonedHeaders := maps.Clone(headers)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.capture == nil {
+		c.capture = &gatewaytestkit.QoderClient{}
+	}
+	base, hasSessionBase := c.baseURLBySession[session]
+	if !hasSessionBase {
+		// Fall back to fallbackBaseURL when callers pass a custom or unseeded Qoder
+		// SessionContext so single-provider tests still reach the configured server.
+		base = c.fallbackBaseURL
+	}
+	presetBody := c.capture.Body
+
+	return c.capture.StreamRequestContextWithDoer(ctx, session, reqPath, body, clonedHeaders, func(_ *http.Request) (*http.Response, error) {
+		// Release c.mu before performing in-memory stream synthesis or blocking
+		// outbound HTTP I/O so stalled keepalive or failover tests never contend.
+		c.mu.Unlock()
+		defer c.mu.Lock()
+
+		if base == "" {
+			sseText := presetBody
+			if sseText == "" {
+				// Synthesize a minimal Qoder SSE stream when neither BaseURL nor
+				// QoderClient.Body was supplied so endpoint smoke tests verify routing offline.
+				sseText = "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"ok-qoder\\\"}}]}\"}\n\n" +
+					"data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":8,\\\"completion_tokens\\\":2,\\\"total_tokens\\\":10}}\"}\n\n" +
+					"data: {\"body\":\"[DONE]\"}\n\n"
+			}
+			respHeaders := make(http.Header)
+			respHeaders.Set("Content-Type", "text/event-stream")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     respHeaders,
+				Body:       io.NopCloser(strings.NewReader(sseText)),
+			}, nil
+		}
+
+		path := strings.TrimSpace(reqPath)
+		if path == "" {
+			path = qoder.GenerationPath
+		}
+		// Preserve Qoder's canonical api1.qoder.sh origin when targetDoer is provided
+		// so provideradapter.QoderRequestDoer rewrites the request to the selected
+		// provider's local base_url via protocolLabTransport.localEndpointOverride;
+		// direct pool fallback dials base directly when targetDoer is nil.
+		targetURL := "https://api1.qoder.sh/" + strings.TrimLeft(path, "/")
+		if targetDoer == nil {
+			targetURL = strings.TrimRight(base, "/") + "/" + strings.TrimLeft(path, "/")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Cache-Control", "no-cache")
+		for k, v := range clonedHeaders {
+			req.Header.Set(k, v)
+		}
+
+		var resp *http.Response
+		if targetDoer != nil {
+			resp, err = targetDoer(req)
+		} else {
+			resp, err = c.pool.Do(req, httpclient.UpstreamRequestOptions{
+				Settings: httpclient.UpstreamSettings{ResponseHeaderTimeout: c.timeout},
+			})
+		}
+		if err != nil {
+			return nil, fmt.Errorf("qoder: request failed: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			// Bound rejected HTTP response bodies to 4096 bytes and convert them into
+			// *qoder.APIError values matching production qoder.Client transport semantics.
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			apiErr := qoder.ParseAPIErrorBody(resp.StatusCode, string(errBody))
+			if apiErr == nil {
+				apiErr = &qoder.APIError{}
+			}
+			apiErr.StatusCode = resp.StatusCode
+			apiErr.Body = protocolqoder.RedactErrorText(string(errBody))
+			if strings.TrimSpace(apiErr.Message) == "" {
+				apiErr.Message = fmt.Sprintf("Qoder upstream returned HTTP %d", resp.StatusCode)
+			}
+			apiErr.Message = protocolqoder.RedactErrorText(apiErr.Message)
+			return nil, apiErr
+		}
+		return resp, nil
+	})
+}
+
+// newProtocolLabAttributeRepo constructs an in-memory ModelAttributeRepository
+// bound to groupID with an initial deep-copied slice of rules. Passing an empty
+// or nil rules slice leaves group overrides inactive until SetModelAttributeRules runs.
+func newProtocolLabAttributeRepo(groupID int64, rules []routing.ModelAttributeRule) *protocolLabAttributeRepo {
+	repo := &protocolLabAttributeRepo{groupID: groupID}
+	repo.setRules(rules)
+	return repo
+}
+
+// setRules replaces r.rules with a deep copy under r.mu so subsequent ForGroup
+// and ForGroups queries observe the updated attribute profile. Nil receivers are
+// ignored safely, and empty slices clear active group overrides.
+func (r *protocolLabAttributeRepo) setRules(rules []routing.ModelAttributeRule) {
+	if r == nil {
+		return
+	}
+	var cloned []routing.ModelAttributeRule
+	if len(rules) > 0 {
+		// Round-trip rules through JSON to detach nested pointer and slice fields
+		// from caller slices, falling back to slices.Clone only if marshaling fails.
+		raw, err := json.Marshal(rules)
+		if err == nil {
+			_ = json.Unmarshal(raw, &cloned)
+		} else {
+			cloned = slices.Clone(rules)
+		}
+	}
+	r.mu.Lock()
+	r.rules = cloned
+	r.mu.Unlock()
+}
+
+// ForGroup returns an active ModelAttributeConfig carrying a cloned copy of
+// r.rules when groupID matches r.groupID and at least one rule is configured.
+// Nil receivers, non-matching group IDs, or empty rule slices return (nil, nil).
+func (r *protocolLabAttributeRepo) ForGroup(_ context.Context, groupID int64) (*routing.ModelAttributeConfig, error) {
+	if r == nil || groupID != r.groupID {
+		return nil, nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.rules) == 0 {
+		return nil, nil
+	}
+	return &routing.ModelAttributeConfig{
+		ID:       1,
+		Name:     "protocol-lab-attributes",
+		Status:   routing.StatusActive,
+		Rules:    slices.Clone(r.rules),
+		GroupIDs: []int64{r.groupID},
+	}, nil
+}
+
+// ForGroups returns a single-entry profile map keyed by r.groupID when
+// r.groupID appears in ids and r.rules is non-empty. Missing group IDs or empty
+// rule slices return an allocated empty map with a nil error.
+func (r *protocolLabAttributeRepo) ForGroups(ctx context.Context, ids []int64) (map[int64]*routing.ModelAttributeConfig, error) {
+	out := make(map[int64]*routing.ModelAttributeConfig)
+	if !slices.Contains(ids, r.groupID) {
+		return out, nil
+	}
+	cfg, err := r.ForGroup(ctx, r.groupID)
+	if err != nil || cfg == nil {
+		return out, err
+	}
+	out[r.groupID] = cfg
+	return out, nil
+}
+
+// UsageLogs returns detached copies of all settled UsageLog rows recorded so
+// far in chronological order under usageStore.mu. Mutating the returned slice
+// or its optional pointers does not affect stored recorder entries.
+func (r *protocolLabRouter) UsageLogs() []usage.UsageLog {
+	r.usageStore.mu.Lock()
+	defer r.usageStore.mu.Unlock()
+	out := make([]usage.UsageLog, len(r.usageStore.logs))
+	for i, row := range r.usageStore.logs {
+		out[i] = cloneLabUsageLog(row)
+	}
+	return out
+}
+
+// ResetUsageLogs clears all previously recorded UsageLog and settlement command
+// slices under their respective mutexes. Subsequent UsageLogs calls observe an
+// empty history while preserving provider and session state.
+func (r *protocolLabRouter) ResetUsageLogs() {
+	r.usageStore.mu.Lock()
+	r.usageStore.logs = nil
+	r.usageStore.mu.Unlock()
+	r.settlements.mu.Lock()
+	r.settlements.commands = nil
+	r.settlements.mu.Unlock()
+}
+
+// ProviderRecord returns a snapshot of the stored provider.Record matching id
+// under r.providers.mu together with a presence flag, or a zero Record and
+// false when r or id is absent. Callers inspect Status, Schedulable,
+// ErrorMessage, RateLimitResetAt, and TempUnschedulableUntil to verify
+// health-penalty isolation without racing live handler goroutines.
+func (r *protocolLabRouter) ProviderRecord(id int64) (providercore.Record, bool) {
+	if r == nil || r.providers == nil {
+		return providercore.Record{}, false
+	}
+	r.providers.mu.Lock()
+	defer r.providers.mu.Unlock()
+	for i := range r.providers.values {
+		if r.providers.values[i].Record.ID == id {
+			return r.providers.values[i].Record, true
+		}
+	}
+	return providercore.Record{}, false
+}
+
+// FeedbackSnapshot samples EWMA scheduling feedback for provider id from r's
+// shared RuntimeStats tracker. Nil routers, uninitialized trackers, or unseen
+// provider IDs return a zero FeedbackSnapshot.
+func (r *protocolLabRouter) FeedbackSnapshot(id int64) scheduler.FeedbackSnapshot {
+	if r == nil || r.feedback == nil {
+		return scheduler.FeedbackSnapshot{}
+	}
+	return r.feedback.FeedbackSnapshot(id)
+}
+
+// SetModelAttributeRules replaces the active group ModelAttributeRule slice on
+// r's in-memory attribute repository so subsequent requests observe updated
+// capability or effort overrides immediately. Passing nil clears active group
+// rules, and nil routers return as a no-op.
+func (r *protocolLabRouter) SetModelAttributeRules(rules []routing.ModelAttributeRule) {
+	if r == nil || r.attributeRepo == nil {
+		return
+	}
+	r.attributeRepo.setRules(rules)
+}
+
+// QoderBodies returns detached byte copies of all Qoder desktop payload JSON
+// bodies captured so far by r.qoderClient.capture under qoderClient.mu. Nil
+// routers or unconfigured Qoder clients return nil without panicking.
+func (r *protocolLabRouter) QoderBodies() [][]byte {
+	if r == nil || r.qoderClient == nil {
+		return nil
+	}
+	r.qoderClient.mu.Lock()
+	defer r.qoderClient.mu.Unlock()
+	count := r.qoderClient.capture.BodyCount()
+	out := make([][]byte, 0, count)
+	for i := range count {
+		out = append(out, r.qoderClient.capture.BodyAt(i))
+	}
+	return out
+}
+
+// QoderHeaders returns a detached clone of the most recent Qoder request header
+// map captured on r.qoderClient.capture under qoderClient.mu. Nil routers or
+// absent header snapshots return nil.
+func (r *protocolLabRouter) QoderHeaders() map[string]string {
+	if r == nil || r.qoderClient == nil {
+		return nil
+	}
+	r.qoderClient.mu.Lock()
+	defer r.qoderClient.mu.Unlock()
+	if r.qoderClient.capture == nil || r.qoderClient.capture.Headers == nil {
+		return nil
+	}
+	return maps.Clone(r.qoderClient.capture.Headers)
+}
+
+// ResetQoderCapture clears all captured Qoder HTTP requests, copied payload
+// bodies, and header snapshots on r.qoderClient.capture under qoderClient.mu.
+// Preset Body stream fixtures and injected Err values on c.capture remain intact.
+func (r *protocolLabRouter) ResetQoderCapture() {
+	if r == nil || r.qoderClient == nil {
+		return
+	}
+	r.qoderClient.mu.Lock()
+	defer r.qoderClient.mu.Unlock()
+	if r.qoderClient.capture == nil {
+		return
+	}
+	r.qoderClient.capture.Request = nil
+	r.qoderClient.capture.Requests = nil
+	r.qoderClient.capture.Bodies = nil
+	r.qoderClient.capture.Headers = nil
+}
+
+// SetProviders replaces the active provider list on r's group with fresh
+// schedulable records, seeds per-provider Qoder session caches and BaseURL
+// mappings, and clears runtime block, model-transient cooldown, and cached
+// OAuth access-token state for old and new provider IDs. Multi-turn tests call
+// SetProviders between turns to switch upstream protocols or reset degraded
+// accounts cleanly.
+func (r *protocolLabRouter) SetProviders(tb testing.TB, specs []labProvider) {
+	tb.Helper()
+	r.groupMu.RLock()
+	groupID := r.group.ID
+	r.groupMu.RUnlock()
+
+	execProviders := make([]gatewayprovider.ExecutionProvider, 0, len(specs))
+	qoderBases := make(map[*qoder.SessionContext]string)
+	var qoderFallbackBase string
+	var resetModels []string
+	var resetIDs []int64
+	for i, spec := range specs {
+		rec := buildProtocolLabProviderRecord(tb, i, groupID, spec)
+		resetIDs = append(resetIDs, rec.ID)
+		if spec.Model != "" {
+			resetModels = append(resetModels, spec.Model)
+		}
+		resetModels = append(resetModels, spec.Models...)
+		for src, dst := range spec.ModelMapping {
+			resetModels = append(resetModels, src, dst)
+		}
+		if rec.Platform == capability.PlatformQoder {
+			provBase := strings.TrimSpace(rec.GetCredential("base_url"))
+			if qoderFallbackBase == "" && provBase != "" {
+				qoderFallbackBase = provBase
+			}
+			sess := &qoder.SessionContext{
+				Identity: &qoder.AuthIdentity{
+					SecurityOauthToken: fmt.Sprintf("lab-qoder-token-%d", rec.ID),
+				},
+			}
+			qoderBases[sess] = provBase
+			r.qoderTokens.Core.Sessions[rec.ID] = providercore.QoderSessionCacheEntry[*qoder.SessionContext]{
+				CredentialsHash: providercore.QoderCredentialsHash(rec.Credentials),
+				Session:         sess,
+			}
+		}
+		execProviders = append(execProviders, *gatewayprovider.NewExecutionProvider(rec))
+	}
+
+	// Publish updated Qoder session-to-BaseURL mappings under qoderClient.mu
+	// before swapping provider records so concurrent Qoder attempts target the new endpoints.
+	r.qoderClient.mu.Lock()
+	r.qoderClient.baseURLBySession = qoderBases
+	r.qoderClient.fallbackBaseURL = qoderFallbackBase
+	r.qoderClient.mu.Unlock()
+
+	// Swap in freshly built provider records under providers.mu while collecting
+	// outgoing IDs so runtime block and model-transient state can be cleared too.
+	r.providers.mu.Lock()
+	for i := range r.providers.values {
+		resetIDs = append(resetIDs, r.providers.values[i].Record.ID)
+	}
+	r.providers.values = execProviders
+	r.providers.mu.Unlock()
+
+	if r.blocks != nil {
+		for _, id := range resetIDs {
+			r.blocks.ClearProviderSchedulingBlock(id)
+			r.blocks.ResetRetry(id)
+		}
+	}
+	if r.modelTransient != nil {
+		for _, id := range resetIDs {
+			for _, m := range resetModels {
+				r.modelTransient.RecordSuccess(id, m)
+			}
+		}
+	}
+	if r.tokenCache != nil {
+		// Clear cached OAuth tokens when provider specifications change so reused
+		// provider IDs never inherit credentials from an outgoing provider record.
+		r.tokenCache.Reset()
+	}
+}
+
+// SetSetting stores or replaces key in r's in-memory settings repository under
+// its write lock so live requests observe the new value immediately. Calling
+// SetSetting on a router without an initialized settings store is a no-op.
+func (r *protocolLabRouter) SetSetting(key, value string) {
+	if r.settings == nil {
+		return
+	}
+	_ = r.settings.Set(context.Background(), key, value)
+}
+
+// DeleteSetting removes key from r's in-memory settings repository under its
+// write lock so subsequent runtime lookups revert to built-in defaults. Calling
+// DeleteSetting when key is absent or settings is nil succeeds as a no-op.
+func (r *protocolLabRouter) DeleteSetting(key string) {
+	if r.settings == nil {
+		return
+	}
+	_ = r.settings.Delete(context.Background(), key)
+}
+
+// SetProtocolFallbacks replaces the active group's protocol_fallbacks map with
+// a deep copy under groupMu. Passing nil restores default capability fallback
+// order, while an explicit empty slice disables conversion for that client protocol.
+func (r *protocolLabRouter) SetProtocolFallbacks(fallbacks map[protocolcore.ProtocolID][]protocolcore.ProtocolID) {
+	r.groupMu.Lock()
+	defer r.groupMu.Unlock()
+	r.group.ProtocolFallbacks = cloneProtocolFallbacksMap(fallbacks)
+}
+
+// cloneGroup returns a detached copy of r.group with cloned AllowedProtocols
+// and ProtocolFallbacks when id matches r.group.ID or is nonpositive.
+// Mismatched positive group IDs or a nil group return nil.
+func (r *protocolLabRouter) cloneGroup(id int64) *routing.Group {
+	r.groupMu.RLock()
+	defer r.groupMu.RUnlock()
+	if r.group == nil || (id > 0 && id != r.group.ID) {
+		return nil
+	}
+	cp := *r.group
+	cp.AllowedProtocols = slices.Clone(r.group.AllowedProtocols)
+	cp.ProtocolFallbacks = cloneProtocolFallbacksMap(r.group.ProtocolFallbacks)
+	return &cp
+}
+
+// newProtocolLabRouter assembles the production gateway HTTP route graph over
+// in-memory stores, a real httpclient.UpstreamPool, and configurable provider
+// candidates. All twelve RouteEndpoints (including ModelsHandler,
+// CountTokensHandler, OpenAITokensHandler, MessagesHandler, GeminiNativeHandler,
+// OpenAITextHandler, Antigravity, and Qoder) plus an in-memory
+// session.GatewayCache are wired so client protocols and real CLI subprocesses
+// exercise authentic routing, SSE framing, keepalive, failover, and usage
+// recording without PostgreSQL or Redis.
+//
+// Zero-valued labOptions fields default to all four text protocols, a 10s
+// keepalive interval, 5s stall and header timeouts, max(len(Providers), 1)
+// failover switches, a fresh gatewaytestkit.QoderClient capture fixture, and
+// empty runtime settings, model-attribute rules, and error-passthrough rules,
+// while background workers register tb.Cleanup hooks.
+func newProtocolLabRouter(tb testing.TB, opts labOptions) *protocolLabRouter {
+	tb.Helper()
+
+	const (
+		groupID = int64(42)
+		userID  = int64(7)
+		keyID   = int64(8)
+	)
+
+	allowed := opts.AllowedProtocols
+	if allowed == nil {
+		allowed = []protocolcore.ProtocolID{
+			protocolcore.ProtocolAnthropicMessages,
+			protocolcore.ProtocolOpenAIResponses,
+			protocolcore.ProtocolOpenAIChatCompletions,
+			protocolcore.ProtocolGeminiGenerateContent,
+		}
+	} else {
+		allowed = slices.Clone(allowed)
+	}
+
+	stall := opts.StallTimeout
+	if stall <= 0 {
+		stall = 5 * time.Second
+	}
+	headerTimeout := opts.HeaderTimeout
+	if headerTimeout <= 0 {
+		headerTimeout = 5 * time.Second
+	}
+	keepaliveInterval := opts.KeepaliveInterval
+	if keepaliveInterval == 0 {
+		keepaliveInterval = 10 * time.Second
+	}
+	maxSwitches := opts.MaxProviderSwitches
+	if maxSwitches <= 0 {
+		maxSwitches = max(len(opts.Providers), 1)
+	}
+
+	cfg := &config.Config{}
+	cfg.Billing.FallbackRateMultiplier = 1
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Security.URLAllowlist.AllowPrivateHosts = true
+	cfg.Gateway.Failover.MaxProviderSwitches = maxSwitches
+	cfg.Gateway.Failover.MaxProviderSwitchesGemini = maxSwitches
+	cfg.Gateway.MaxRequestBodyBytes = 4 << 20
+	cfg.Gateway.TextMaxRequestBodyBytes = 4 << 20
+	cfg.Gateway.UpstreamResponseMaxBytes = 16 << 20
+	// Convert stall into whole seconds for DataIdleTimeoutSeconds and clamp sub-second test budgets to one second.
+	cfg.Gateway.Streaming.DataIdleTimeoutSeconds = max(int(stall/time.Second), 1)
+	wsDefaults := ws.DefaultParameters()
+	cfg.Gateway.OpenAI.ResponsesWS.MaxConnsPerProvider = wsDefaults.MaxConnsPerProvider
+	cfg.Gateway.OpenAI.ResponsesWS.MinIdlePerProvider = wsDefaults.MinIdlePerProvider
+	cfg.Gateway.OpenAI.ResponsesWS.MaxIdlePerProvider = wsDefaults.MaxIdlePerProvider
+	cfg.Gateway.OpenAI.ResponsesWS.DynamicMaxConnsByProviderConcurrencyEnabled = wsDefaults.DynamicMaxConnsByProviderConcurrencyEnabled
+	cfg.Gateway.OpenAI.ResponsesWS.OAuthMaxConnsFactor = wsDefaults.OAuthMaxConnsFactor
+	cfg.Gateway.OpenAI.ResponsesWS.APIKeyMaxConnsFactor = wsDefaults.APIKeyMaxConnsFactor
+	cfg.Gateway.OpenAI.ResponsesWS.QueueLimitPerConn = wsDefaults.QueueLimitPerConn
+	cfg.Gateway.OpenAI.ResponsesWS.PoolTargetUtilization = wsDefaults.PoolTargetUtilization
+	cfg.Gateway.OpenAI.ResponsesWS.PrewarmCooldownMS = wsDefaults.PrewarmCooldownMS
+	cfg.Gateway.OpenAI.ResponsesWS.ClientFirstMessageTimeoutSeconds = wsDefaults.ClientFirstMessageTimeoutSeconds
+	cfg.Gateway.OpenAI.ResponsesWS.IngressInterTurnIdleTimeoutSeconds = wsDefaults.IngressInterTurnIdleTimeoutSeconds
+	// Leave MaxIngressConnectionsPerAPIKey at zero because fakeConcurrencyCache
+	// does not emulate Redis WebSocket ingress connection lease scripts.
+	cfg.Gateway.OpenAI.ResponsesWS.MaxIngressConnectionsPerAPIKey = 0
+	cfg.Gateway.OpenAI.ResponsesWS.ClientReadLimitBytes = wsDefaults.ClientReadLimitBytes
+	cfg.Gateway.OpenAI.ResponsesWS.HTTPBridgeThresholdBytes = wsDefaults.HTTPBridgeThresholdBytes
+	cfg.Gateway.OpenAI.ResponsesWS.DialTimeoutSeconds = wsDefaults.DialTimeoutSeconds
+	cfg.Gateway.OpenAI.ResponsesWS.ReadTimeoutSeconds = wsDefaults.ReadTimeoutSeconds
+	cfg.Gateway.OpenAI.ResponsesWS.WriteTimeoutSeconds = wsDefaults.WriteTimeoutSeconds
+	cfg.Gateway.OpenAI.ResponsesWS.IngressPreviousResponseRecoveryEnabled = wsDefaults.IngressPreviousResponseRecoveryEnabled
+
+	group := &routing.Group{
+		ID:                groupID,
+		Hydrated:          true,
+		Name:              "protocol-lab",
+		Status:            billing.StatusActive,
+		RateMultiplier:    1,
+		AllowedProtocols:  allowed,
+		ProtocolFallbacks: cloneProtocolFallbacksMap(opts.ProtocolFallbacks),
+	}
+
+	cache := newProtocolLabGatewayCache()
+	settingsStore := newProtocolLabSettingsStore(opts.Settings)
+	tokenCache := newProtocolLabAccessTokenCache()
+	providerStore := &protocolLabProviderStore{}
+	usageStore := &protocolLabUsageStore{}
+	settlementStore := &protocolLabSettlementStore{}
+
+	var hostOverrides map[string]string
+	if len(opts.HostOverrides) > 0 {
+		hostOverrides = make(map[string]string, len(opts.HostOverrides))
+		for host, targetURL := range opts.HostOverrides {
+			hostOverrides[strings.ToLower(strings.TrimSpace(host))] = targetURL
+		}
+	}
+
+	transport := &protocolLabTransport{
+		pool:          httpclient.NewUpstreamPool(),
+		headerTimeout: headerTimeout,
+		providers:     providerStore,
+		hostOverrides: hostOverrides,
+	}
+	tb.Cleanup(transport.pool.CloseIdleConnections)
+
+	qoderTokens := provideradapter.NewQoderTokenProvider(qoder.SessionBuilder{})
+	qoderTokens.Core.Sessions = make(map[int64]providercore.QoderSessionCacheEntry[*qoder.SessionContext])
+	qoderCapture := opts.QoderClient
+	if qoderCapture == nil {
+		qoderCapture = &gatewaytestkit.QoderClient{}
+	}
+	qoderClient := &protocolLabQoderClient{
+		pool:    transport.pool,
+		timeout: headerTimeout,
+		capture: qoderCapture,
+	}
+
+	attributeRepo := newProtocolLabAttributeRepo(groupID, opts.ModelAttributeRules)
+	deferred := &providercore.DeferredService{}
+	blocks := providercore.NewRuntimeBlockState(time.Now)
+	modelTransient := provideSelectionModelTransient()
+	proxyCircuit := provideSelectionProxyCircuit(cfg)
+
+	lab := &protocolLabRouter{
+		Cache:          cache,
+		APIKey:         "lab-api-key",
+		group:          group,
+		settings:       settingsStore,
+		attributeRepo:  attributeRepo,
+		tokenCache:     tokenCache,
+		providers:      providerStore,
+		blocks:         blocks,
+		modelTransient: modelTransient,
+		usageStore:     usageStore,
+		settlements:    settlementStore,
+		qoderClient:    qoderClient,
+		qoderTokens:    qoderTokens,
+	}
+	lab.SetProviders(tb, opts.Providers)
+
+	groupRepo := protocolLabGroupRepo{router: lab}
+	readers := gatewaytestkit.RuntimeReaders(settingsStore)
+	readers.Attributes.Repo = attributeRepo
+	var errorRules *errorpolicy.ErrorPassthroughService
+	if len(opts.ErrorRules) > 0 {
+		errorRules = gatewaytestkit.ErrorRules(opts.ErrorRules)
+	}
+	health := newAppHealthObserverFixture(providerStore, cfg)
+	concurrency := scheduler.NewConcurrencyService(&fakeConcurrencyCache{})
+
+	pricingConfigs := routing.NewPricingConfigService(modelCatalogueEmptyPrices{}, nil, routing.PricingConfigOptions{
+		ReadGroup:    groupRepo.GetByID,
+		Warn:         slog.Warn,
+		Now:          time.Now,
+		LoadLocation: pricingprovider.LoadPricingLocation,
+	})
+	calculator := billingtestkit.Calculator(nil, buildProtocolLabPriceMap(opts))
+	prices := billingtestkit.PriceResolver(pricingConfigs, calculator)
+	planner := gatewayprovider.NewRoutePlanner(pricingConfigs)
+	stateStore := session.NewOpenAIWSStateStore(cache, gatewayprovider.LogOpenAIWSModeInfo)
+	schedulerState := &schedulerSharedState{
+		Sticky:   &scheduler.StickyStats{},
+		Feedback: scheduler.NewRuntimeStats(time.Now),
+	}
+	lab.feedback = schedulerState.Feedback
+	selectionReads := selection.Reads{Providers: providerStore, Groups: groupRepo}
+	selectionShared := selection.Shared{
+		Cache:         cache,
+		Concurrency:   concurrency,
+		Health:        health,
+		GroupPolicies: pricingConfigs,
+		Feedback:      schedulerState.Feedback,
+	}
+	genericChoices := selection.NewGeneric(selection.GenericDependencies{
+		Reads:            selectionReads,
+		Shared:           selectionShared,
+		SetProviderError: providerStore.SetError,
+	}, selectionOptions(cfg))
+	geminiChoices := provideGeminiSelection(selectionReads, selectionShared, cfg, nil)
+	compatChoices := selection.NewCompatible(selection.CompatibleDependencies{
+		Generic:        genericChoices,
+		Gemini:         geminiChoices,
+		Reads:          selectionReads,
+		Shared:         selectionShared,
+		Responses:      stateStore,
+		QuotaSettings:  readers.Quota,
+		RuntimeBlocks:  blocks,
+		ModelTransient: modelTransient,
+		ProxyCircuit:   proxyCircuit,
+		StickyStats:    schedulerState.Sticky,
+	}, selectionOptions(cfg))
+
+	origins := session.NewCodexTurnOrigins(time.Now)
+	lab.Origins = origins
+	turns := &gatewayhttp.CodexTurnStateHeaders{Origins: origins}
+
+	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("protocol-lab-activity")}
+	credSource := &providercore.OpenAIExecutionCredentials{
+		Grok: func(_ context.Context, rec *providercore.Record) (string, error) {
+			if rec == nil {
+				return "", errors.New("provider record is nil")
+			}
+			tok := strings.TrimSpace(rec.GetCredential("access_token"))
+			if tok == "" {
+				return "", errors.New("access_token not found in credentials")
+			}
+			return tok, nil
+		},
+	}
+	credRuntime := gatewaytestkit.RequestCredentials(providerStore, credSource, nil, blocks)
+	credRuntime.HasGrokTokenSource = true
+	credentials := &gatewayhttp.RequestCredentialExecutor{Runtime: credRuntime}
+	// Use a thirty-second write throttle in the Grok health observer so repeated
+	// upstream failures exercise the production throttled health observation path.
+	grokHealth := &provideradapter.GrokHealth{
+		Store:          providerStore,
+		Health:         health,
+		Runtime:        blocks,
+		ModelTransient: modelTransient,
+		Throttle:       providercore.NewWriteThrottle(30 * time.Second),
+		NormalizeModel: func(value *providercore.Record, model string) string {
+			return (gatewayprovider.ModelPolicy{Record: value}).NormalizeOpenAI(model)
+		},
+	}
+	connections := openaiws.NewOpenAIWSConnections(openAIWSPoolOptions(cfg), nil)
+	tb.Cleanup(connections.Close)
+	agentIdentity := gatewayprovider.NewExecutionAgentIdentity(&providercore.OpenAITaskCoordinator{}, providerStore, nil, connections.InvalidateProvider)
+	output := provideOpenAIResponseOutput(
+		cfg,
+		provideOpenAIResponseHealth(health, blocks, modelTransient, deferred),
+		grokHealth,
+		health,
+		nil,
+		turns,
+		proxyCircuit,
+		stateStore,
+		compatChoices,
+		agentIdentity,
+	)
+	grokExecutor := provideGrokExecutor(cfg, credRuntime, transport, output, grokHealth, nil, readers, blocks, deferred, providerStore, activity, prices, connections)
+	text := openAITextExecution(cfg, providerStore, agentIdentity, credRuntime.Source, transport, nil, nil, readers, grokExecutor, output, provideAnthropicPromptCache(), compatChoices.OpenAIHTTPResponseStickyTTL, provideCompactExecutor(cfg))
+	lineage := provideOpenAIEncryptedLineage(stateStore, compatChoices)
+	imagePolicy := provideOpenAIImageBridgePolicy(cfg)
+	sockets := provideOpenAIWebSockets(nil, cfg, connections, text, nil, compatChoices, lineage, imagePolicy, cache)
+	responses := provideOpenAIResponses(text, compatChoices, lineage, imagePolicy)
+	source := &gatewayExecutionFixture{
+		Text:       text,
+		Requests:   text.Requests,
+		Responses:  responses,
+		WebSockets: sockets,
+		Grok:       grokExecutor,
+		Cache:      cache,
+		Planner:    planner,
+		Blocks: session.NewCyberBlocks(
+			session.AdaptCyberSessionBlockStore(cache),
+			readers.Moderation.GetCyberSessionBlockRuntime,
+			func(format string, args ...any) { logging.LegacyPrintf("service.openai_gateway", format, args...) },
+		),
+	}
+	source.Auxiliary = provideOpenAIAuxiliary(text, nil, activity)
+
+	recording := gatewaytestkit.NewRecording(usageStore, settlementStore, nil, false)
+	recording.Options.DefaultMultiplier = 1
+	recording.Dependencies.Calculator = calculator
+	recording.Dependencies.Prices = prices
+	recording.GroupPolicies = pricingConfigs
+	recorders := GatewayCompletionRecorders{
+		Forward: recording.Core(nil, false),
+		OpenAI:  recording.Core(nil, true),
+	}
+	source.Recorder = recorders.OpenAI
+
+	msgOptions := messageExecutionOptions(cfg)
+	msgOptions.StreamInterval = stall
+	messagesExec := gatewayhttp.NewMessagesExecutor(messageforward.NewRuntime(messageforward.Dependencies{
+		Credentials: &providercore.MessageCredentialSource{
+			Claude: func(_ context.Context, p *providercore.Record) (string, error) {
+				if p == nil {
+					return "", errors.New("provider record is nil")
+				}
+				tok := p.GetCredential("access_token")
+				if tok == "" {
+					return "", errors.New("access_token not found in credentials")
+				}
+				return tok, nil
+			},
+		},
+		Transport:     transport,
+		Health:        health,
+		Prices:        prices,
+		GroupPolicies: pricingConfigs,
+		Settings:      readers.Gateway,
+		Attributes:    readers.Attributes,
+		ProviderState: providerStore,
+		Deferred:      deferred,
+		Search:        searchtools.NewEmulator(protocolLabNoSearch{}, nil, nil, nil, nil, nil),
+		Enter:         activity.Enter,
+	}, msgOptions), nil)
+
+	dailyReset := func() *int64 {
+		val := time.Now().Add(24 * time.Hour).Unix()
+		return &val
+	}
+	googleOpts := googleForwardOptions(cfg)
+	// Truncate stall to whole seconds for Google stream idle polling and clamp sub-second budgets to one second.
+	googleOpts.StreamInterval = max(int(stall/time.Second), 1)
+	googleToolCalls := provideGeminiToolCalls()
+	geminiRuntime := &googleforward.Gemini{
+		Attributes: readers.Attributes,
+		Options:    googleOpts,
+		Tokens: &providercore.GeminiTokenSource{
+			Options: providercore.GeminiTokenOptions{
+				Vertex: func(_ context.Context, p *providercore.Record) (string, error) {
+					if p == nil {
+						return "", errors.New("provider record is nil")
+					}
+					tok := strings.TrimSpace(p.GetCredential("access_token"))
+					if tok == "" {
+						return "", errors.New("access_token not found in credentials")
+					}
+					return tok, nil
+				},
+			},
+		},
+		Health:    health,
+		Transport: transport,
+		ToolCalls: googleToolCalls,
+		Enter:     activity.Enter,
+		Errors: &provideradapter.GeminiErrorObserver{
+			Other:          health,
+			SetRateLimited: providerStore.SetRateLimited,
+			DailyReset:     dailyReset,
+			ResetTime:      func(body []byte) *int64 { return gemini.ParseGeminiRateLimitResetTime(body, dailyReset) },
+		},
+	}
+	geminiExec := provideGeminiExecutor(geminiRuntime)
+
+	antigravityExec, antigravityTokens := buildProtocolLabAntigravityExecutor(providerStore, tokenCache, transport, health, readers, cache, googleOpts, dailyReset, activity, googleToolCalls)
+	lab.antigravityTokens = antigravityTokens
+	qoderRuntime := gatewayprovider.NewQoderRuntime(gatewayprovider.QoderRuntimeOptions{
+		Attributes:    readers.Attributes,
+		Tokens:        qoderTokens,
+		Client:        qoderClient,
+		Transport:     transport,
+		Health:        providerStore,
+		Conversations: qoder.NewQoderConversationStore(qoder.QoderConversationTTL),
+	})
+	qoderRuntime.BindAttemptActivity(activity.Enter)
+
+	unified := provideUnifiedTextExecutor(
+		source.Responses, messagesExec, geminiExec, antigravityExec,
+		qoderRuntime, nil, nil, nil, cfg, prices,
+	)
+	lab.unified = unified
+	lab.wsExecutor = sockets
+
+	user := &identity.User{ID: userID, Balance: 1000, Status: billing.StatusActive, Concurrency: 16}
+	eligibility := newBillingEligibilityFixture(cfg)
+	tb.Cleanup(eligibility.Stop)
+	funding := newFundingAdmissionFixture(eligibility, cfg)
+	keyRepo := &protocolLabKeyRepo{
+		lab:     lab,
+		keyID:   keyID,
+		userID:  userID,
+		groupID: groupID,
+		user:    user,
+	}
+	keys := keytestkit.NewService(keyRepo, nil, groupRepo, nil, nil, nil, cfg)
+	tb.Cleanup(keys.Stop)
+
+	availability := newExecutionAvailabilityForTest(providerStore, pricingConfigs, nil)
+	resources := provideOpenAIHTTPResources(concurrency, cfg)
+	endpoints := newGatewayHTTPEndpoints(gatewayHTTPFixtureInput{
+		Source:       source,
+		Native:       unified,
+		Generic:      genericChoices,
+		Credentials:  credentials,
+		Availability: availability,
+		Choices:      compatChoices,
+		Config:       cfg,
+		Funding:      funding,
+		Keys:         keys,
+		Rules:        errorRules,
+		Concurrency:  resources.Concurrency,
+		Images:       resources.Images,
+		MaxSwitches:  maxSwitches,
+		Recorder:     recorders.OpenAI,
+		Ops:          opts.Ops,
+		Queue:        opts.OpsQueue,
+	})
+
+	retryCooldown := providercore.NewRetryCooldown(fixtureRetryStore{providerStore}, providercore.RetryCooldownOptions{})
+	msgBindings := provideMessageHTTPBindings(planner, cache, schedulerState, funding, errorRules, nil, readers.Gateway, nil, concurrency, cfg, genericChoices, keys, nil)
+	digest := session.NewDigestSessionStore()
+	msgRuntime := provideMessageAttemptRuntime(
+		retryCooldown, digest, messagesExec, antigravityExec, geminiExec,
+		funding, keys, recorders, msgBindings, errorRules, nil, nil, cfg,
+		availability, genericChoices, nil, cache, prices,
+	)
+	messagesHTTP := provideMessagesHTTP(msgBindings, msgRuntime, activity)
+	geminiNativeHTTP := provideGeminiNativeHTTP(msgBindings, digest, msgRuntime, activity, genericChoices)
+	countTokensHTTP := provideCountTokensHTTP(
+		planner, messagesExec, schedulerState, funding, nil, cfg, activity,
+		nil, availability, genericChoices, retryCooldown, source.Auxiliary, geminiExec, msgBindings,
+	)
+	lab.countTokens = countTokensHTTP
+	openAITokensHTTP := provideOpenAITokensHTTP(
+		source.Auxiliary, funding, keys, concurrency, nil, cfg, activity,
+		nil, availability, compatChoices, planner,
+	)
+
+	catalogue := &routing.RequestableCatalogue{
+		Read: func(_ context.Context, id *int64) ([]routing.CatalogueProvider, error) {
+			return gatewayprovider.CatalogueProviders(providerStore.catalogueRecords(id)), nil
+		},
+		Resolver: routing.RequestableResolver{
+			Attributes:    readers.Attributes,
+			GroupPolicies: pricingConfigs,
+			Warn:          slog.Warn,
+		},
+		Warn: slog.Warn,
+	}
+	modelsCatalog := catalogtest.New(
+		"claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-opus-4-6",
+		"gpt-5", "gpt-5.4", "gpt-5.5", "gpt-4o",
+		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-3-flash",
+		"deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro",
+		"grok-4.5", "ultimate", "auto", "qwen3.8-max", "glm-5.3",
+	)
+	modelsHTTP := modelsHTTP(modelsCatalog, catalogue, geminiRuntime, activity, geminiChoices, readers.Attributes)
+
+	commonOpenAI := provideOpenAIAttemptBindings(
+		source.Responses, keys, resources, gatewayhttp.NewBoundCyberHandler(source.Blocks, nil, moderationflow.Runtime{Recorder: recorders.OpenAI, Blocks: source.Blocks, Tasks: fixtureCyberTasks{source}}),
+		errorRules, nil, recorders, nil, availability, compatChoices, unified, genericChoices, funding, nil, planner, cache,
+	)
+	mediaRuntime := mediaentry.New(mediaBindings(
+		source.Responses, credentials, keys, funding, commonOpenAI, resources, nil, cfg,
+		source.Grok, provideGrokVideoTasks(cache, cfg), source.Auxiliary,
+		provideOpenAIImages(source.Text, activity), planner, cache, nil,
+	))
+	mediaHTTP := provideMediaHTTP(mediaRuntime, activity)
+	auxiliaryHTTP := provideAuxiliaryHTTP(mediaRuntime, activity)
+	liveHTTP := provideLiveHTTP(nil, nil, nil, nil, nil)
+	searchHTTP := gatewayhttp.NewSearchHandler(gatewayhttp.SearchPorts{})
+	publicUsage := usagehttp.NewPublicUsageHandler(nil, nil, nil, nil, usagehttp.PublicUsageContext{
+		Key: keyhttp.GetAPIKeyFromContext,
+		Billing: func(c *gin.Context) (*billing.APIKeyBillingContext, bool) {
+			return gatewayhttp.GetAPIKeyBillingContext(c)
+		},
+		Subscription: gatewayhttp.SubscriptionFromContext,
+	}, timezone.NewCalendar(time.UTC)).Usage
+
+	auth := keyhttp.APIKeyAuthMiddleware(func(c *gin.Context) {
+		grp := lab.cloneGroup(groupID)
+		gid := groupID
+		key := &apikey.APIKey{
+			ID:          keyID,
+			Key:         lab.APIKey,
+			Status:      billing.StatusActive,
+			UserID:      userID,
+			User:        user,
+			GroupID:     &gid,
+			Group:       grp,
+			BillingMode: apikey.APIKeyBillingModeBalance,
+		}
+		c.Set(string(keyhttp.ContextKeyAPIKey), key)
+		c.Set(string(gatewayhttp.ContextKeyAPIKeyBilling), &billing.APIKeyBillingContext{
+			Mode:      apikey.APIKeyBillingModeBalance,
+			Source:    "balance",
+			Available: true,
+		})
+		authctx.SetPrincipal(c, identity.Principal{UserID: userID}, 0, "")
+		c.Next()
+	})
+	// Leave legacyRouteMiddleware's Ops argument nil so its typed-nil concrete
+	// ErrorLogQueue stays inactive while router-level OpsErrorLoggerMiddleware
+	// dispatches captured entries to the caller's OpsQueue interface.
+	middleware := legacyRouteMiddleware(auth, keys, nil, nil, readers.Routing, cfg)
+	middleware.GoogleAPIKeyAuth = gin.HandlerFunc(auth)
+	// Bind readers.Attributes into request context so group ModelAttributeRules
+	// and IR ConversionDialect share the active catalog and profile view.
+	middleware.ModelAttributes = func(c *gin.Context) {
+		c.Request = c.Request.WithContext(routing.WithModelAttributes(c.Request.Context(), readers.Attributes))
+		c.Next()
+	}
+	if keepaliveInterval > 0 {
+		middleware.DownstreamKeepalive = gatewayhttp.DownstreamSSEKeepalive(keepaliveInterval, stall)
+	}
+
+	router := gin.New()
+	if opts.OnTelemetry != nil {
+		router.Use(func(c *gin.Context) {
+			ctx := infratelemetry.WithRequestCapture(c.Request.Context(), infratelemetry.RequestRecord{State: "completed"}, opts.OnTelemetry)
+			c.Request = c.Request.WithContext(ctx)
+			c.Next()
+		})
+	}
+	if opts.Ops != nil && opts.OpsQueue != nil {
+		router.Use(gatewayhttp.OpsErrorLoggerMiddleware(opts.Ops, opts.OpsQueue, gatewayhttp.OpsObservationAccess{}))
+	}
+
+	gatewayhttp.RegisterGatewayRoutes(router, gatewayhttp.RouteEndpoints{
+		CountTokens:  countTokensHTTP,
+		GeminiNative: geminiNativeHTTP,
+		OpenAIText:   endpoints.textHandler(),
+		OpenAITokens: openAITokensHTTP,
+		ResponsesWS:  endpoints.ResponsesWebSocket,
+		Models:       modelsHTTP,
+		Messages:     messagesHTTP,
+		Media:        mediaHTTP,
+		Auxiliary:    auxiliaryHTTP,
+		Live:         liveHTTP,
+		Search:       searchHTTP,
+		PublicUsage:  publicUsage,
+	}, middleware, func(*gin.RouterGroup) {})
+
+	lab.Engine = router
+	return lab
+}
+
+// newHeartbeatRouteRouter preserves the single-kind keepalive and SDK route
+// helper as a thin wrapper around newProtocolLabRouter. Synthetic kind values
+// such as "openai_passthrough" and "openai_chat" populate provider Extra flags,
+// and an optional FallbackURL appends a priority-1 secondary candidate.
+func newHeartbeatRouteRouter(t *testing.T, url, kind string, interval time.Duration, overrides ...heartbeatRouteOptions) (*gin.Engine, *session.CodexTurnOrigins) {
+	t.Helper()
+	platform := kind
+	if strings.HasPrefix(kind, "openai_") {
+		platform = capability.PlatformOpenAI
+	}
+	defaultModel := map[string]string{
+		"anthropic": "claude-sonnet-4-5-20250929",
+		"openai":    "gpt-5.4",
+		"gemini":    "gemini-2.5-flash",
+		"grok":      "grok-4.5",
+	}[platform]
+	limits := heartbeatRouteOptions{
+		Model:         defaultModel,
+		Stall:         time.Second,
+		HeaderTimeout: 2 * time.Second,
+	}
+	if len(overrides) > 0 {
+		limits.FallbackURL = overrides[0].FallbackURL
+		limits.Ops = overrides[0].Ops
+		limits.OpsQueue = overrides[0].OpsQueue
+		limits.OnTelemetry = overrides[0].OnTelemetry
+		if overrides[0].Model != "" {
+			limits.Model = overrides[0].Model
+		}
+		if overrides[0].Stall > 0 {
+			limits.Stall = overrides[0].Stall
+		}
+		if overrides[0].HeaderTimeout > 0 {
+			limits.HeaderTimeout = overrides[0].HeaderTimeout
+		}
+	}
+
+	var extra map[string]any
+	switch kind {
+	case "openai_passthrough":
+		extra = map[string]any{"openai_passthrough": true}
+	case "openai_chat":
+		extra = map[string]any{"openai_text_route_mode": "force_chat_completions"}
+	}
+
+	providers := []labProvider{{
+		ID:          1,
+		Name:        platform,
+		Platform:    platform,
+		Type:        capability.ProviderTypeAPIKey,
+		BaseURL:     url,
+		Model:       limits.Model,
+		Priority:    0,
+		Concurrency: 1,
+		Extra:       extra,
+	}}
+	if limits.FallbackURL != "" {
+		providers = append(providers, labProvider{
+			ID:          2,
+			Name:        platform + "-fallback",
+			Platform:    platform,
+			Type:        capability.ProviderTypeAPIKey,
+			BaseURL:     limits.FallbackURL,
+			Model:       limits.Model,
+			Priority:    1,
+			Concurrency: 1,
+			Extra:       maps.Clone(extra),
+		})
+	}
+
+	lab := newProtocolLabRouter(t, labOptions{
+		Providers:           providers,
+		MaxProviderSwitches: 1,
+		KeepaliveInterval:   interval,
+		StallTimeout:        limits.Stall,
+		HeaderTimeout:       limits.HeaderTimeout,
+		Ops:                 limits.Ops,
+		OpsQueue:            limits.OpsQueue,
+		OnTelemetry:         limits.OnTelemetry,
+	})
+	return lab.Engine, lab.Origins
+}
+
+// buildProtocolLabAntigravityExecutor constructs a local-HTTP-capable
+// AntigravityExecutor and its in-memory AntigravityTokenSource wired to store,
+// tokenCache, transport, health, cache, and shared toolCalls. Provider records
+// with a non-empty base_url credential route v1internal requests (including
+// multi-URL and model-fallback attempts) to local httptest servers instead of
+// live Antigravity endpoints.
+func buildProtocolLabAntigravityExecutor(
+	store *protocolLabProviderStore,
+	tokenCache *protocolLabAccessTokenCache,
+	transport httpclient.UpstreamTransport,
+	health *provideradapter.UpstreamHealth,
+	readers *gatewayprovider.RuntimeReaders,
+	cache session.GatewayCache,
+	opts googleforward.Options,
+	dailyReset func() *int64,
+	activity *gatewayRequestActivity,
+	toolCalls *session.GeminiToolCalls,
+) (*gatewayhttp.AntigravityExecutor, *providercore.AntigravityTokenSource) {
+	agHealth := &providercore.AntigravityHealth{
+		Store:     store,
+		ModelKeys: provideradapter.AntigravityModelLimitKeys,
+		Error:     slog.Error,
+		Warn:      slog.Warn,
+		Info:      slog.Info,
+		Logf: func(format string, args ...any) {
+			logging.LegacyPrintf("service.antigravity_gateway", format, args...)
+		},
+	}
+	resolveBase := func(value *providercore.Record) string {
+		// Prefer an explicit local base_url credential so tests intercept v1internal
+		// calls without dialing production Antigravity cloud endpoints.
+		if value != nil {
+			if custom := strings.TrimSpace(value.GetCredential("base_url")); custom != "" {
+				return custom
+			}
+		}
+		return antigravity.ResolveAntigravityForwardBaseURL("auto", provideradapter.AntigravityPaidTier(value))
+	}
+	resolveBaseURLs := func(value *providercore.Record) []string {
+		// Accept both typed string slices and JSON-decoded []any slices in base_urls
+		// before falling back to the single endpoint selected by resolveBase.
+		if value != nil {
+			if rawURLs, ok := value.Credentials["base_urls"]; ok {
+				switch typed := rawURLs.(type) {
+				case []string:
+					var urls []string
+					for _, u := range typed {
+						if trimmed := strings.TrimSpace(u); trimmed != "" {
+							urls = append(urls, trimmed)
+						}
+					}
+					if len(urls) > 0 {
+						return urls
+					}
+				case []any:
+					var urls []string
+					for _, item := range typed {
+						if s, sOK := item.(string); sOK {
+							if trimmed := strings.TrimSpace(s); trimmed != "" {
+								urls = append(urls, trimmed)
+							}
+						}
+					}
+					if len(urls) > 0 {
+						return urls
+					}
+				}
+			}
+		}
+		return []string{resolveBase(value)}
+	}
+	tokens := &providercore.AntigravityTokenSource{
+		Options: providercore.AntigravityTokenOptions{
+			Cache:                tokenCache,
+			Repository:           fixtureRetryStore{store},
+			Policy:               providercore.AntigravityProviderRefreshPolicy(),
+			SetTempUnschedulable: store.SetTempUnschedulable,
+			FillProject: func(_ context.Context, value *providercore.Record, _ string) (string, error) {
+				if value == nil {
+					return "", nil
+				}
+				// Read lab_backfill_project_id from Extra when project_id is missing
+				// so tests exercise project resolution without calling Google Cloud.
+				if backfill := strings.TrimSpace(value.GetExtraString("lab_backfill_project_id")); backfill != "" {
+					return backfill, nil
+				}
+				return "", nil
+			},
+			Persist: func(_ context.Context, value *providercore.Record, creds map[string]any) error {
+				if value == nil {
+					return nil
+				}
+				// Write refreshed tokens or backfilled project_id maps back into store
+				// so subsequent provider lookups observe the updated credentials.
+				store.persistCredentials(value.ID, creds)
+				return nil
+			},
+			Warn:  slog.Warn,
+			Debug: slog.Debug,
+		},
+	}
+	// Cap upstream error-response reads at 512 KiB so structured Google error JSON
+	// parses intact without unbounded memory allocation.
+	retry := &provideradapter.AntigravityRetry{
+		Health:         agHealth,
+		Policy:         health.Core,
+		Do:             transport.Do,
+		BaseURL:        resolveBase,
+		BaseURLs:       resolveBaseURLs,
+		BodyLimit:      func() int64 { return 512 << 10 },
+		LogConfig:      opts.LogConfig,
+		TruncateString: logredact.TruncateUTF8,
+		SafeURL:        logredact.SafeUpstreamURL,
+		Capacity:       antigravity.NewCapacityTracker(),
+	}
+	observer := &provideradapter.AntigravityErrorObserver{
+		Health:          agHealth,
+		Other:           health,
+		LogConfig:       opts.LogConfig,
+		TruncateString:  logredact.TruncateUTF8,
+		ResetTime:       func(body []byte) *int64 { return gemini.ParseGeminiRateLimitResetTime(body, dailyReset) },
+		DefaultDuration: func() time.Duration { return provideradapter.AntigravityFallbackDuration(0) },
+		SetRateLimited:  store.SetRateLimited,
+	}
+	return provideAntigravityExecutor(&googleforward.Antigravity{
+		Attributes: readers.Attributes,
+		Options:    opts,
+		Tokens:     tokens,
+		Retry:      retry,
+		Errors:     observer,
+		Store:      store,
+		Transport:  transport,
+		Gateway:    readers.Gateway,
+		Routing:    readers.Routing,
+		Sticky:     cache,
+		ToolCalls:  toolCalls,
+		Enter:      activity.Enter,
+	}), tokens
+}
+
+// buildProtocolLabProviderRecord normalizes one labProvider specification into
+// an active schedulable provider.Record bound to groupID. Missing IDs, names,
+// auth types, credentials, model whitelists, and multi-slot api_base_urls
+// entries receive deterministic lab defaults, and empty Platform values fail tb.
+func buildProtocolLabProviderRecord(tb testing.TB, index int, groupID int64, spec labProvider) *providercore.Record {
+	tb.Helper()
+	if strings.TrimSpace(spec.Platform) == "" {
+		tb.Fatalf("labProvider[%d] has empty Platform", index)
+	}
+	id := spec.ID
+	if id <= 0 {
+		id = int64(index + 1)
+	}
+	providerType := spec.Type
+	if providerType == "" {
+		switch spec.Platform {
+		case capability.PlatformAntigravity:
+			providerType = capability.ProviderTypeOAuth
+		case capability.PlatformQoder:
+			providerType = capability.ProviderTypeCosy
+		default:
+			providerType = capability.ProviderTypeAPIKey
+		}
+	}
+	name := spec.Name
+	if name == "" {
+		name = fmt.Sprintf("%s-%d", spec.Platform, id)
+	}
+	conc := spec.Concurrency
+	if conc <= 0 {
+		conc = 4
+	}
+
+	creds := make(map[string]any)
+	maps.Copy(creds, spec.Credentials)
+	if spec.BaseURL != "" {
+		creds["base_url"] = spec.BaseURL
+	}
+	switch providerType {
+	case capability.ProviderTypeAPIKey, capability.ProviderTypeUpstream:
+		if _, ok := creds["api_key"]; !ok {
+			creds["api_key"] = "lab-fixture-key"
+		}
+	case capability.ProviderTypeOAuth:
+		switch spec.Platform {
+		case capability.PlatformAntigravity:
+			if _, ok := creds["access_token"]; !ok {
+				creds["access_token"] = "lab-antigravity-token"
+			}
+			if _, ok := creds["project_id"]; !ok {
+				creds["project_id"] = "lab-antigravity-project"
+			}
+			if _, ok := creds["expires_at"]; !ok {
+				creds["expires_at"] = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+			}
+		case capability.PlatformGrok:
+			if _, ok := creds["access_token"]; !ok {
+				creds["access_token"] = "lab-grok-oauth-token"
+			}
+			if _, ok := creds["refresh_token"]; !ok {
+				creds["refresh_token"] = "lab-grok-refresh-token"
+			}
+			if _, ok := creds["expires_at"]; !ok {
+				creds["expires_at"] = time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+			}
+		default:
+			if _, ok := creds["access_token"]; !ok {
+				creds["access_token"] = "lab-oauth-token"
+			}
+		}
+	case capability.ProviderTypeSetupToken:
+		if _, ok := creds["access_token"]; !ok {
+			creds["access_token"] = "lab-setup-token"
+		}
+	case capability.ProviderTypeServiceAccount:
+		if _, ok := creds["access_token"]; !ok {
+			creds["access_token"] = "lab-vertex-token"
+		}
+		if _, ok := creds["project_id"]; !ok {
+			creds["project_id"] = "lab-vertex-project"
+		}
+		if _, ok := creds["location"]; !ok {
+			creds["location"] = "us-east5"
+		}
+	case capability.ProviderTypeBedrock:
+		if authMode, _ := creds["auth_mode"].(string); strings.EqualFold(strings.TrimSpace(authMode), "apikey") {
+			if _, ok := creds["api_key"]; !ok {
+				creds["api_key"] = "lab-bedrock-apikey"
+			}
+		} else {
+			if _, ok := creds["aws_access_key_id"]; !ok {
+				creds["aws_access_key_id"] = "AKIAIOSFODNN7EXAMPLE"
+			}
+			if _, ok := creds["aws_secret_access_key"]; !ok {
+				creds["aws_secret_access_key"] = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+			}
+		}
+		if _, ok := creds["aws_region"]; !ok {
+			creds["aws_region"] = "us-east-1"
+		}
+	}
+
+	var whitelist []string
+	if spec.Model != "" {
+		whitelist = append(whitelist, spec.Model)
+	}
+	for _, m := range spec.Models {
+		if m != "" && !slices.Contains(whitelist, m) {
+			whitelist = append(whitelist, m)
+		}
+	}
+	if len(spec.ModelMapping) > 0 {
+		mapping := make(map[string]any, len(spec.ModelMapping))
+		for src, dst := range spec.ModelMapping {
+			mapping[src] = dst
+			if dst != "" && !slices.Contains(whitelist, dst) {
+				whitelist = append(whitelist, dst)
+			}
+		}
+		creds["model_mapping"] = mapping
+	}
+	if _, hasWhitelist := creds["model_whitelist"]; !hasWhitelist && len(whitelist) > 0 {
+		creds["model_whitelist"] = whitelist
+	}
+
+	if spec.EnabledProtocols != nil {
+		rawProtos := make([]string, len(spec.EnabledProtocols))
+		for i, p := range spec.EnabledProtocols {
+			rawProtos[i] = string(p)
+		}
+		creds[providercore.UpstreamProtocolsKey] = rawProtos
+		// Unified protocol records on multi-slot platforms resolve protocol roots
+		// from api_base_urls before falling back to live internet defaults.
+		if spec.BaseURL != "" {
+			if _, hasSlots := creds["api_base_urls"]; !hasSlots {
+				switch spec.Platform {
+				case capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek, capability.PlatformOpenCode:
+					creds["api_base_urls"] = map[string]any{
+						providercore.APIProtocolChatCompletions: spec.BaseURL,
+						providercore.APIProtocolAnthropic:       spec.BaseURL,
+						providercore.APIProtocolResponses:       spec.BaseURL,
+						"gemini":                                spec.BaseURL,
+						"systemone":                             spec.BaseURL,
+					}
+				}
+			}
+		}
+	}
+
+	rec := &providercore.Record{
+		ID:           id,
+		Name:         name,
+		Platform:     spec.Platform,
+		Type:         providerType,
+		Status:       billing.StatusActive,
+		Schedulable:  true,
+		Priority:     spec.Priority,
+		Concurrency:  conc,
+		GroupIDs:     []int64{groupID},
+		Credentials:  creds,
+		Extra:        maps.Clone(spec.Extra),
+		LoadLocation: time.LoadLocation,
+	}
+	if spec.Platform == capability.PlatformQoder {
+		if rec.Extra == nil || rec.Extra[providercore.QoderCatalogExtraKey] == nil {
+			gatewaytestkit.SetQoderCatalog(rec)
+		}
+	}
+	return rec
+}
+
+// buildProtocolLabPriceMap merges embedded historical prices with default token
+// rates for canonical fixture models and declared provider models. Explicit
+// entries in opts.Pricing override both historical and default rates with
+// detached ModelPricing copies.
+func buildProtocolLabPriceMap(opts labOptions) map[string]*pricing.ModelPricing {
+	prices := billingtestkit.HistoricalPrices()
+	defaultRate := &pricing.ModelPricing{
+		InputPricePerToken:         1e-6,
+		OutputPricePerToken:        2e-6,
+		CacheCreationPricePerToken: 1.25e-6,
+		CacheReadPricePerToken:     0.1e-6,
+		CacheCreation5mPrice:       1.25e-6,
+		CacheCreation1hPrice:       2e-6,
+		SupportsCacheBreakdown:     true,
+		SupportsServiceTier:        true,
+	}
+	canonicalModels := []string{
+		"claude-sonnet-4-5", "claude-sonnet-4-5-thinking", "claude-sonnet-4-5-20250929", "claude-sonnet-4-6", "us.anthropic.claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-6-thinking", "claude-fable-5",
+		"gpt-5", "gpt-5.4", "gpt-5.5", "gpt-4o",
+		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-pro-high", "gemini-4-argon",
+		"deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro",
+		"kimi-k2", "k3", "k3-256k", "glm-5", "glm-5.3", "grok-4.5", "grok-4.6",
+		"auto", "ultimate", "qwen3.8-max", "qmodel_38max", "dmodel", "gmodel",
+	}
+	for _, name := range canonicalModels {
+		if _, exists := prices[name]; !exists {
+			cp := *defaultRate
+			prices[name] = &cp
+		}
+	}
+	for _, p := range opts.Providers {
+		if p.Model != "" {
+			if _, exists := prices[p.Model]; !exists {
+				cp := *defaultRate
+				prices[p.Model] = &cp
+			}
+		}
+		for _, m := range p.Models {
+			if m != "" {
+				if _, exists := prices[m]; !exists {
+					cp := *defaultRate
+					prices[m] = &cp
+				}
+			}
+		}
+		for src, dst := range p.ModelMapping {
+			for _, m := range []string{src, dst} {
+				if m != "" {
+					if _, exists := prices[m]; !exists {
+						cp := *defaultRate
+						prices[m] = &cp
+					}
+				}
+			}
+		}
+	}
+	for name, rate := range opts.Pricing {
+		if rate != nil {
+			cp := *rate
+			prices[name] = &cp
+		}
+	}
+	return prices
+}
+
+// cloneProtocolFallbacksMap returns a deep copy of in with cloned protocol
+// target slices. Nil outer maps and nil target slices remain nil, whereas
+// non-nil empty target slices stay non-nil so explicit conversion disables survive.
+func cloneProtocolFallbacksMap(in map[protocolcore.ProtocolID][]protocolcore.ProtocolID) map[protocolcore.ProtocolID][]protocolcore.ProtocolID {
+	if in == nil {
+		return nil
+	}
+	out := make(map[protocolcore.ProtocolID][]protocolcore.ProtocolID, len(in))
+	for k, v := range in {
+		if v == nil {
+			out[k] = nil
+		} else {
+			out[k] = slices.Clone(v)
+		}
+	}
+	return out
+}
+
+// cloneLabValuePtr allocates and returns a detached copy of the value pointed
+// to by p when p is non-nil. Passing a nil pointer returns nil so optional
+// UsageLog metadata fields preserve absence without aliasing recorder memory.
+func cloneLabValuePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// cloneLabUsageLog returns a copy of row with detached copies of all optional
+// scalar pointers, CacheWriteAnomaly, BillingAllocations, and ImageSizeBreakdown.
+// Query-only display relation pointers (User, APIKey, Provider, Group,
+// Subscription) are copied by value because completion recorders leave them nil.
+func cloneLabUsageLog(row usage.UsageLog) usage.UsageLog {
+	out := row
+	out.TeamID = cloneLabValuePtr(row.TeamID)
+	out.UpstreamModel = cloneLabValuePtr(row.UpstreamModel)
+	out.UpstreamResponseModel = cloneLabValuePtr(row.UpstreamResponseModel)
+	out.UpstreamModelMismatch = cloneLabValuePtr(row.UpstreamModelMismatch)
+	out.PricingConfigID = cloneLabValuePtr(row.PricingConfigID)
+	out.ModelMappingChain = cloneLabValuePtr(row.ModelMappingChain)
+	out.BillingTier = cloneLabValuePtr(row.BillingTier)
+	out.BillingMode = cloneLabValuePtr(row.BillingMode)
+	out.ServiceTier = cloneLabValuePtr(row.ServiceTier)
+	out.ReasoningEffort = cloneLabValuePtr(row.ReasoningEffort)
+	out.RequestedReasoningEffort = cloneLabValuePtr(row.RequestedReasoningEffort)
+	out.InboundEndpoint = cloneLabValuePtr(row.InboundEndpoint)
+	out.UpstreamEndpoint = cloneLabValuePtr(row.UpstreamEndpoint)
+	out.GroupID = cloneLabValuePtr(row.GroupID)
+	out.SubscriptionID = cloneLabValuePtr(row.SubscriptionID)
+	out.CacheCreation30mTokens = cloneLabValuePtr(row.CacheCreation30mTokens)
+	out.CacheCreation12hTokens = cloneLabValuePtr(row.CacheCreation12hTokens)
+	if row.CacheWriteAnomaly != nil {
+		anom := *row.CacheWriteAnomaly
+		anom.Reported30m = cloneLabValuePtr(row.CacheWriteAnomaly.Reported30m)
+		anom.Reported12h = cloneLabValuePtr(row.CacheWriteAnomaly.Reported12h)
+		out.CacheWriteAnomaly = &anom
+	}
+	if row.BillingAllocations != nil {
+		allocs := make([]billing.BillingAllocation, len(row.BillingAllocations))
+		for i, a := range row.BillingAllocations {
+			a.SubscriptionID = cloneLabValuePtr(a.SubscriptionID)
+			a.PlanID = cloneLabValuePtr(a.PlanID)
+			allocs[i] = a
+		}
+		out.BillingAllocations = allocs
+	}
+	out.ProviderRateMultiplier = cloneLabValuePtr(row.ProviderRateMultiplier)
+	out.ProviderStatsCost = cloneLabValuePtr(row.ProviderStatsCost)
+	out.DurationMs = cloneLabValuePtr(row.DurationMs)
+	out.UserAgent = cloneLabValuePtr(row.UserAgent)
+	out.IPAddress = cloneLabValuePtr(row.IPAddress)
+	out.SessionID = cloneLabValuePtr(row.SessionID)
+	out.UpstreamRequestID = cloneLabValuePtr(row.UpstreamRequestID)
+	out.ImageSize = cloneLabValuePtr(row.ImageSize)
+	out.ImageInputSize = cloneLabValuePtr(row.ImageInputSize)
+	out.ImageOutputSize = cloneLabValuePtr(row.ImageOutputSize)
+	out.ImageSizeSource = cloneLabValuePtr(row.ImageSizeSource)
+	out.ImageSizeBreakdown = maps.Clone(row.ImageSizeBreakdown)
+	out.MediaType = cloneLabValuePtr(row.MediaType)
+	out.VideoResolution = cloneLabValuePtr(row.VideoResolution)
+	out.VideoDurationSeconds = cloneLabValuePtr(row.VideoDurationSeconds)
+	return out
+}
+
+// persistCredentials replaces the Credentials map on the stored provider record
+// matching id with a shallow copy of creds under s.mu so subsequent GetByID
+// and selection reads observe backfilled credentials. Unknown provider IDs
+// leave s.values unchanged.
+func (s *protocolLabProviderStore) persistCredentials(id int64, creds map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.values {
+		if s.values[i].Record.ID == id {
+			s.values[i].Record.Credentials = maps.Clone(creds)
+		}
+	}
+}
+
+// newProtocolLabSettingsStore constructs a concurrency-safe in-memory settings
+// repository seeded with a cloned copy of initial. Passing a nil initial map
+// starts with an empty setting table, and mutating initial after construction
+// does not alter stored runtime settings.
+func newProtocolLabSettingsStore(initial map[string]string) *protocolLabSettingsStore {
+	values := make(map[string]string, len(initial))
+	maps.Copy(values, initial)
+	return &protocolLabSettingsStore{values: values}
+}
+
+// Get reads a Setting record for key under s.mu when key is present in s.values.
+// Absent keys return nil and settingscore.ErrSettingNotFound so callers
+// distinguish missing entries from empty setting strings.
+func (s *protocolLabSettingsStore) Get(_ context.Context, key string) (*settingscore.Setting, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if val, ok := s.values[key]; ok {
+		return &settingscore.Setting{Key: key, Value: val}, nil
+	}
+	return nil, settingscore.ErrSettingNotFound
+}
+
+// GetValue returns the stored string value for key under s.mu when key exists
+// in s.values. Absent keys return an empty string and
+// settingscore.ErrSettingNotFound so runtime readers fall back to built-in defaults.
+func (s *protocolLabSettingsStore) GetValue(_ context.Context, key string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if val, ok := s.values[key]; ok {
+		return val, nil
+	}
+	return "", settingscore.ErrSettingNotFound
+}
+
+// Set stores or overwrites value under key in s.values while holding s.mu,
+// allocating the backing map when nil so live runtime readers observe updated
+// setting strings immediately. It always returns a nil error in memory.
+func (s *protocolLabSettingsStore) Set(_ context.Context, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	s.values[key] = value
+	return nil
+}
+
+// GetMultiple returns a newly allocated map containing every requested key
+// currently present in s.values under s.mu. Absent keys are omitted from the
+// returned map, and mutating the result does not affect s.values.
+func (s *protocolLabSettingsStore) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if val, ok := s.values[key]; ok {
+			out[key] = val
+		}
+	}
+	return out, nil
+}
+
+// SetMultiple copies all key-value entries from updates into s.values
+// atomically under s.mu, allocating s.values when nil. Existing keys omitted
+// from updates remain intact, and empty updates succeed with a nil error.
+func (s *protocolLabSettingsStore) SetMultiple(_ context.Context, updates map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.values == nil {
+		s.values = make(map[string]string, len(updates))
+	}
+	maps.Copy(s.values, updates)
+	return nil
+}
+
+// GetAll returns a detached copy of all stored setting entries under s.mu.
+// Callers can mutate the returned map freely without affecting s.values, and a
+// nil backing map returns nil with a nil error.
+func (s *protocolLabSettingsStore) GetAll(_ context.Context) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return maps.Clone(s.values), nil
+}
+
+// Delete removes key from s.values while holding s.mu so subsequent Get and
+// GetValue calls return settingscore.ErrSettingNotFound. Deleting an absent key
+// or calling Delete when s.values is nil succeeds with a nil error.
+func (s *protocolLabSettingsStore) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.values, key)
+	return nil
+}
+
+// newProtocolLabAccessTokenCache constructs an empty concurrency-safe OAuth
+// access-token and refresh-lock cache.
+func newProtocolLabAccessTokenCache() *protocolLabAccessTokenCache {
+	return &protocolLabAccessTokenCache{
+		tokens: make(map[string]protocolLabCachedToken),
+		locks:  make(map[string]time.Time),
+	}
+}
+
+// GetAccessToken returns a non-expired cached bearer token for key under c.mu.
+// Missing or expired entries return an empty string and nil error after
+// evicting any stale entry from c.tokens.
+func (c *protocolLabAccessTokenCache) GetAccessToken(_ context.Context, key string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.tokens[key]
+	if !ok {
+		return "", nil
+	}
+	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+		// Evict expired bearer tokens on read so token sources trigger fresh OAuth
+		// resolution instead of replaying stale credentials.
+		delete(c.tokens, key)
+		return "", nil
+	}
+	return entry.token, nil
+}
+
+// SetAccessToken stores token under key with the supplied positive ttl under
+// c.mu, replacing any prior cached token for that key. Nonpositive durations
+// keep the entry cached without an expiration deadline.
+func (c *protocolLabAccessTokenCache) SetAccessToken(_ context.Context, key, token string, ttl time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var exp time.Time
+	if ttl > 0 {
+		exp = time.Now().Add(ttl)
+	}
+	c.tokens[key] = protocolLabCachedToken{token: token, expiresAt: exp}
+	return nil
+}
+
+// DeleteAccessToken removes any cached bearer token stored under key while
+// holding c.mu without disturbing active refresh locks. Absent keys succeed as
+// a no-op and return a nil error.
+func (c *protocolLabAccessTokenCache) DeleteAccessToken(_ context.Context, key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.tokens, key)
+	return nil
+}
+
+// AcquireRefreshLock claims refresh admission for key under c.mu when no
+// unexpired lock exists and returns true. Nonpositive ttl values default to a
+// thirty-second lease window. Active locks return false and a nil error so
+// competing callers wait for the holder's refresh result.
+func (c *protocolLabAccessTokenCache) AcquireRefreshLock(_ context.Context, key string, ttl time.Duration) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if exp, held := c.locks[key]; held && now.Before(exp) {
+		return false, nil
+	}
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	c.locks[key] = now.Add(ttl)
+	return true, nil
+}
+
+// ReleaseRefreshLock removes any refresh lock entry held for key under c.mu so
+// subsequent refresh attempts can acquire the lock immediately. Releasing an
+// unheld key succeeds without error.
+func (c *protocolLabAccessTokenCache) ReleaseRefreshLock(_ context.Context, key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.locks, key)
+	return nil
+}
+
+// Reset clears all cached OAuth bearer tokens and active refresh locks while
+// holding c.mu. Subsequent token lookups miss the cache, re-read current
+// provider credentials, and can acquire refresh locks immediately.
+func (c *protocolLabAccessTokenCache) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.tokens)
+	clear(c.locks)
+}
+
+// Header returns the buffered HTTP response header map on r, allocating an
+// empty http.Header on first access. Subsequent mutations on the returned map
+// update r.header in place before ServeHTTP copies headers to the outer writer.
+func (r *protocolLabHijackRecorder) Header() http.Header {
+	if r.header == nil {
+		r.header = make(http.Header)
+	}
+	return r.header
+}
+
+// WriteHeader latches statusCode onto r.status on the first call and marks
+// r.wroteHeader true. Subsequent calls to WriteHeader are ignored so r matches
+// standard http.ResponseWriter single-commit header semantics.
+func (r *protocolLabHijackRecorder) WriteHeader(statusCode int) {
+	if r.wroteHeader {
+		return
+	}
+	r.status = statusCode
+	r.wroteHeader = true
+}
+
+// Write appends data into r.body and commits HTTP 200 status when WriteHeader
+// has not yet been called. It returns the byte count written to r.body
+// alongside a nil error.
+func (r *protocolLabHijackRecorder) Write(data []byte) (int, error) {
+	if !r.wroteHeader {
+		r.WriteHeader(http.StatusOK)
+	}
+	return r.body.Write(data)
+}
+
+// Flush satisfies http.Flusher on r while keeping mockupstream SSE chunks
+// buffered in r.body until ServeHTTP wraps them. When headers have not yet
+// been committed, Flush latches HTTP 200 status.
+func (r *protocolLabHijackRecorder) Flush() {
+	if !r.wroteHeader {
+		r.WriteHeader(http.StatusOK)
+	}
+}
+
+// Hijack records that mockupstream requested an abrupt mid-stream TCP disconnect
+// by setting r.hijacked true. It returns a sentinel error so mockupstream skips
+// closing a nil net.Conn while ServeHTTP hijacks the real httptest socket after
+// wrapping buffered SSE frames.
+func (r *protocolLabHijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	r.hijacked = true
+	return nil, nil, errors.New("hijack captured by protocolLabHijackRecorder")
+}
+
+// newProtocolLabAntigravityUpstream wraps mock inside an HTTP handler speaking
+// the Antigravity v1internal request and response envelope contract.
+func newProtocolLabAntigravityUpstream(mock *mockupstream.Handler) *protocolLabAntigravityUpstream {
+	return &protocolLabAntigravityUpstream{mock: mock}
+}
+
+// ServeHTTP validates and unwraps incoming Antigravity v1internal POST requests
+// (/v1internal:streamGenerateContent and /v1internal:generateContent) and
+// delegates inner Gemini GenerateContent validation and scripted reply selection
+// to u.mock. HTTP 200 SSE and JSON Gemini payloads from u.mock are wrapped into
+// {"response": ...} envelopes before writing to w.
+//
+// Unrecognized URL paths, non-POST methods, or malformed outer envelopes return
+// Google-shaped JSON errors directly, and outer envelope errors are recorded on
+// u for Violations and AssertNoViolations checks. Non-200 upstream error
+// statuses from u.mock pass through unwrapped with their original headers.
+//
+// Abrupt mid-stream truncations requested by Fault.TruncateAfterFrames are
+// intercepted via protocolLabHijackRecorder so buffered SSE events still receive
+// {"response": ...} wrapping. After flushing wrapped chunks, ServeHTTP hijacks
+// and closes w's underlying TCP connection so downstream readers observe an
+// authentic io.ErrUnexpectedEOF disconnect.
+func (u *protocolLabAntigravityUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rawBody, readErr := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+
+	cleanPath := strings.TrimRight(strings.TrimSpace(r.URL.Path), "/")
+	var action string
+	switch {
+	case strings.HasSuffix(cleanPath, "/v1internal:streamGenerateContent"):
+		action = "streamGenerateContent"
+	case strings.HasSuffix(cleanPath, "/v1internal:generateContent"):
+		action = "generateContent"
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprintf(w, `{"error":{"code":404,"message":"unrecognized antigravity v1internal path %s","status":"NOT_FOUND"}}`, r.URL.Path)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = fmt.Fprintf(w, `{"error":{"code":405,"message":"method %s not allowed","status":"INVALID_ARGUMENT"}}`, r.Method)
+		return
+	}
+	if readErr != nil {
+		u.recordEnvelopeError(fmt.Sprintf("read v1internal body: %v", readErr))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"error":{"code":400,"message":"read body failed","status":"INVALID_ARGUMENT"}}`)
+		return
+	}
+
+	captured, envErr := unwrapAntigravityV1InternalEnvelope(r.URL.Path, r.URL.RawQuery, r.Header, rawBody)
+	u.mu.Lock()
+	u.envelopes = append(u.envelopes, captured)
+	if envErr != nil {
+		u.envelopeErrors = append(u.envelopeErrors, envErr.Error())
+	}
+	u.mu.Unlock()
+
+	if envErr != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"error":{"code":400,"message":%q,"status":"INVALID_ARGUMENT"}}`, envErr.Error())
+		return
+	}
+
+	innerReq := r.Clone(r.Context())
+	innerURL := *r.URL
+	innerURL.Path = "/v1beta/models/" + url.PathEscape(captured.Model) + ":" + action
+	innerReq.URL = &innerURL
+	innerReq.Body = io.NopCloser(bytes.NewReader(captured.InnerBody))
+	innerReq.ContentLength = int64(len(captured.InnerBody))
+
+	rec := &protocolLabHijackRecorder{status: http.StatusOK}
+	u.mock.ServeHTTP(rec, innerReq)
+
+	// Omit inner Content-Length headers because wrapping HTTP 200 payloads into
+	// {"response": ...} envelopes increases the serialized response byte length.
+	for k, vals := range rec.Header() {
+		if strings.EqualFold(k, "Content-Length") {
+			continue
+		}
+		for _, v := range vals {
+			w.Header().Add(k, v)
+		}
+	}
+
+	outBytes := rec.body.Bytes()
+	ct := strings.ToLower(rec.Header().Get("Content-Type"))
+	if rec.status == http.StatusOK {
+		switch {
+		case strings.Contains(ct, "text/event-stream"):
+			outBytes = wrapAntigravityV1InternalSSE(outBytes)
+		case strings.Contains(ct, "application/json"):
+			outBytes = wrapAntigravityV1InternalJSON(outBytes)
+		}
+	}
+
+	w.WriteHeader(rec.status)
+	if len(outBytes) > 0 {
+		_, _ = w.Write(outBytes)
+	}
+	if flusher, ok := w.(http.Flusher); ok && (strings.Contains(ct, "text/event-stream") || rec.hijacked) {
+		flusher.Flush()
+	}
+	if rec.hijacked {
+		// Propagate Fault.TruncateAfterFrames' raw socket closure to the live
+		// httptest connection after wrapped SSE chunks have been flushed.
+		if hj, ok := w.(http.Hijacker); ok {
+			if conn, rw, err := hj.Hijack(); err == nil {
+				_ = rw.Flush()
+				_ = conn.Close()
+			}
+		}
+	}
+}
+
+// recordEnvelopeError appends msg to u.envelopeErrors while holding u.mu for later inspection.
+func (u *protocolLabAntigravityUpstream) recordEnvelopeError(msg string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.envelopeErrors = append(u.envelopeErrors, msg)
+}
+
+// Envelopes returns detached copies of all outer v1internal request envelopes
+// received by u in arrival order under u.mu. Header maps, RawEnvelope slices,
+// and InnerBody slices are cloned so caller mutations cannot alter captured logs.
+func (u *protocolLabAntigravityUpstream) Envelopes() []protocolLabAntigravityRequest {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := make([]protocolLabAntigravityRequest, len(u.envelopes))
+	for i, env := range u.envelopes {
+		cp := env
+		if env.Headers != nil {
+			cp.Headers = env.Headers.Clone()
+		}
+		cp.RawEnvelope = bytes.Clone(env.RawEnvelope)
+		cp.InnerBody = bytes.Clone(env.InnerBody)
+		out[i] = cp
+	}
+	return out
+}
+
+// Requests returns deep-cloned inner Gemini request records captured by u.mock.
+func (u *protocolLabAntigravityUpstream) Requests() []mockupstream.RecordedRequest {
+	return u.mock.Requests()
+}
+
+// Violations returns all strict Gemini request violations from u.mock combined
+// with any outer v1internal envelope validation errors recorded by u. Outer
+// envelope errors are prepended in a synthetic RequestIndex -1 ViolationEntry.
+func (u *protocolLabAntigravityUpstream) Violations() []mockupstream.ViolationEntry {
+	entries := u.mock.Violations()
+	u.mu.Lock()
+	envErrs := slices.Clone(u.envelopeErrors)
+	u.mu.Unlock()
+	if len(envErrs) > 0 {
+		entries = append([]mockupstream.ViolationEntry{{
+			RequestIndex: -1,
+			Method:       http.MethodPost,
+			Path:         "/v1internal",
+			Protocol:     string(protocolcore.ProtocolGeminiGenerateContent),
+			CheckErrors:  envErrs,
+		}}, entries...)
+	}
+	return entries
+}
+
+// AssertNoViolations fails tb immediately if u recorded any outer v1internal
+// envelope error under u.mu or any inner strict Gemini request violation on
+// u.mock. Clean runs return without side effects.
+func (u *protocolLabAntigravityUpstream) AssertNoViolations(tb testing.TB) {
+	tb.Helper()
+	u.mu.Lock()
+	envErrs := slices.Clone(u.envelopeErrors)
+	u.mu.Unlock()
+	if len(envErrs) > 0 {
+		tb.Fatalf("antigravity v1internal envelope violation(s): %s", strings.Join(envErrs, "; "))
+	}
+	u.mock.AssertNoViolations(tb)
+}
+
+// Reset clears all captured outer v1internal envelopes and envelope errors
+// under u.mu, then resets u.mock's recorded inner requests, violations, and
+// reply cursors. Subsequent subtests reuse u from a clean initial state.
+func (u *protocolLabAntigravityUpstream) Reset() {
+	u.mu.Lock()
+	u.envelopes = nil
+	u.envelopeErrors = nil
+	u.mu.Unlock()
+	u.mock.Reset()
+}
+
+// unwrapAntigravityV1InternalEnvelope parses rawBody with a streaming
+// jsontext.Decoder, extracting outer project, model, requestId, userAgent, and
+// requestType strings alongside verbatim inner request object bytes. Reading
+// the inner request via ReadValue preserves 64-bit integer literals and member
+// order without map[string]any float64 coercion before strict Gemini request
+// validation runs.
+//
+// Non-object payloads, duplicate top-level keys, or missing project, model, or
+// object request fields return a descriptive error alongside any partial header
+// and RawEnvelope snapshot already populated on rec.
+func unwrapAntigravityV1InternalEnvelope(
+	urlPath, rawQuery string,
+	headers http.Header,
+	rawBody []byte,
+) (protocolLabAntigravityRequest, error) {
+	rec := protocolLabAntigravityRequest{
+		Path:        urlPath,
+		RawQuery:    rawQuery,
+		Headers:     headers.Clone(),
+		RawEnvelope: bytes.Clone(rawBody),
+	}
+
+	dec := jsontext.NewDecoder(bytes.NewReader(rawBody), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '{' {
+		return rec, errors.New("v1internal payload must be a JSON object")
+	}
+
+	seenKeys := make(map[string]bool)
+	for dec.PeekKind() != '}' {
+		kTok, kErr := dec.ReadToken()
+		if kErr != nil {
+			return rec, fmt.Errorf("read v1internal key: %w", kErr)
+		}
+		key := kTok.String()
+		if seenKeys[key] {
+			return rec, fmt.Errorf("duplicate v1internal top-level key %q", key)
+		}
+		seenKeys[key] = true
+
+		val, vErr := dec.ReadValue()
+		if vErr != nil {
+			return rec, fmt.Errorf("read v1internal %q value: %w", key, vErr)
+		}
+		// Non-string outer metadata tokens leave string fields empty so required
+		// project and model checks below reject mistyped outer values cleanly.
+		switch key {
+		case "project":
+			_ = json.Unmarshal(val, &rec.Project)
+		case "model":
+			_ = json.Unmarshal(val, &rec.Model)
+		case "requestId":
+			_ = json.Unmarshal(val, &rec.RequestID)
+		case "userAgent":
+			_ = json.Unmarshal(val, &rec.UserAgent)
+		case "requestType":
+			_ = json.Unmarshal(val, &rec.RequestType)
+		case "request":
+			trimmed := bytes.TrimSpace(val)
+			if len(trimmed) > 0 && trimmed[0] == '{' {
+				rec.InnerBody = bytes.Clone(trimmed)
+			}
+		}
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return rec, fmt.Errorf("close v1internal object: %w", err)
+	}
+	if strings.TrimSpace(rec.Project) == "" {
+		return rec, errors.New("v1internal project is required")
+	}
+	if strings.TrimSpace(rec.Model) == "" {
+		return rec, errors.New("v1internal model is required")
+	}
+	if len(rec.InnerBody) == 0 {
+		return rec, errors.New("v1internal request object is required")
+	}
+	return rec, nil
+}
+
+// wrapAntigravityV1InternalJSON wraps a buffered Gemini JSON object into a
+// {"response": ...} envelope for HTTP 200 v1internal:generateContent replies.
+// Empty, non-object, or invalid JSON slices, as well as objects already
+// carrying a top-level "response" or "error" field, are returned unchanged.
+func wrapAntigravityV1InternalJSON(raw []byte) []byte {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
+		return raw
+	}
+	if gjson.GetBytes(trimmed, "response").Exists() || gjson.GetBytes(trimmed, "error").Exists() {
+		return raw
+	}
+	var out bytes.Buffer
+	out.Grow(len(trimmed) + 14)
+	_, _ = out.WriteString(`{"response":`)
+	_, _ = out.Write(trimmed)
+	_ = out.WriteByte('}')
+	return out.Bytes()
+}
+
+// wrapAntigravityV1InternalSSE wraps each Gemini JSON object event inside raw
+// SSE bytes into a {"response": ...} envelope while preserving wire-level SSE
+// framing quirks. Physical line terminators (\r\n, \n, or trailing EOF without
+// newline), leading UTF-8 BOM bytes, SSE comment lines, spaceless data:
+// prefixes, multi-line data: splits, and trailing horizontal whitespace after
+// closing braces all survive verbatim so T5 SSE-quirk tests exercise the
+// production Antigravity scanner faithfully.
+//
+// Non-JSON payloads such as [DONE] and events that already carry top-level
+// "response" or "error" keys remain untouched. Empty raw slices return raw
+// directly without allocating.
+func wrapAntigravityV1InternalSSE(raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+
+	// ssePhysicalLine retains one physical line body alongside its original CR/LF terminator.
+	type ssePhysicalLine struct {
+		body   []byte // line bytes excluding trailing \r\n or \n
+		ending []byte // verbatim "\r\n", "\n", or empty EOF slice
+	}
+
+	var lines []ssePhysicalLine
+	for offset := 0; offset < len(raw); {
+		nlRel := bytes.IndexByte(raw[offset:], '\n')
+		if nlRel < 0 {
+			lines = append(lines, ssePhysicalLine{body: bytes.Clone(raw[offset:])})
+			break
+		}
+		endIdx := offset + nlRel
+		if endIdx > offset && raw[endIdx-1] == '\r' {
+			lines = append(lines, ssePhysicalLine{
+				body:   bytes.Clone(raw[offset : endIdx-1]),
+				ending: []byte("\r\n"),
+			})
+		} else {
+			lines = append(lines, ssePhysicalLine{
+				body:   bytes.Clone(raw[offset:endIdx]),
+				ending: []byte("\n"),
+			})
+		}
+		offset = endIdx + 1
+	}
+
+	wrapBlock := func(start, end int) {
+		var dataLineIndices []int
+		var joined bytes.Buffer
+		for idx := start; idx < end; idx++ {
+			line := lines[idx].body
+			if idx == 0 {
+				// Strip a leading UTF-8 BOM only while inspecting field names so
+				// line[0] remains preserved in the serialized physical output.
+				line = bytes.TrimPrefix(line, []byte{0xEF, 0xBB, 0xBF})
+			}
+			if len(line) == 0 || line[0] == ':' {
+				continue
+			}
+			field, content, hasColon := bytes.Cut(line, []byte(":"))
+			if !hasColon || string(field) != "data" {
+				continue
+			}
+			content = bytes.TrimPrefix(content, []byte(" "))
+			if len(dataLineIndices) > 0 {
+				_ = joined.WriteByte('\n')
+			}
+			_, _ = joined.Write(content)
+			dataLineIndices = append(dataLineIndices, idx)
+		}
+		if len(dataLineIndices) == 0 {
+			return
+		}
+		trimmed := bytes.TrimSpace(joined.Bytes())
+		if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
+			return
+		}
+		if gjson.GetBytes(trimmed, "response").Exists() || gjson.GetBytes(trimmed, "error").Exists() {
+			return
+		}
+
+		// Splice {"response": before the opening brace on the first data: line
+		// and } after the closing brace on the last data: line so multi-line
+		// splits and trailing horizontal whitespace remain intact.
+		firstIdx := dataLineIndices[0]
+		firstBody := lines[firstIdx].body
+		if bracePos := bytes.IndexByte(firstBody, '{'); bracePos >= 0 {
+			var b bytes.Buffer
+			b.Grow(len(firstBody) + 12)
+			_, _ = b.Write(firstBody[:bracePos])
+			_, _ = b.WriteString(`{"response":`)
+			_, _ = b.Write(firstBody[bracePos:])
+			lines[firstIdx].body = b.Bytes()
+		}
+
+		lastIdx := dataLineIndices[len(dataLineIndices)-1]
+		lastBody := lines[lastIdx].body
+		if closePos := bytes.LastIndexByte(lastBody, '}'); closePos >= 0 {
+			var b bytes.Buffer
+			b.Grow(len(lastBody) + 1)
+			_, _ = b.Write(lastBody[:closePos+1])
+			_ = b.WriteByte('}')
+			_, _ = b.Write(lastBody[closePos+1:])
+			lines[lastIdx].body = b.Bytes()
+		}
+	}
+
+	blockStart := -1
+	for i := range lines {
+		checkLine := lines[i].body
+		if i == 0 {
+			checkLine = bytes.TrimPrefix(checkLine, []byte{0xEF, 0xBB, 0xBF})
+		}
+		if len(checkLine) == 0 {
+			if blockStart >= 0 {
+				wrapBlock(blockStart, i)
+				blockStart = -1
+			}
+			continue
+		}
+		if blockStart < 0 {
+			blockStart = i
+		}
+	}
+	if blockStart >= 0 {
+		wrapBlock(blockStart, len(lines))
+	}
+
+	var out bytes.Buffer
+	out.Grow(len(raw) + 64)
+	for _, ln := range lines {
+		_, _ = out.Write(ln.body)
+		_, _ = out.Write(ln.ending)
+	}
+	return out.Bytes()
+}
+
+// GetByKeyForAuth returns a fresh APIKey copy bound to r.lab's current group
+// configuration when credential matches r.lab.APIKey, or ErrAPIKeyNotFound
+// otherwise. Multi-turn WebSocket sessions call Reauthenticate through this
+// method before admitting Turn 2 and later frames.
+func (r *protocolLabKeyRepo) GetByKeyForAuth(_ context.Context, credential string) (*apikey.APIKey, error) {
+	if r == nil || r.lab == nil || credential != r.lab.APIKey {
+		return nil, apikey.ErrAPIKeyNotFound
+	}
+	grp := r.lab.cloneGroup(r.groupID)
+	gid := r.groupID
+	return &apikey.APIKey{
+		ID:          r.keyID,
+		Key:         r.lab.APIKey,
+		Status:      billing.StatusActive,
+		UserID:      r.userID,
+		User:        r.user,
+		GroupID:     &gid,
+		Group:       grp,
+		BillingMode: apikey.APIKeyBillingModeBalance,
+	}, nil
+}
+
+// UpdateLastUsed accepts fire-and-forget key usage timestamp touches in tests.
+func (*protocolLabKeyRepo) UpdateLastUsed(context.Context, int64, time.Time) error { return nil }

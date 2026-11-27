@@ -1,0 +1,44 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 512,
+  "tools": [
+    {
+      "type": "custom",
+      "name": "apply_patch",
+      "description": "Apply a unified patch to files in the workspace.",
+      "format": {
+        "type": "grammar",
+        "syntax": "lark",
+        "definition": "start: patch\npatch: \"*** Begin Patch\\n\" /.+/s \"*** End Patch\\n\""
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "custom",
+    "name": "apply_patch"
+  },
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Update timeout from 5 to 15 in config.toml and README.md."
+        }
+      ]
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "ctc_patch_1",
+      "call_id": "call_patch_1",
+      "name": "apply_patch",
+      "input": "*** Begin Patch\n*** Update File: config.toml\n@@\n-timeout = 5\n+timeout = 15\n*** End Patch\n"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "call_id": "call_patch_1",
+      "output": "Success. Updated the following files:\nM config.toml"
+    }
+  ]
+}

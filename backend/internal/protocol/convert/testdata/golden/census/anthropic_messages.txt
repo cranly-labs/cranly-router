@@ -1,0 +1,39 @@
+# Unmodeled field census for anthropic_messages (9 corpus requests)
+[summary]
+extra	$.tools[*].eager_input_streaming
+
+[corpus/clients/claude-code/2.1.330/lab_text/1.request.json]
+(none)
+
+[corpus/clients/claude-code/2.1.330/lab_text_bare/1.request.json]
+(none)
+
+[corpus/clients/claude-code/2.1.330/lab_tool/1.request.json]
+(none)
+
+[corpus/clients/claude-code/2.1.330/lab_tool/2.request.json]
+(none)
+
+[corpus/clients/claude-code/2.1.330/lab_tool_bare/1.request.json]
+(none)
+
+[corpus/clients/claude-code/2.1.330/lab_tool_bare/2.request.json]
+(none)
+
+[corpus/clients/pi/1.6.0/lab_text_messages/1.request.json]
+extra	$.tools[0].eager_input_streaming
+extra	$.tools[1].eager_input_streaming
+extra	$.tools[2].eager_input_streaming
+extra	$.tools[3].eager_input_streaming
+
+[corpus/clients/pi/1.6.0/lab_tool_messages/1.request.json]
+extra	$.tools[0].eager_input_streaming
+extra	$.tools[1].eager_input_streaming
+extra	$.tools[2].eager_input_streaming
+extra	$.tools[3].eager_input_streaming
+
+[corpus/clients/pi/1.6.0/lab_tool_messages/2.request.json]
+extra	$.tools[0].eager_input_streaming
+extra	$.tools[1].eager_input_streaming
+extra	$.tools[2].eager_input_streaming
+extra	$.tools[3].eager_input_streaming

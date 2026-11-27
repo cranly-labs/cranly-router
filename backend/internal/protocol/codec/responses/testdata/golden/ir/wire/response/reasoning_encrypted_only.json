@@ -1,0 +1,35 @@
+{
+  "id": "resp_reasoning_encrypted_only",
+  "model": "gpt-5",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "reasoning",
+      "id": "rs_enconly_reply_2",
+      "reasoning": {
+        "segments": [
+          "Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."
+        ],
+        "summary": true,
+        "token": {
+          "data": "gAAAAABnEncOnlyReplyOpenAI02"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "id": "msg_enconly_reply_2",
+      "text": "Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 88,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 54,
+    "reasoning": 24
+  }
+}

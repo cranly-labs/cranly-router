@@ -2,6 +2,7 @@ package messageforward
 
 import (
 	"context"
+	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
@@ -10,13 +11,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// runtime.go starts Messages, counting, Chat, and Responses flows with fresh
-// attempt state.
-// Each Messages entry creates its own preparation state before invoking
-// gateway/forward. Chat and Responses retain separate output modes while using
-// the same selected provider and request-local tool restoration, and counting
-// follows a distinct error format. Count completion uses the retained HTTP
-// response to finish its diagnostic attempt because counting has no usage writer.
+// runtime.go starts native Messages, token counting, and converted OpenAI
+// flows with fresh attempt state. Each native Messages entry creates its own
+// preparation state before invoking gateway/forward, Converted executes OpenAI
+// Chat or Responses requests across Anthropic, Vertex, and Bedrock targets, and
+// Count uses its retained HTTP response to finish telemetry without a usage writer.
 
 // Execute forwards one parsed Messages request using fresh attempt state for
 // the selected provider. gateway/forward controls preparation and partial
@@ -51,21 +50,33 @@ func (r *Runtime) Count(ctx context.Context, output HTTPBoundary, target *gatewa
 	return forward.CountTokens(ctx, adapter, adapter.input(), parsed)
 }
 
-// Chat converts the supplied OpenAI body through an Anthropic attempt and
-// returns Messages completion metadata. Fresh conversion state carries tool
-// restoration; output and target remain usable through synchronous forwarding.
-func (r *Runtime) Chat(ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, body []byte) (*forward.MessagesResult, error) {
-	adapter := &conversionAttempt{s: r, c: output, provider: target, state: &AttemptState{}}
-	result, err := forward.AsChat(ctx, adapter, forward.ConversionInput{OAuth: target.View().IsOAuth()}, body)
-	return messagesResult(result), err
-}
-
-// Responses converts the supplied Responses body through an Anthropic attempt
-// and returns Messages completion metadata. Fresh state carries client tool
-// restoration, and returned partial observations remain paired with any error.
-func (r *Runtime) Responses(ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, body []byte) (*forward.MessagesResult, error) {
-	adapter := &conversionAttempt{s: r, c: output, provider: target, responses: true, state: &AttemptState{}}
-	result, err := forward.AsResponses(ctx, adapter, forward.ConversionInput{OAuth: target.View().IsOAuth()}, body)
+// Converted executes one IR-based OpenAI Chat or Responses conversion attempt
+// across Anthropic, Vertex, or AWS Bedrock targets via forward.AsConverted.
+// Optional application attempt admission wraps preparation, exchange, and
+// response reading; returned partial observations remain paired with any error.
+func (r *Runtime) Converted(ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, source protocol.ProtocolID, body []byte) (*forward.MessagesResult, error) {
+	if r != nil && r.dependencies.Enter != nil {
+		done, err := r.dependencies.Enter()
+		if err != nil {
+			return nil, err
+		}
+		if done != nil {
+			defer done()
+		}
+	}
+	adapter := &convertedAttempt{
+		s:              r,
+		c:              output,
+		provider:       target,
+		source:         source,
+		requestBodyLen: len(body),
+		state:          &AttemptState{PrepareStartedAt: time.Now()},
+	}
+	in := forward.ConversionInput{
+		OAuth:   target != nil && target.View().IsOAuth(),
+		Bedrock: target != nil && target.View().IsBedrock(),
+	}
+	result, err := forward.AsConverted(ctx, source, adapter, in, body)
 	return messagesResult(result), err
 }
 

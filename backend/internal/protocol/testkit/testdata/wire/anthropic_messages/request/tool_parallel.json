@@ -1,0 +1,88 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    },
+    {
+      "name": "get_time",
+      "description": "Get the local time for an IANA timezone.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone identifier"
+          }
+        },
+        "required": [
+          "timezone"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto",
+    "disable_parallel_tool_use": false
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Check weather and local time for London first, then Tokyo."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_weather_lon_1",
+          "name": "get_weather",
+          "input": {
+            "city": "London"
+          }
+        },
+        {
+          "type": "tool_use",
+          "id": "call_time_lon_2",
+          "name": "get_time",
+          "input": {
+            "timezone": "Europe/London"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_weather_lon_1",
+          "content": "{\"city\":\"London\",\"temp_c\":12,\"condition\":\"cloudy\"}"
+        },
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_time_lon_2",
+          "content": "{\"timezone\":\"Europe/London\",\"local_time\":\"09:30\"}"
+        },
+        {
+          "type": "text",
+          "text": "Now check Tokyo weather and Asia/Tokyo time in parallel."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_tool_single",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_weather_osa_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"city\":\"Osaka\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 64,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 18
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_weather_osa_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": "{\"city\":\"Osaka\"}",
+        "token": {
+          "data": "sig_fc_weather_osa_2"
+        }
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

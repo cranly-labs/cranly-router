@@ -6,15 +6,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
-// signature_cleaner.go in protocol/gemini replaces nested thought signatures
-// with the dummy value exposed by antigravity/request_transformer.go. These
-// fixtures check contents and cached parts alongside the unrelated signature
-// field and invalid source bytes; they call the cleaner directly rather than
-// executing the request transformer.
+// native_thought_signature_scenario_test.go covers payload.go and
+// protocol/gemini/signature_cleaner.go across nested GenerateContent payloads.
+// Cleanup must replace thoughtSignature values inside contents and
+// cachedContent parts while preserving unrelated signature fields and returning
+// malformed JSON bytes unchanged.
 
 // TestCleanGeminiNativeThoughtSignatures_ReplacesNestedThoughtSignatures
 // supplies thought signatures in text, function-call, and cached-content
@@ -41,7 +40,7 @@ func TestCleanGeminiNativeThoughtSignatures_ReplacesNestedThoughtSignatures(t *t
 		"signature": "keep_me"
 	}`)
 
-	cleaned := protocolgemini.CleanNativeThoughtSignatures(input, bridge.DummyThoughtSignature)
+	cleaned := protocolgemini.CleanNativeThoughtSignatures(input, protocolgemini.DummyThoughtSignature)
 
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(cleaned, &got))
@@ -49,7 +48,7 @@ func TestCleanGeminiNativeThoughtSignatures_ReplacesNestedThoughtSignatures(t *t
 	require.NotContains(t, string(cleaned), `"thoughtSignature":"sig_1"`)
 	require.NotContains(t, string(cleaned), `"thoughtSignature":"sig_2"`)
 	require.NotContains(t, string(cleaned), `"thoughtSignature":"sig_3"`)
-	require.Contains(t, string(cleaned), `"thoughtSignature":"`+DummyThoughtSignature+`"`)
+	require.Contains(t, string(cleaned), `"thoughtSignature":"`+protocolgemini.DummyThoughtSignature+`"`)
 	require.Contains(t, string(cleaned), `"signature":"keep_me"`)
 }
 
@@ -59,7 +58,7 @@ func TestCleanGeminiNativeThoughtSignatures_ReplacesNestedThoughtSignatures(t *t
 func TestCleanGeminiNativeThoughtSignatures_InvalidJSONReturnsOriginal(t *testing.T) {
 	input := []byte(`{"contents":[invalid-json]}`)
 
-	cleaned := protocolgemini.CleanNativeThoughtSignatures(input, bridge.DummyThoughtSignature)
+	cleaned := protocolgemini.CleanNativeThoughtSignatures(input, protocolgemini.DummyThoughtSignature)
 
 	require.Equal(t, input, cleaned)
 }

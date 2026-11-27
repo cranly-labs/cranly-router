@@ -1,0 +1,27 @@
+{
+  "id": "chatcmpl_text_unicode_split",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello 你好世界！👨‍👩‍👧‍👦 🇯🇵 👋🏽 café 🚀"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 22,
+    "completion_tokens": 19,
+    "total_tokens": 41,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

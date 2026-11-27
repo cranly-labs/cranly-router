@@ -1,0 +1,33 @@
+{
+  "id": "resp_tool_result_image",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_tool_result_image_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "The latency_p99 panel shows a flat 12 ms baseline with no spike."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 96,
+    "output_tokens": 16,
+    "total_tokens": 112,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,9 @@ import (
 
 	egressadapter "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	protocolqoder "github.com/TokenFlux/TokenRouter/internal/protocol/qoder"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -35,9 +39,8 @@ import (
 // connection probes.
 type qoderProviderTestSessionProvider interface {
 	// GetSession returns a session for the selected provider or an acquisition
-	// error.
-	// Implementations may cache and share the returned pointer; the probe can fill
-	// missing identity hints during its Global user-info check.
+	// error. Implementations may cache and share the returned pointer; the probe
+	// can fill missing identity hints during its Global user-info check.
 	GetSession(ctx context.Context, provider *providercore.Record) (*qoder.SessionContext, error)
 }
 
@@ -46,8 +49,7 @@ type qoderProviderTestSessionProvider interface {
 type qoderProviderTestSessionInvalidator interface {
 	// Invalidate evicts the provider session before a PAT probe rebuild.
 	// Implementations arrange cache invalidation for that provider ID; the method
-	// returns no result, so acquisition failures are reported by the later
-	// GetSession.
+	// returns no result, so acquisition failures are reported by the later GetSession.
 	Invalidate(providerID int64)
 }
 
@@ -56,8 +58,7 @@ type qoderProviderTestSessionInvalidator interface {
 type qoderProviderTestOAuthClient interface {
 	// GetUserInfo queries identity with the supplied token and context.
 	// Implementations return an identity or query error; the probe fills only
-	// missing
-	// UID and name hints in its obtained session when data is available.
+	// missing UID and name hints in its obtained session when data is available.
 	GetUserInfo(ctx context.Context, token string) (*qoder.UserInfo, error)
 }
 
@@ -68,8 +69,7 @@ type QoderProviderTest struct {
 	// skips profile lookup, leaving declared output and sampling permissions unknown.
 	Attributes ModelAttributeLookup
 	// Sessions supplies cached or built provider identity. Nil constructs a local
-	// default token provider for this call; PAT probes invalidate it when
-	// supported.
+	// default token provider for this call; PAT probes invalidate it when supported.
 	Sessions qoderProviderTestSessionProvider
 	// Client can supply an injected stream implementation. A platform Client or
 	// nil selection is rebuilt from the provider site by qoderTestClient.
@@ -78,8 +78,7 @@ type QoderProviderTest struct {
 	// site client and provider doer, while CN probes skip this query.
 	UserInfo qoderProviderTestOAuthClient
 	// Transport and Profiles prepare a doer for user-info and stream queries.
-	// A stream client lacking the doer-aware method uses its own
-	// StreamRequestContext.
+	// A stream client lacking the doer-aware method uses its own StreamRequestContext.
 	Transport QoderTransport             // shared probe request transport
 	Profiles  *egressadapter.TLSProfiles // optional TLS profile resolver
 }
@@ -87,25 +86,84 @@ type QoderProviderTest struct {
 // qoderTestClientWithDoer accepts provider transport for a streaming Qoder
 // probe request.
 type qoderTestClientWithDoer interface {
-	// StreamRequestContextWithDoer sends the prepared payload using the
-	// supplied doer.
-	// The caller passes session and model headers, propagates request errors, and
-	// transfers successful response-body closing to the test stream output adapter.
+	// StreamRequestContextWithDoer sends the prepared payload using the supplied
+	// doer. The caller passes session and model headers, propagates request errors,
+	// and transfers successful response-body closing to the test stream output adapter.
 	StreamRequestContextWithDoer(context.Context, *qoder.SessionContext, string, []byte, map[string]string, qoder.RequestDoer) (*http.Response, error)
 }
 
-// Execute prepares a Qoder COSY connection probe and emits its stream events.
-// It rejects non-COSY records, defaults blank model and prompt, and obtains a
-// site session. PAT input invalidates a supporting session source before the
-// query; session failures become test errors before streaming starts.
+// wireQoderTestChatMessage serializes one user message in the synthetic Chat
+// request constructed for BuildQoderTestPayload.
+type wireQoderTestChatMessage struct {
+	Role    string `json:"role"`    // message speaker role ("user")
+	Content string `json:"content"` // probe prompt text
+}
+
+// wireQoderTestChatRequest serializes the synthetic Chat Completions probe
+// request passed into convert.NewExchange by BuildQoderTestPayload.
+type wireQoderTestChatRequest struct {
+	Model     string                     `json:"model"`      // normalized target Qoder model route
+	Messages  []wireQoderTestChatMessage `json:"messages"`   // single-turn user probe history
+	MaxTokens int                        `json:"max_tokens"` // bounded probe output budget
+	Stream    bool                       `json:"stream"`     // SSE streaming flag
+}
+
+// BuildQoderTestPayload constructs a Qoder COSY connection-probe desktop
+// payload and resolved model header key through protocol/convert and
+// protocol/qoder. It encodes a 256-token streaming Chat request so short coding
+// prompts retain room for visible text after reasoning tokens.
+func BuildQoderTestPayload(
+	model string,
+	prompt string,
+	site qoder.Site,
+	resolution modelrules.Resolution,
+) (map[string]any, string, error) {
+	reqBytes, err := jsonv2.Marshal(wireQoderTestChatRequest{
+		Model:     model,
+		Messages:  []wireQoderTestChatMessage{{Role: "user", Content: prompt}},
+		MaxTokens: 256,
+		Stream:    true,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("encode qoder probe request: %w", err)
+	}
+	exchange, err := convert.NewExchange(reqBytes, convert.Options{
+		Route: convert.Route{
+			Client:   protocol.ProtocolOpenAIChatCompletions,
+			Upstream: protocol.ProtocolQoderChat,
+		},
+		Runtime: convert.DefaultRuntime(),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("create qoder probe exchange: %w", err)
+	}
+	upBytes, err := exchange.UpstreamRequest()
+	if err != nil {
+		return nil, "", fmt.Errorf("encode qoder probe payload: %w", err)
+	}
+	protoReq, err := protocolqoder.DecodePayload(upBytes)
+	if err != nil {
+		return nil, "", fmt.Errorf("decode qoder probe payload: %w", err)
+	}
+	request, err := qoder.PayloadRequestFromIR(protoReq)
+	if err != nil {
+		return nil, "", err
+	}
+	request.Site = site
+	request.Capabilities = &resolution
+	return qoder.BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+}
+
+// Execute prepares a Qoder COSY connection probe via BuildQoderTestPayload and
+// emits its stream events through TestStreamOutput.Qoder. It rejects non-COSY
+// records, defaults blank model and prompt, and obtains a site session; PAT
+// credentials invalidate a supporting session cache before acquisition.
 //
 // Saved model mapping selects the final allowed account route before payload
 // conversion, while the public start event retains the requested test name.
 // Global probes query user info before streaming. A doer-aware client receives
 // provider transport; another injected client uses its own stream method.
-// Successful response closing belongs to TestStreamOutput.Qoder. Callers
-// serialize access to shared session identities while Global probes may fill
-// missing user hints.
+// Successful response closing belongs to TestStreamOutput.Qoder.
 func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string) error {
 	if value.Type != capability.ProviderTypeCosy {
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Unsupported provider type: %s", value.Type))
@@ -149,9 +207,8 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 	if sessionProvider == nil {
 		sessionProvider = NewQoderTokenProvider(qoder.SessionBuilder{})
 	}
-	// A PAT probe is also an authorization check. Evict a supporting cache before
-	// acquisition so the test observes current PAT validity rather than a
-	// cached token.
+	// Evict cached sessions before PAT probes so connection tests verify current
+	// credential validity instead of reusing an earlier cached exchange token.
 	if strings.TrimSpace(value.GetCredential("pat")) != "" {
 		if invalidator, ok := sessionProvider.(qoderProviderTestSessionInvalidator); ok {
 			invalidator.Invalidate(value.ID)
@@ -166,24 +223,9 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 		return (TestStreamOutput{}).Error(c, err.Error())
 	}
 
-	// The short coding task can spend its output budget on reasoning before text.
-	requestBody, err := json.Marshal(map[string]any{
-		"model":      model,
-		"messages":   []map[string]string{{"role": "user", "content": testPrompt}},
-		"max_tokens": 256,
-		"stream":     true,
-	})
-	if err != nil {
-		return (TestStreamOutput{}).Error(c, "Failed to encode Qoder test payload")
-	}
-	request, err := qoder.ParseQoderChatCompletionsPayload(requestBody)
-	if err != nil {
-		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Failed to build Qoder test payload: %s", err.Error()))
-	}
-	request.Site = site
 	var resolution modelrules.Resolution
 	if s.Attributes != nil {
-		resolution, err = s.Attributes(ctx, value, c.GroupID, request.Model, string(capability.ProtocolQoderChat))
+		resolution, err = s.Attributes(ctx, value, c.GroupID, model, string(capability.ProtocolQoderChat))
 		if err != nil {
 			return (TestStreamOutput{}).Error(c, err.Error())
 		}
@@ -192,11 +234,11 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 		if client == "" {
 			client = capability.ProtocolOpenAIChatCompletions
 		}
-		target := value.ModelAttributeRoute(request.Model, string(client), string(capability.ProtocolQoderChat))
+		target := value.ModelAttributeRoute(model, string(client), string(capability.ProtocolQoderChat))
 		resolution = modelrules.View{}.Resolve(target, modelcatalog.Attributes{})
 	}
-	request.Capabilities = &resolution
-	payload, modelKey, err := qoder.BuildQoderPayloadWithOptions(request, "", request.Messages, true, true)
+
+	payload, modelKey, err := BuildQoderTestPayload(model, testPrompt, site, resolution)
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, err.Error())
 	}
@@ -208,8 +250,8 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 	c.Begin(true)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
-	// Global tests check the user-info endpoint before inference; CN follows its
-	// prepared session path and does not issue this Global compatibility query.
+	// Global COSY probes validate user identity before starting stream inference,
+	// whereas CN probes proceed directly with their site session.
 	if site == qoder.SiteGlobal {
 		if err := s.probeQoderUserInfo(ctx, value, session); err != nil {
 			return (TestStreamOutput{}).Error(c, err.Error())
@@ -235,22 +277,19 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 		}
 	}
 	// A custom client can lack the doer-aware extension. Use its existing stream
-	// method in that case, retaining the injected implementation as the
-	// transport owner.
+	// method in that case, retaining the injected implementation as the transport owner.
 	resp, err := client.StreamRequestContext(ctx, session, "", payloadBody, headers)
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, err.Error())
 	}
-
 	return (TestStreamOutput{}).Qoder(c, resp.Body)
 }
 
 // probeQoderUserInfo validates the Global probe token and fills missing
-// identity hints.
-// Nil session identity or missing token returns an error. It prefers the session
-// token, then the stored token, and mutates only absent UID and name when
-// user-info succeeds. Returned session identity may be shared by its session
-// source.
+// identity hints. Nil session identity or missing token returns an error. It
+// prefers the session token, then the stored token, and mutates only absent UID
+// and name when user-info succeeds. Returned session identity may be shared by
+// its session source.
 func (s *QoderProviderTest) probeQoderUserInfo(ctx context.Context, value *providercore.Record, session *qoder.SessionContext) error {
 	if session == nil || session.Identity == nil {
 		return errors.New("qoder session identity is empty")
@@ -313,8 +352,7 @@ func (s *QoderProviderTest) getQoderUserInfoForProvider(ctx context.Context, val
 
 		if resp.StatusCode != http.StatusOK {
 			// Keep the status diagnostic even if its bounded error read fails.
-			// Redact the partial body before returning text to the test output
-			// consumer.
+			// Redact the partial body before returning text to the test output consumer.
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			return nil, fmt.Errorf("qoder: userinfo failed with status %d: %s", resp.StatusCode, qoder.RedactSensitiveText(string(body)))
 		}

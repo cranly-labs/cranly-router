@@ -1,0 +1,28 @@
+{
+  "id": "chatcmpl_legacy_history",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "deepseek-reasoner",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly.",
+        "reasoning_content": "Migration checks for the requested tenants are ready to finalize."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 112,
+    "completion_tokens": 48,
+    "total_tokens": 160,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 22
+    }
+  }
+}

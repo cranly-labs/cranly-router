@@ -177,10 +177,11 @@ type GeminiTokenDetail struct {
 
 // GeminiUsageMetadata holds aggregate token observations and per-modality input/output details.
 type GeminiUsageMetadata struct {
-	// PromptTokenCount and CachedContentTokenCount overlap in the
-	// GeminiToAnthropicResponseProcessor calculation, which subtracts cache
-	// from prompt input. It adds CandidatesTokenCount and ThoughtsTokenCount
-	// for output, while TotalTokenCount remains the supplier's reported aggregate.
+	// PromptTokenCount, CandidatesTokenCount, CachedContentTokenCount,
+	// TotalTokenCount, and ThoughtsTokenCount report aggregate Gemini counters:
+	// PromptTokenCount includes CachedContentTokenCount so billing and IR usage
+	// subtract cache reads for uncached input, output sums CandidatesTokenCount
+	// and ThoughtsTokenCount, and TotalTokenCount retains the upstream aggregate.
 	PromptTokenCount        int                 `json:"promptTokenCount,omitempty"`        // reported prompt tokens
 	CandidatesTokenCount    int                 `json:"candidatesTokenCount,omitempty"`    // reported candidate tokens
 	CachedContentTokenCount int                 `json:"cachedContentTokenCount,omitempty"` // reported cache-read tokens

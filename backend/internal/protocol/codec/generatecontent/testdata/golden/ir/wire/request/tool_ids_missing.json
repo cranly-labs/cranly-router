@@ -1,0 +1,79 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "First resolve gateway.internal."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "tool_call",
+          "call": {
+            "call_id": "gemcall_42b7f824822a",
+            "tool": {
+              "kind": "function",
+              "name": "lookup_host"
+            },
+            "arguments": "{\"hostname\":\"gateway.internal\"}",
+            "token": {
+              "data": "sig_fc_lookup_0"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "gemcall_42b7f824822a",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"ip\":\"10.0.0.1\"}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Now resolve both db-primary.internal and db-replica.internal."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "lookup_host",
+      "description": "Resolve an internal hostname to its IPv4 address.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "hostname": {
+            "type": "STRING",
+            "description": "Internal DNS hostname"
+          }
+        },
+        "required": [
+          "hostname"
+        ]
+      }
+    }
+  ],
+  "max_output_tokens": 256
+}

@@ -33,7 +33,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -551,7 +550,7 @@ func TestReconstructResponseOutputFromSSE_PrefersRawDoneItems(t *testing.T) {
 		`data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}`,
 	}, "\n")
 
-	outputJSON, ok := bridge.ReconstructResponseOutputFromSSE(bodyText)
+	outputJSON, ok := protocolopenai.ReconstructResponseOutputFromSSE(bodyText)
 	require.True(t, ok)
 	items := gjson.ParseBytes(outputJSON).Array()
 	require.Len(t, items, 1, "raw done item 与 delta 重建不得重复")
@@ -565,7 +564,7 @@ func TestReconstructResponseOutputFromSSE_PrefersRawDoneItems(t *testing.T) {
 func TestReconstructResponseOutputFromSSE_CompactionAddedFallback(t *testing.T) {
 	bodyText := `data: {"type":"response.output_item.added","output_index":0,"item":{"id":"cmp_add","type":"compaction","encrypted_content":"added-only"}}` + "\n" + `data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}`
 
-	outputJSON, ok := bridge.ReconstructResponseOutputFromSSE(bodyText)
+	outputJSON, ok := protocolopenai.ReconstructResponseOutputFromSSE(bodyText)
 	require.True(t, ok)
 	items := gjson.ParseBytes(outputJSON).Array()
 	require.Len(t, items, 1)
@@ -584,7 +583,7 @@ func TestReconstructResponseOutputFromSSE_MixedDoneAndCompactionAdded(t *testing
 		`data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}`,
 	}, "\n")
 
-	outputJSON, ok := bridge.ReconstructResponseOutputFromSSE(bodyText)
+	outputJSON, ok := protocolopenai.ReconstructResponseOutputFromSSE(bodyText)
 	require.True(t, ok)
 	items := gjson.ParseBytes(outputJSON).Array()
 	require.Len(t, items, 2)
@@ -599,7 +598,7 @@ func TestReconstructResponseOutputFromSSE_MixedDoneAndCompactionAdded(t *testing
 		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"compaction","status":"completed","encrypted_content":"final"}}`,
 		`data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}`,
 	}, "\n")
-	outputJSON, ok = bridge.ReconstructResponseOutputFromSSE(bodyText)
+	outputJSON, ok = protocolopenai.ReconstructResponseOutputFromSSE(bodyText)
 	require.True(t, ok)
 	items = gjson.ParseBytes(outputJSON).Array()
 	require.Len(t, items, 1)
@@ -650,7 +649,7 @@ func TestReconstructResponseOutputFromSSE_NonCompactionAddedStillUsesDeltas(t *t
 		`data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}`,
 	}, "\n")
 
-	outputJSON, ok := bridge.ReconstructResponseOutputFromSSE(bodyText)
+	outputJSON, ok := protocolopenai.ReconstructResponseOutputFromSSE(bodyText)
 	require.True(t, ok)
 	items := gjson.ParseBytes(outputJSON).Array()
 	require.Len(t, items, 1)
@@ -3398,7 +3397,7 @@ func TestOpenAIGatewayService_NativeOAuth_NamespaceNonStreamingResponse(t *testi
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-	SetOpenAIResponsesNamespaceNames(c, map[string]bridge.ResponsesNamespaceName{
+	SetOpenAIResponsesNamespaceNames(c, map[string]protocolopenai.ResponsesNamespaceName{
 		"collaboration__spawn_agent": {Namespace: "collaboration", Name: "spawn_agent"},
 	})
 	resp := &http.Response{

@@ -1,21 +1,25 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/tokenestimate"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -65,6 +69,16 @@ func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 		return nil
 	}
 
+	// Unpack matching trc1 encrypted_content or strip cross-account and foreign
+	// envelopes on the full preflight payload before field projection drops
+	// top-level store=false metadata.
+	var prepErr error
+	body, prepErr = s.prepareNativeInputTokensReplay(ctx, provider, body)
+	if prepErr != nil {
+		writeOpenAIResponsesInputTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return prepErr
+	}
+
 	prepared, err := gatewayprovider.PrepareNativeInputTokens(body, provider)
 	if err != nil {
 		writeOpenAIResponsesInputTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
@@ -85,7 +99,7 @@ func (s *OpenAIAuxiliary) ForwardResponsesInputTokens(
 		return fmt.Errorf("responses input_tokens: get access token: %w", err)
 	}
 
-	upstreamBody, err := wirejson.Marshal(prepared.Request)
+	upstreamBody, err := prepared.MarshalBody()
 	if err != nil {
 		writeOpenAIResponsesInputTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
 		return fmt.Errorf("responses input_tokens: marshal request: %w", err)
@@ -141,7 +155,7 @@ func writeOpenAIResponsesInputTokensFallback(c *gin.Context, provider *gatewaypr
 	// positive token count.
 	estimated := openAIInputTokensFallbackMinimum
 	if prepared != nil {
-		if got, err := tokenestimate.Responses(prepared.Request); err == nil && got > 0 {
+		if got, err := prepared.EstimateLocal(); err == nil && got > 0 {
 			estimated = got
 		}
 	}
@@ -238,4 +252,36 @@ func (s *OpenAIAuxiliary) handleResponsesInputTokensUpstreamError(
 		return fmt.Errorf("responses input_tokens: upstream error %d", resp.StatusCode)
 	}
 	return fmt.Errorf("responses input_tokens: upstream error %d message=%s", resp.StatusCode, upstreamMsg)
+}
+
+// prepareNativeInputTokensReplay unpacks matching trc1 continuity envelopes or
+// removes incompatible items inside a native Responses input_tokens payload
+// for the mapped upstream model. Payloads lacking the "trc1:" prefix return
+// body byte-for-byte unchanged without resolving model catalog attributes.
+func (s *OpenAIAuxiliary) prepareNativeInputTokensReplay(
+	ctx context.Context,
+	provider *gatewayprovider.ExecutionProvider,
+	body []byte,
+) ([]byte, error) {
+	if !bytes.Contains(body, []byte(ir.CarrierPrefix)) {
+		return body, nil
+	}
+	rawModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	effort := requeststate.ExtractRoutingReasoningEffort(body, protocol.ProtocolOpenAIResponses)
+	billingModel := gatewayprovider.ExecutionModelPolicy(provider).WithEffort(effort).ForwardModel(rawModel, "")
+	upstreamModel := gatewayprovider.ExecutionModelPolicy(provider).NormalizeOpenAI(billingModel)
+	var attrService *routing.ModelAttributeService
+	if s.Requests != nil && s.Requests.Readers != nil {
+		attrService = s.Requests.Readers.Attributes
+	}
+	rewritten, _, err := gatewayprovider.PrepareNativeReplay(
+		ctx,
+		provider,
+		upstreamModel,
+		body,
+		attrService,
+		protocol.ProtocolOpenAIResponses,
+		protocol.ProtocolOpenAIResponses,
+	)
+	return rewritten, err
 }

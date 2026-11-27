@@ -1,0 +1,101 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_reasoning_tool_replay",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {
+        "summary": true
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "SKU-42 has 4 units against a reorder point of 20; "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "now query SKU-99 stock."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "SKU-42 has 4 units against a reorder point of 20; now query SKU-99 stock."
+        ],
+        "summary": true,
+        "token": {
+          "data": "CpEBCocB_gem_inv_thought_turn2"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inv_sku99_2",
+        "tool": {
+          "kind": "function",
+          "name": "query_inventory"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"sku\":\"SKU-99\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 96,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 52,
+      "reasoning": 28
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inv_sku99_2",
+        "tool": {
+          "kind": "function",
+          "name": "query_inventory"
+        },
+        "arguments": "{\"sku\":\"SKU-99\"}",
+        "token": {
+          "data": "CpEBCocB_gem_inv_fc_turn2"
+        }
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

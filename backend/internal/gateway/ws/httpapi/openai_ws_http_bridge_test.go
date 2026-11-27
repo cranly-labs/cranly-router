@@ -31,6 +31,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -458,9 +459,10 @@ func TestProxyOpenAIWSHTTPBridgeTurnGrokPromotesDiscoveryAndRestoresNamespaceSSE
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input.1.tools").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input.1.status").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input.1.execution").Exists())
-	state, ok := gatewayhttp.OpenAIWSHTTPBridgeToolStateFromContext(c)
+	toolMap, ok := gatewayhttp.OpenAIWSHTTPBridgeToolMapFromContext(c)
 	require.True(t, ok)
-	require.Equal(t, "multi_agent_v1", state.ClientMapping.NamespaceTools["multi_agent_v1__spawn_agent"].Namespace)
+	require.NotNil(t, toolMap)
+	require.Equal(t, "multi_agent_v1", toolMap.NamespaceTools["multi_agent_v1__spawn_agent"].Namespace)
 	require.Len(t, events, 4)
 	require.Equal(t, "spawn_agent", gjson.GetBytes(events[0], "item.name").String())
 	require.Equal(t, "multi_agent_v1", gjson.GetBytes(events[0], "item.namespace").String())
@@ -562,9 +564,10 @@ func TestOpenAIWSHTTPBridgeAPIKeyReusesClientToolMappingWhenFollowupOmitsTools(t
 	require.Equal(t, "mcp__cua_proxy__js", gjson.GetBytes(upstream.bodies[1], "input.1.name").String())
 	require.Equal(t, "old_call", gjson.GetBytes(upstream.bodies[1], "input.2.call_id").String())
 	require.Equal(t, int64(1), gjson.GetBytes(upstream.bodies[1], "tools.#").Int())
-	state, present := gatewayhttp.OpenAIWSHTTPBridgeToolStateFromContext(c)
+	toolMap, present := gatewayhttp.OpenAIWSHTTPBridgeToolMapFromContext(c)
 	require.True(t, present)
-	require.NotContains(t, state.ClientMapping.NamespaceTools, "mcp__cua_proxy__js")
+	require.NotNil(t, toolMap)
+	require.NotContains(t, toolMap.NamespaceTools, "mcp__cua_proxy__js")
 }
 
 // TestOpenAIWSHTTPBridgeFullCustomToolHistoryWithoutPreviousResponseIDDoesNotReplay
@@ -2900,4 +2903,535 @@ func TestHTTPBridgeRetryTimingBelongsToAcceptedDispatch(t *testing.T) {
 	t.Logf("accepted attempt starts at %d ms; attributed performance=%+v", secondStart, result.Timings.Values)
 	require.GreaterOrEqual(t, result.Timings.Values["upstream_started_ms"], delayed.released.Sub(origin).Milliseconds())
 	require.GreaterOrEqual(t, result.Duration.Milliseconds()-int64(*result.Timings.DurationMs()), int64(49))
+}
+
+// TestOpenAIWSHTTPBridge_PrepareNativeReplayAndDialectAdapter exercises
+// proxyOpenAIWSHTTPBridgeTurn, resolveGrokWSCacheIdentity, and
+// wsPassthroughAdapter.ResolveNativeReplayDialect across OpenAI and Grok targets.
+// Literal user "trc1:" stays intact, same-account OpenAI/Grok targets unpack
+// vendor ciphertext, and cross-account targets strip mismatched envelopes
+// consistently across cache hashing and forwarding.
+func TestOpenAIWSHTTPBridge_PrepareNativeReplayAndDialectAdapter(t *testing.T) {
+	openAICarrier7, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_bridge_acct_7",
+		ProviderID: 7,
+	})
+	require.NoError(t, err)
+	xaiCarrier11, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeXAI,
+		Data:       "xai_bridge_acct_11",
+		ProviderID: 11,
+	})
+	require.NoError(t, err)
+
+	sseDone := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_br_ok\",\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}}\n\n"
+
+	runBridge := func(provider *gatewayprovider.ExecutionProvider, model string, payload []byte) []byte {
+		upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sseDone)),
+		}}
+		svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{}, transport: upstream})
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		cacheID := ""
+		if provider.Record.Platform == capability.PlatformGrok {
+			cacheID, err = svc.resolveGrokWSCacheIdentity(context.Background(), c, provider, payload, model)
+			require.NoError(t, err)
+		}
+		_, runErr := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider:          provider,
+			Token:             "bridge-token",
+			Payload:           payload,
+			PayloadBytes:      len(payload),
+			OriginalModel:     model,
+			RoutingModel:      model,
+			GrokCacheIdentity: cacheID,
+			Turn:              1,
+			WriteClient:       func([]byte) error { return nil },
+		})
+		require.NoError(t, runErr)
+		return upstream.lastBody
+	}
+
+	openAI7 := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 7, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Concurrency: 1},
+	}
+	openAI8 := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 8, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Concurrency: 1},
+	}
+	grok11 := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 11, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Concurrency: 1},
+	}
+	grok12 := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 12, Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey, Concurrency: 1},
+	}
+
+	openAIPayload := []byte(`{"type":"response.create","model":"gpt-5.4","store":false,"nonce":9007199254740993,"input":[{"type":"message","role":"user","content":"literal trc1:plain:demo"},{"type":"reasoning","id":"rs_oa","summary":[{"type":"summary_text","text":"bridge summary"}],"encrypted_content":"` + openAICarrier7 + `"},{"type":"reasoning","id":"rs_xai_foreign","summary":[],"encrypted_content":"` + xaiCarrier11 + `"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)
+	grokPayload := []byte(`{"type":"response.create","model":"grok-4.5","nonce":9007199254740993,"input":[{"type":"message","role":"user","content":"literal trc1:xai:demo"},{"type":"reasoning","id":"rs_xai","summary":[{"type":"summary_text","text":"grok bridge summary"}],"encrypted_content":"` + xaiCarrier11 + `"},{"type":"reasoning","id":"rs_oa_foreign","summary":[],"encrypted_content":"` + openAICarrier7 + `"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)
+
+	// OpenAI same-account vs cross-account.
+	gotOASame := runBridge(openAI7, "gpt-5.4", openAIPayload)
+	require.Equal(t, "gAAAA_bridge_acct_7", gjson.GetBytes(gotOASame, "input.1.encrypted_content").String())
+	require.Equal(t, "message", gjson.GetBytes(gotOASame, "input.2.type").String())
+	require.Contains(t, gjson.GetBytes(gotOASame, "input.0.content").String(), "trc1:plain:demo")
+	require.Equal(t, "9007199254740993", gjson.GetBytes(gotOASame, "nonce").Raw)
+
+	gotOACross := runBridge(openAI8, "gpt-5.4", openAIPayload)
+	require.Equal(t, "bridge summary", gjson.GetBytes(gotOACross, "input.1.summary.0.text").String())
+	require.False(t, gjson.GetBytes(gotOACross, "input.1.encrypted_content").Exists())
+	require.False(t, gjson.GetBytes(gotOACross, "input.1.id").Exists())
+	require.Equal(t, "message", gjson.GetBytes(gotOACross, "input.2.type").String())
+
+	// Grok same-account vs cross-account.
+	gotGrokSame := runBridge(grok11, "grok-4.5", grokPayload)
+	require.Equal(t, "xai_bridge_acct_11", gjson.GetBytes(gotGrokSame, "input.1.encrypted_content").String())
+	require.Equal(t, "message", gjson.GetBytes(gotGrokSame, "input.2.type").String())
+
+	gotGrokCross := runBridge(grok12, "grok-4.5", grokPayload)
+	require.Equal(t, "grok bridge summary", gjson.GetBytes(gotGrokCross, "input.1.summary.0.text").String())
+	require.False(t, gjson.GetBytes(gotGrokCross, "input.1.encrypted_content").Exists())
+	require.Equal(t, "message", gjson.GetBytes(gotGrokCross, "input.2.type").String())
+
+	// Verify wsPassthroughAdapter.ResolveNativeReplayDialect resolves openai and xai schemes with ProviderID.
+	svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{}})
+	oaAdapter := &wsPassthroughAdapter{service: svc.OpenAIWebSocketExecutor, provider: openAI7}
+	oaDialect, err := oaAdapter.ResolveNativeReplayDialect(context.Background(), "gpt-5.4", openAIPayload)
+	require.NoError(t, err)
+	require.Equal(t, ir.SchemeOpenAI, oaDialect.ReplayScheme)
+	require.Equal(t, int64(7), oaDialect.ProviderID)
+
+	grokAdapter := &wsPassthroughAdapter{service: svc.OpenAIWebSocketExecutor, provider: grok11}
+	grokDialect, err := grokAdapter.ResolveNativeReplayDialect(context.Background(), "grok-4.5", grokPayload)
+	require.NoError(t, err)
+	require.Equal(t, ir.SchemeXAI, grokDialect.ReplayScheme)
+	require.Equal(t, int64(11), grokDialect.ProviderID)
+}
+
+// TestProxyOpenAIWSHTTPBridgeTurn_IRClientToolsWarmupContinuationResetAndConflict
+// runs WebSocket HTTP bridge turns across OpenAI API Key and Grok providers.
+// It verifies warmup tool retention, omitted-tools continuations, explicit
+// tools resets, pre-commit failover isolation, and local 1008 policy-close
+// conflict classification.
+func TestProxyOpenAIWSHTTPBridgeTurn_IRClientToolsWarmupContinuationResetAndConflict(t *testing.T) {
+	openAIProv := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           9101,
+			Platform:     capability.PlatformOpenAI,
+			Type:         capability.ProviderTypeAPIKey,
+			Concurrency:  1,
+		},
+	}
+	grokProv := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           9102,
+			Platform:     capability.PlatformGrok,
+			Type:         capability.ProviderTypeOAuth,
+			Concurrency:  1,
+			Credentials:  map[string]any{"base_url": xai.DefaultCLIBaseURL, "subscription_tier": "free"},
+		},
+	}
+
+	t.Run("warmup_inherit_discovery_and_reset", func(t *testing.T) {
+		turn2SSE := strings.Join([]string{
+			`: keepalive`,
+			`data: {"type":"ping"}`,
+			``,
+			`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_exec","call_id":"c_exec","name":"exec","status":"in_progress"}}`,
+			``,
+			`data: {"type":"response.function_call_arguments.done","sequence_number":1,"output_index":0,"item_id":"fc_exec","call_id":"c_exec","name":"exec","arguments":"{\"input\":\"git status\"}"}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_exec","call_id":"c_exec","name":"exec","arguments":"{\"input\":\"git status\"}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":3,"output_index":1,"item":{"type":"function_call","id":"fc_crm","call_id":"c_crm","name":"crm__lookup","arguments":"{}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.completed","sequence_number":4,"response":{"id":"resp_t2","status":"completed","output":[{"type":"function_call","id":"fc_exec","call_id":"c_exec","name":"exec","arguments":"{\"input\":\"git status\"}"},{"type":"function_call","id":"fc_crm","call_id":"c_crm","name":"crm__lookup","arguments":"{}"}],"usage":{"input_tokens":5,"output_tokens":4}}}`,
+			``,
+		}, "\n")
+		simpleDoneSSE := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n"
+		up := &auxiliaryHTTPRecorder{responses: []*http.Response{
+			{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(turn2SSE))},
+			{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(simpleDoneSSE))},
+			{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(simpleDoneSSE))},
+		}}
+		svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{Output: gatewayhttp.OpenAIResponseOptions{MaxLineSize: gatewayhttp.OpenAIResponseDefaultMaxLineSize}}, transport: up})
+
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+		// Turn 1: local generate=false warmup declaring custom + tool_search + namespace.
+		warmupPayload := []byte(`{
+			"type":"response.create",
+			"generate":false,
+			"model":"gpt-5.4",
+			"tools":[
+				{"type":"custom","name":"exec","description":"Run shell"},
+				{"type":"tool_search","execution":"client"},
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			],
+			"input":[]
+		}`)
+		var warmupEvents [][]byte
+		warmRes, wErr := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-test", Payload: warmupPayload, PayloadBytes: len(warmupPayload),
+			OriginalModel: "gpt-5.4", RoutingModel: "gpt-5.4", Turn: 1,
+			WriteClient: func(m []byte) error {
+				warmupEvents = append(warmupEvents, append([]byte(nil), m...))
+				return nil
+			},
+		})
+		require.NoError(t, wErr)
+		require.True(t, warmRes.LocalWarmup)
+		require.Empty(t, up.bodies, "generate=false warmup must return locally without HTTP exchange")
+		require.Len(t, warmupEvents, 2)
+
+		// Turn 2: omits both tools and model while supplying tool_search_output discovery.
+		turn2Payload := []byte(`{
+			"type":"response.create",
+			"input":[
+				{"type":"tool_search_call","call_id":"cs_1","arguments":{"query":"crm"}},
+				{"type":"tool_search_output","call_id":"cs_1","execution":"client","status":"completed","tools":[
+					{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+				]},
+				{"type":"message","role":"user","content":"run exec and crm"}
+			]
+		}`)
+		var turn2Events [][]byte
+		turn2Res, t2Err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-test", Payload: turn2Payload, PayloadBytes: len(turn2Payload),
+			OriginalModel: "gpt-5.4", RoutingModel: "", Turn: 2,
+			WriteClient: func(m []byte) error {
+				turn2Events = append(turn2Events, append([]byte(nil), m...))
+				return nil
+			},
+		})
+		require.NoError(t, t2Err)
+		require.NotNil(t, turn2Res)
+		require.Len(t, up.bodies, 1)
+		require.Equal(t, "exec", gjson.GetBytes(up.bodies[0], "tools.0.name").String())
+		require.Equal(t, "tool_search", gjson.GetBytes(up.bodies[0], "tools.1.name").String())
+		require.Equal(t, "db__query", gjson.GetBytes(up.bodies[0], "tools.2.name").String())
+		require.Equal(t, "crm__lookup", gjson.GetBytes(up.bodies[0], "tools.3.name").String())
+
+		for _, ev := range turn2Events {
+			require.NotEqual(t, "ping", gjson.GetBytes(ev, "type").String(), "heartbeat ping frames must not be forwarded downstream")
+		}
+		termEv := turn2Events[len(turn2Events)-1]
+		require.Equal(t, "response.completed", gjson.GetBytes(termEv, "type").String())
+		require.Equal(t, "custom_tool_call", gjson.GetBytes(termEv, "response.output.0.type").String())
+		require.Equal(t, "git status", gjson.GetBytes(termEv, "response.output.0.input").String())
+		require.Equal(t, "crm", gjson.GetBytes(termEv, "response.output.1.namespace").String())
+		require.Equal(t, "lookup", gjson.GetBytes(termEv, "response.output.1.name").String())
+		replayItems, hasReplay := turn2Res.WSReplayInput()
+		require.True(t, hasReplay)
+		require.Len(t, replayItems, 2)
+		require.Equal(t, "custom_tool_call", gjson.GetBytes(replayItems[0], "type").String())
+		require.Equal(t, "crm", gjson.GetBytes(replayItems[1], "namespace").String())
+
+		// Turn 3: explicit tools: [] resets session tools.
+		turn3Reset := []byte(`{"type":"response.create","tools":[],"input":"reset tools"}`)
+		_, t3Err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-test", Payload: turn3Reset, PayloadBytes: len(turn3Reset),
+			OriginalModel: "gpt-5.4", Turn: 3, WriteClient: func([]byte) error { return nil },
+		})
+		require.NoError(t, t3Err)
+
+		// Turn 4: omits tools after explicit reset; upstream body must carry no stale tools.
+		turn4AfterReset := []byte(`{"type":"response.create","input":"after reset"}`)
+		_, t4Err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-test", Payload: turn4AfterReset, PayloadBytes: len(turn4AfterReset),
+			OriginalModel: "gpt-5.4", Turn: 4, WriteClient: func([]byte) error { return nil },
+		})
+		require.NoError(t, t4Err)
+		require.Len(t, up.bodies, 3)
+		require.Empty(t, gjson.GetBytes(up.bodies[2], "tools").Array())
+	})
+
+	t.Run("ir_plain_function_warmup_inherits_across_multiple_turns_and_grok_cache_route", func(t *testing.T) {
+		doneSSE := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fn\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n"
+		up := &auxiliaryHTTPRecorder{responses: []*http.Response{
+			{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(doneSSE))},
+			{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(doneSSE))},
+		}}
+		svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{Output: gatewayhttp.OpenAIResponseOptions{MaxLineSize: gatewayhttp.OpenAIResponseDefaultMaxLineSize}}, transport: up})
+
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+		warmupFn := []byte(`{"type":"response.create","generate":false,"model":"grok-4.5","tools":[{"type":"function","name":"calc","parameters":{"type":"object","maxItems":9007199254740993}}],"input":[]}`)
+		_, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: grokProv, Token: "tok", Payload: warmupFn, PayloadBytes: len(warmupFn),
+			OriginalModel: "grok-4.5", GrokCacheIdentity: "grok-fn-cache", Turn: 1,
+			WriteClient: func([]byte) error { return nil },
+		})
+		require.NoError(t, err)
+
+		for turn := 2; turn <= 3; turn++ {
+			cont := []byte(`{"type":"response.create","input":"next"}`)
+			_, err = svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+				Provider: grokProv, Token: "tok", Payload: cont, PayloadBytes: len(cont),
+				OriginalModel: "grok-4.5", GrokCacheIdentity: "grok-fn-cache", Turn: turn,
+				WriteClient: func([]byte) error { return nil },
+			})
+			require.NoError(t, err)
+		}
+		require.Len(t, up.bodies, 2)
+		require.Equal(t, "calc", gjson.GetBytes(up.bodies[0], "tools.0.name").String())
+		require.Equal(t, "9007199254740993", gjson.GetBytes(up.bodies[0], "tools.0.parameters.maxItems").Raw)
+		require.Equal(t, "calc", gjson.GetBytes(up.bodies[1], "tools.0.name").String())
+		require.Equal(t, "grok-fn-cache", gjson.GetBytes(up.bodies[1], "prompt_cache_key").String())
+	})
+
+	t.Run("ir_tool_conflict_maps_to_policy_close_without_provider_failure", func(t *testing.T) {
+		up := &auxiliaryHTTPRecorder{}
+		svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{}, transport: up})
+
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		conflict := []byte(`{
+			"type":"response.create",
+			"model":"gpt-5.4",
+			"tools":[
+				{"type":"function","name":"db__query","parameters":{"type":"object"}},
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			],
+			"input":"hi"
+		}`)
+		res, cErr := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-test", Payload: conflict, PayloadBytes: len(conflict),
+			OriginalModel: "gpt-5.4", Turn: 1, WriteClient: func([]byte) error { return nil },
+		})
+		require.Error(t, cErr)
+		require.Nil(t, res)
+		require.True(t, routing.IsModelAttributeError(cErr))
+		require.False(t, ws.EntryShouldReportFailure(cErr))
+		closeSpec := ws.EntryModelAttributeClose(cErr)
+		require.True(t, closeSpec.Present)
+		require.Equal(t, 1008, closeSpec.Status)
+		require.Empty(t, up.bodies)
+	})
+
+	t.Run("ir_turn1_additional_tools_502_failover_does_not_duplicate_tools", func(t *testing.T) {
+		doneSSE := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_b\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n"
+		up := &auxiliaryHTTPRecorder{responses: []*http.Response{
+			{
+				StatusCode: http.StatusBadGateway,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"upstream 502"}}`)),
+			},
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(doneSSE)),
+			},
+		}}
+		svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{Output: gatewayhttp.OpenAIResponseOptions{MaxLineSize: gatewayhttp.OpenAIResponseDefaultMaxLineSize}}, transport: up})
+
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		turn1Payload := []byte(`{
+			"type":"response.create",
+			"model":"gpt-5.4",
+			"input":[
+				{"type":"additional_tools","tools":[{"type":"custom","name":"exec","description":"Run shell"}]},
+				{"type":"message","role":"user","content":"hello"}
+			]
+		}`)
+
+		// Provider A fails with HTTP 502 before committing output; session state must remain empty.
+		_, errA := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-a", Payload: turn1Payload, PayloadBytes: len(turn1Payload),
+			OriginalModel: "gpt-5.4", Turn: 1, WriteClient: func([]byte) error { return nil },
+		})
+		var failoverA *forwardcore.UpstreamFailoverError
+		require.ErrorAs(t, errA, &failoverA)
+		_, hasPrematureMap := gatewayhttp.OpenAIWSHTTPBridgeToolMapFromContext(c)
+		require.False(t, hasPrematureMap, "failed Turn 1 attempt must not publish session ToolMap onto shared Gin context")
+
+		// Provider B retries the same Turn 1 payload and must emit exactly one lowered exec tool.
+		provB := &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation: time.LoadLocation, ID: 9103, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Concurrency: 1,
+			},
+		}
+		_, errB := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: provB, Token: "sk-b", Payload: turn1Payload, PayloadBytes: len(turn1Payload),
+			OriginalModel: "gpt-5.4", Turn: 1, WriteClient: func([]byte) error { return nil },
+		})
+		require.NoError(t, errB)
+		require.Len(t, up.bodies, 2)
+		require.Len(t, gjson.GetBytes(up.bodies[1], "tools").Array(), 1, "Provider B must not duplicate additional_tools after Provider A failover")
+		require.Equal(t, "exec", gjson.GetBytes(up.bodies[1], "tools.0.name").String())
+	})
+
+	t.Run("ir_turn2_tools_reset_429_failover_preserves_prior_turn_inherited_map", func(t *testing.T) {
+		doneSSE := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n"
+		up := &auxiliaryHTTPRecorder{responses: []*http.Response{
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(doneSSE)),
+			},
+			{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`)),
+			},
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(doneSSE)),
+			},
+		}}
+		svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{Output: gatewayhttp.OpenAIResponseOptions{MaxLineSize: gatewayhttp.OpenAIResponseDefaultMaxLineSize}}, transport: up})
+
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+		// Turn 1 commits custom tool "exec" in session state.
+		turn1 := []byte(`{"type":"response.create","model":"gpt-5.4","tools":[{"type":"custom","name":"exec","description":"Run shell"}],"input":"start"}`)
+		_, err1 := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-a", Payload: turn1, PayloadBytes: len(turn1),
+			OriginalModel: "gpt-5.4", Turn: 1, WriteClient: func([]byte) error { return nil },
+		})
+		require.NoError(t, err1)
+
+		// Turn 2 sends tools: [] while carrying Turn 1's historical custom_tool_call;
+		// Provider A fails with HTTP 429 before output, so Turn 1's inherited map must survive for Provider B.
+		turn2ResetWithHistory := []byte(`{
+			"type":"response.create",
+			"model":"gpt-5.4",
+			"tools":[],
+			"input":[
+				{"type":"custom_tool_call","id":"ctc_1","call_id":"call_1","name":"exec","input":"ls"},
+				{"type":"custom_tool_call_output","call_id":"call_1","output":"ok"},
+				{"type":"message","role":"user","content":"done"}
+			]
+		}`)
+		_, err2A := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: openAIProv, Token: "sk-a", Payload: turn2ResetWithHistory, PayloadBytes: len(turn2ResetWithHistory),
+			OriginalModel: "gpt-5.4", Turn: 2, WriteClient: func([]byte) error { return nil },
+		})
+		var failover2A *forwardcore.UpstreamFailoverError
+		require.ErrorAs(t, err2A, &failover2A)
+		savedAfter429, presentAfter429 := gatewayhttp.OpenAIWSHTTPBridgeToolMapFromContext(c)
+		require.True(t, presentAfter429)
+		require.NotNil(t, savedAfter429, "HTTP 429 failover on Turn 2 must not overwrite Turn 1's session ToolMap")
+
+		provB := &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation: time.LoadLocation, ID: 9104, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Concurrency: 1,
+			},
+		}
+		_, err2B := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: provB, Token: "sk-b", Payload: turn2ResetWithHistory, PayloadBytes: len(turn2ResetWithHistory),
+			OriginalModel: "gpt-5.4", Turn: 2, WriteClient: func([]byte) error { return nil },
+		})
+		require.NoError(t, err2B)
+		require.Len(t, up.bodies, 3)
+		require.Equal(t, "function_call", gjson.GetBytes(up.bodies[2], "input.0.type").String())
+		require.Equal(t, "exec", gjson.GetBytes(up.bodies[2], "input.0.name").String())
+
+		// After Provider B completes Turn 2, session state reflects the explicit tools: [] reset.
+		savedAfterCommit, presentAfterCommit := gatewayhttp.OpenAIWSHTTPBridgeToolMapFromContext(c)
+		require.True(t, presentAfterCommit)
+		require.Nil(t, savedAfterCommit)
+	})
+
+	t.Run("ir_grok_warmup_with_additional_tools_preserves_inherited_tools_on_omitted_turn2", func(t *testing.T) {
+		grokStream := strings.Join([]string{
+			`data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_g2","status":"in_progress","model":"grok-4.5","output":[]}}`,
+			``,
+			`data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"fc_gp","type":"function_call","status":"in_progress","call_id":"call_gp","name":"apply_patch","arguments":""}}`,
+			``,
+			`data: {"type":"response.function_call_arguments.done","sequence_number":2,"item_id":"fc_gp","output_index":0,"arguments":"{\"input\":\"*** Begin Patch\\n*** End Patch\"}"}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"id":"fc_gp","type":"function_call","status":"completed","call_id":"call_gp","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\\n*** End Patch\"}"}}`,
+			``,
+			`data: {"type":"response.output_item.added","sequence_number":4,"output_index":1,"item":{"id":"fc_gdb","type":"function_call","status":"in_progress","call_id":"call_gdb","name":"db__query","arguments":""}}`,
+			``,
+			`data: {"type":"response.function_call_arguments.done","sequence_number":5,"item_id":"fc_gdb","output_index":1,"arguments":"{\"sql\":\"select 1\"}"}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":6,"output_index":1,"item":{"id":"fc_gdb","type":"function_call","status":"completed","call_id":"call_gdb","name":"db__query","arguments":"{\"sql\":\"select 1\"}"}}`,
+			``,
+			`data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_g2","status":"completed","model":"grok-4.5","output":[{"id":"fc_gp","type":"function_call","status":"completed","call_id":"call_gp","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\\n*** End Patch\"}"},{"id":"fc_gdb","type":"function_call","status":"completed","call_id":"call_gdb","name":"db__query","arguments":"{\"sql\":\"select 1\"}"}],"usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}}`,
+			``,
+			``,
+		}, "\n")
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(grokStream)),
+		}}
+		svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{Output: gatewayhttp.OpenAIResponseOptions{MaxLineSize: gatewayhttp.OpenAIResponseDefaultMaxLineSize}}, transport: up})
+
+		grokProv := &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation: time.LoadLocation, ID: 9105, Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey, Concurrency: 1,
+			},
+		}
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+		// Turn 1 local warmup carries both top-level tools and input additional_tools.
+		warmPayload := []byte(`{
+			"type":"response.create",
+			"model":"grok-4.5",
+			"generate":false,
+			"tools":[
+				{"type":"custom","name":"apply_patch","description":"Patch"},
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			],
+			"input":[
+				{"type":"additional_tools","tools":[
+					{"type":"namespace","name":"collab","tools":[{"type":"function","name":"ping","parameters":{"type":"object"}}]}
+				]},
+				{"type":"message","role":"developer","content":"warmup"}
+			]
+		}`)
+		warmRes, warmErr := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: grokProv, Token: "xai-key", Payload: warmPayload, PayloadBytes: len(warmPayload),
+			OriginalModel: "grok-4.5", RoutingModel: "grok-4.5", Turn: 1,
+			WriteClient: func([]byte) error { return nil },
+		})
+		require.NoError(t, warmErr)
+		require.True(t, warmRes.LocalWarmup)
+
+		// Turn 2 omits top-level tools while ingress replays Turn 1's input (including additional_tools).
+		var delivered []string
+		turn2Payload := []byte(`{
+			"type":"response.create",
+			"previous_response_id":` + fmt.Sprintf("%q", warmRes.ResponseID) + `,
+			"input":[
+				{"type":"additional_tools","tools":[
+					{"type":"namespace","name":"collab","tools":[{"type":"function","name":"ping","parameters":{"type":"object"}}]}
+				]},
+				{"type":"message","role":"developer","content":"warmup"},
+				{"type":"message","role":"user","content":"run patch and db"}
+			]
+		}`)
+		_, err2 := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, wsHTTPBridgeTurnInput{
+			Provider: grokProv, Token: "xai-key", Payload: turn2Payload, PayloadBytes: len(turn2Payload),
+			OriginalModel: "grok-4.5", RoutingModel: "grok-4.5", Turn: 2,
+			WriteClient: func(frame []byte) error {
+				delivered = append(delivered, string(frame))
+				return nil
+			},
+		})
+		require.NoError(t, err2)
+		require.Len(t, up.bodies, 1)
+		wireStr := string(up.bodies[0])
+		require.Equal(t, 1, strings.Count(wireStr, `"name":"apply_patch"`))
+		require.Equal(t, 1, strings.Count(wireStr, `"name":"db__query"`))
+		require.Equal(t, 1, strings.Count(wireStr, `"name":"collab__ping"`))
+
+		joined := strings.Join(delivered, "\n")
+		require.Contains(t, joined, `"type":"custom_tool_call"`)
+		require.Contains(t, joined, `"namespace":"db"`)
+		require.Contains(t, joined, `"name":"query"`)
+	})
 }

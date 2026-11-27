@@ -193,24 +193,3 @@ func TestGatewayCacheLiveCallIdentityAndController(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, closed)
 }
-
-// TestGatewayCacheReasoningContentRoundTrip stores and retrieves reasoning
-// text by item identifier. A missing key and blank identifier must both return
-// the recovery not-found sentinel rather than cached text.
-func TestGatewayCacheReasoningContentRoundTrip(t *testing.T) {
-	redisServer := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	cache, ok := NewGatewayCache(client).(session.ReasoningContentCache)
-	require.True(t, ok)
-
-	ctx := context.Background()
-	require.NoError(t, cache.SetReasoningContent(ctx, "item_reasoning", "cached thought", time.Hour))
-	value, err := cache.GetReasoningContent(ctx, "item_reasoning")
-	require.NoError(t, err)
-	require.Equal(t, "cached thought", value)
-
-	_, err = cache.GetReasoningContent(ctx, "missing")
-	require.ErrorIs(t, err, session.ErrReasoningContentNotFound)
-	_, err = cache.GetReasoningContent(ctx, "")
-	require.ErrorIs(t, err, session.ErrReasoningContentNotFound)
-}

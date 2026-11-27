@@ -1,0 +1,33 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_document_input","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_document_input","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_document_input_out","type":"message","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":3,"item_id":"msg_document_input_out","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"text":""}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":4,"item_id":"msg_document_input_out","output_index":0,"content_index":0,"delta":"The attached PDF contains 1 page "}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":5,"item_id":"msg_document_input_out","output_index":0,"content_index":0,"delta":"and specifies a 99.95% monthly availability target "}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":6,"item_id":"msg_document_input_out","output_index":0,"content_index":0,"delta":"for regional gateway endpoints."}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":7,"item_id":"msg_document_input_out","output_index":0,"content_index":0,"text":"The attached PDF contains 1 page and specifies a 99.95% monthly availability target for regional gateway endpoints."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":8,"item_id":"msg_document_input_out","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"text":"The attached PDF contains 1 page and specifies a 99.95% monthly availability target for regional gateway endpoints."}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":9,"output_index":0,"item":{"id":"msg_document_input_out","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","annotations":[],"text":"The attached PDF contains 1 page and specifies a 99.95% monthly availability target for regional gateway endpoints."}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":10,"response":{"id":"resp_document_input","object":"response","created_at":1760000000,"status":"completed","model":"gpt-5","output":[{"id":"msg_document_input_out","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","annotations":[],"text":"The attached PDF contains 1 page and specifies a 99.95% monthly availability target for regional gateway endpoints."}]}],"usage":{"input_tokens":420,"output_tokens":21,"total_tokens":441,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}
+

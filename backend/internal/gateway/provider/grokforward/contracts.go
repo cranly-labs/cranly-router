@@ -8,7 +8,7 @@ import (
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -56,6 +56,12 @@ type Options struct {
 	// Enter registers execution with application activity tracking when present;
 	// ResponsesExecutor defers the returned release through response reading.
 	Enter func() (func(), error)
+	// ResolveDialect constructs the target convert.Dialect for IR client-tool
+	// lowering from the resolved upstream model and request body.
+	ResolveDialect func(context.Context, string, []byte) convert.Dialect
+	// PrepareNativeReplay unpacks matching xai trc1 envelopes or strips foreign
+	// and cross-account envelopes for the resolved upstream model.
+	PrepareNativeReplay func(context.Context, string, []byte) ([]byte, error)
 }
 
 type (
@@ -112,10 +118,10 @@ type Ports interface {
 	// SetError records upstream status, message, and payload for request
 	// diagnostics.
 	SetError(int, string, string)
-	// ClientTools publishes this attempt's mapping for response restoration.
-	// The installed adapter retains its internal maps, so callers leave those
-	// maps unchanged while response readers use them.
-	ClientTools(bridge.ResponsesClientToolMapping)
+	// ClientToolMap publishes a detached snapshot of this attempt's IR ToolMap
+	// for buffered and per-event response restoration. Passing nil or a map
+	// without active call restorations clears any previously stored mapping.
+	ClientToolMap(*convert.ToolMap)
 	// CacheIdentity derives the upstream prompt-cache identity from body and
 	// model.
 	CacheIdentity([]byte, string) string

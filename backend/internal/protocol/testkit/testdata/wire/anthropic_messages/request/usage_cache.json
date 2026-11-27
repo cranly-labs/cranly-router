@@ -1,0 +1,59 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "speed": "fast",
+  "system": [
+    {
+      "type": "text",
+      "text": "You are a gateway billing auditor. Keep answers concise and cite exact token bucket relationships.",
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Reference policy: Anthropic input_tokens excludes cached reads and writes, whereas OpenAI input_tokens and prompt_tokens include them.",
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "5m"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "lookup_cache_policy",
+      "description": "Reads active prompt cache TTL settings.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Tenant cache namespace"
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      },
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Summarize how the cached system prefix and fresh context were accounted in this turn.",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "5m"
+          }
+        }
+      ]
+    }
+  ]
+}

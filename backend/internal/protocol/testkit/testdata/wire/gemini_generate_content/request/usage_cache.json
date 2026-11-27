@@ -1,0 +1,49 @@
+{
+  "cachedContent": "cachedContents/tenant-42-cache-policy-v1",
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a gateway billing auditor. Keep answers concise and cite exact token bucket relationships."
+      },
+      {
+        "text": "Reference policy: Anthropic input_tokens excludes cached reads and writes, whereas OpenAI input_tokens and prompt_tokens include them."
+      }
+    ]
+  },
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "lookup_cache_policy",
+          "description": "Reads active prompt cache TTL settings.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "scope": {
+                "type": "STRING",
+                "description": "Tenant cache namespace"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Summarize how the cached system prefix and fresh context were accounted in this turn."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256,
+    "temperature": 0.1
+  }
+}

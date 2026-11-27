@@ -1,0 +1,40 @@
+{
+  "id": "resp_tool_args_empty",
+  "model": "gpt-5",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "tool_call",
+      "id": "fc_empty_1",
+      "call": {
+        "call_id": "call_empty_str_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_clock"
+        },
+        "arguments": ""
+      }
+    },
+    {
+      "kind": "tool_call",
+      "id": "fc_empty_2",
+      "call": {
+        "call_id": "call_empty_obj_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_uptime"
+        },
+        "arguments": "{}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 44,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 20
+  }
+}

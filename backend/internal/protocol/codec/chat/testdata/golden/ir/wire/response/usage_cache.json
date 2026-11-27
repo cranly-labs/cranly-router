@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl_usage_cache",
+  "model": "gpt-4o",
+  "created_at": 1760002000,
+  "parts": [
+    {
+      "kind": "text",
+      "text": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 120,
+    "cache_read": 640,
+    "cache_write": 300,
+    "output": 28,
+    "accepted_prediction": 4,
+    "rejected_prediction": 2
+  },
+  "service_tier": "priority"
+}

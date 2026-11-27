@@ -1,0 +1,38 @@
+{
+  "id": "resp_tools_namespace",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "fc_ns_trace_2",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_ns_trace_2",
+      "namespace": "enterprise_observability_telemetry_connector",
+      "name": "query_distributed_trace_spans_by_service",
+      "arguments": "{\"service\":\"checkout\",\"limit\":20}"
+    },
+    {
+      "id": "fc_ns_spawn_2",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_ns_spawn_2",
+      "namespace": "collaboration",
+      "name": "spawn_agent",
+      "arguments": "{\"task\":\"summarize slow spans\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 132,
+    "output_tokens": 38,
+    "total_tokens": 170,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

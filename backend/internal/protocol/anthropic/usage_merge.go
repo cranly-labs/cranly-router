@@ -110,28 +110,6 @@ func MergeAnthropicUsage(dst *protocol.TokenUsage, src AnthropicUsage) {
 	}
 }
 
-// NormalizeUsage resolves one complete Messages usage value into canonical
-// disjoint buckets. Compatible prompt aliases and lifetime-only writes are
-// normalized through the same merger used by accounting; no input is invented
-// when the upstream supplies neither totals nor individual buckets.
-//
-// Returned values omit overlapping compatibility aliases, so another bridge
-// does not subtract the same cached prompt twice. Explicitly reported zero
-// lifetime details remain present in the result rather than becoming absent
-// observations during subsequent serialization.
-func NormalizeUsage(source AnthropicUsage) AnthropicUsage {
-	var usage protocol.TokenUsage
-	MergeAnthropicUsage(&usage, source)
-	result := UsageFromTokens(usage)
-	if source.CacheCreation != nil && result.CacheCreation == nil {
-		// Retain explicitly reported zero lifetimes in the canonical wire value;
-		// otherwise a later consumer could mistake a cleared bucket for absent metadata.
-		zero5m, zero1h := 0, 0
-		result.CacheCreation = &AnthropicCacheCreation{Ephemeral5mInputTokens: &zero5m, Ephemeral1hInputTokens: &zero1h}
-	}
-	return result
-}
-
 // UsageFromTokens projects observed disjoint token buckets into Messages usage.
 // Positive lifetime detail remains available without being added to its aggregate
 // again. The returned pointers own copied counts rather than the supplied snapshot.

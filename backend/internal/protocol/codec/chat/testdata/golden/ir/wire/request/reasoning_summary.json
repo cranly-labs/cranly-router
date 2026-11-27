@@ -1,0 +1,19 @@
+{
+  "model": "deepseek-reasoner",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Compare merge sort and quicksort stability in two sentences."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "medium"
+  },
+  "include_usage": true
+}

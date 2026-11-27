@@ -6,18 +6,19 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// cache_usage_scenario_test.go covers response.go and response_openai.go together.
-// It compares wire usage and internal accounting across Messages, Chat, and
-// Responses, including cache counts arriving after Gemini candidate completion.
+// cache_usage_scenario_test.go covers response.go and response_converted.go
+// across Anthropic Messages, OpenAI Chat, and OpenAI Responses clients. It
+// verifies wire usage and internal billing accounting when sparse cache token
+// counts arrive after Gemini candidate completion.
 
 // cacheWireSink captures serialized client payloads for protocol-level assertions.
 type cacheWireSink struct {
@@ -33,6 +34,39 @@ func (s *cacheWireSink) Emit(event upstream.OutputEvent) error {
 	return err
 }
 
+// newGeminiCacheExchangeForTest initializes a convert.Exchange for clientKind
+// and includeUsage so ReadConvertedStreaming and ReadConvertedBuffered can
+// format client-facing usage alongside billing accounting.
+func newGeminiCacheExchangeForTest(t *testing.T, clientKind string, includeUsage bool) *convert.Exchange {
+	t.Helper()
+	var proto protocol.ProtocolID
+	var reqBody []byte
+	switch clientKind {
+	case "messages":
+		proto = protocol.ProtocolAnthropicMessages
+		reqBody = []byte(`{"model":"gemini","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	case "chat":
+		proto = protocol.ProtocolOpenAIChatCompletions
+		if includeUsage {
+			reqBody = []byte(`{"model":"gemini","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`)
+		} else {
+			reqBody = []byte(`{"model":"gemini","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+		}
+	default:
+		proto = protocol.ProtocolOpenAIResponses
+		reqBody = []byte(`{"model":"gemini","input":"hi"}`)
+	}
+	ex, err := convert.NewExchange(reqBody, convert.Options{
+		Route: convert.Route{
+			Client:   proto,
+			Upstream: protocol.ProtocolGeminiGenerateContent,
+		},
+		ClientModel: "gemini",
+	})
+	require.NoError(t, err)
+	return ex
+}
+
 // TestGeminiClientCacheUsageMatrix converts the same cached prompt into each
 // supported client protocol. JSON and sparse-tail SSE must expose the cache
 // count while preserving disjoint accounting and inclusive OpenAI input totals.
@@ -40,45 +74,31 @@ func TestGeminiClientCacheUsageMatrix(t *testing.T) {
 	jsonBody := `{"candidates":[{"content":{"parts":[{"text":"OK"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":60,"candidatesTokenCount":10}}`
 	sseBody := "data: " + `{"candidates":[{"content":{"parts":[{"text":"OK"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100}}` + "\n\n" +
 		"data: " + `{"usageMetadata":{"cachedContentTokenCount":60,"candidatesTokenCount":10}}` + "\n\ndata: [DONE]\n\n"
-	for _, protocol := range []string{"messages", "chat", "responses"} {
+	for _, clientKind := range []string{"messages", "chat", "responses"} {
 		for _, stream := range []bool{false, true} {
-			t.Run(protocol+map[bool]string{false: "/json", true: "/sse"}[stream], func(t *testing.T) {
+			t.Run(clientKind+map[bool]string{false: "/json", true: "/sse"}[stream], func(t *testing.T) {
 				sink := &cacheWireSink{}
-				output := upstream.NewOutputContext(sink)
+				output := upstream.NewDeferredOutputContext(sink)
 				adapter := ResponseAdapter{Options: ResponseOptions{
-					ObserveImages: func([]byte) {}, ReadBody: io.ReadAll,
-					WriteHeaders: func(http.Header, http.Header) {},
-					ReverseTools: func(body []byte) []byte { return body },
+					ObserveImages: func([]byte) {},
+					ReadBody:      io.ReadAll,
+					WriteHeaders:  func(http.Header, http.Header) {},
+					ReverseTools:  func(body []byte) []byte { return body },
 				}}
 				body := jsonBody
 				if stream {
 					body = sseBody
 				}
 				response := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+				convOpts := ConvertedOptions{
+					Exchange: newGeminiCacheExchangeForTest(t, clientKind, true),
+				}
 				var usage *upstream.TokenUsage
 				var err error
 				if stream {
-					var result *StreamResult
-					if protocol == "messages" {
-						result, err = adapter.HandleStreamingResponse(output, response, time.Now(), "gemini")
-					} else {
-						mode := OpenAICompatChatCompletions
-						if protocol == "responses" {
-							mode = OpenAICompatResponses
-						}
-						result, err = adapter.HandleOpenAICompatStreamingResponseFromGemini(output, response, time.Now(), "gemini", false, true, mode, bridge.ResponsesClientToolMapping{})
-					}
-					require.NoError(t, err)
-					usage = result.Usage
+					usage, err = adapter.ReadConvertedStreaming(output, response, convOpts, false)
 				} else {
-					switch protocol {
-					case "messages":
-						usage, err = adapter.HandleNonStreamingResponse(output, response, "gemini")
-					case "chat":
-						usage, err = adapter.HandleChatCompletionsNonStreamingResponseFromGemini(output, response, "gemini", false)
-					case "responses":
-						usage, err = adapter.HandleResponsesNonStreamingResponseFromGemini(output, response, "gemini", false, bridge.ResponsesClientToolMapping{})
-					}
+					usage, err = adapter.ReadConvertedBuffered(output, response, convOpts, false, false)
 				}
 				require.NoError(t, err)
 				require.Equal(t, 40, usage.InputTokens)
@@ -102,7 +122,7 @@ func TestGeminiClientCacheUsageMatrix(t *testing.T) {
 					}
 				}
 				require.True(t, visible.IsObject(), sink.String())
-				switch protocol {
+				switch clientKind {
 				case "messages":
 					require.Equal(t, int64(40), visible.Get("input_tokens").Int())
 					require.Equal(t, int64(60), visible.Get("cache_read_input_tokens").Int())
@@ -128,8 +148,13 @@ func TestGeminiChatUsageOptOutRetainsAccounting(t *testing.T) {
 	sink := &cacheWireSink{}
 	adapter := ResponseAdapter{Options: ResponseOptions{ReverseTools: func(data []byte) []byte { return data }}}
 	response := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
-	result, err := adapter.HandleOpenAICompatStreamingResponseFromGemini(upstream.NewOutputContext(sink), response, time.Now(), "model", false, false, OpenAICompatChatCompletions, bridge.ResponsesClientToolMapping{})
+	usage, err := adapter.ReadConvertedStreaming(
+		upstream.NewDeferredOutputContext(sink),
+		response,
+		ConvertedOptions{Exchange: newGeminiCacheExchangeForTest(t, "chat", false)},
+		false,
+	)
 	require.NoError(t, err)
-	require.Equal(t, 60, result.Usage.CacheReadInputTokens)
+	require.Equal(t, 60, usage.CacheReadInputTokens)
 	require.NotContains(t, sink.String(), `"usage"`)
 }

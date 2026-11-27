@@ -1,0 +1,76 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Check the Go 1.26 release date first."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "opaque",
+          "id": "ws_go126_1",
+          "opaque": {
+            "origin": "openai_responses",
+            "type": "web_search_call",
+            "raw": {
+              "id": "ws_go126_1",
+              "type": "web_search_call",
+              "action": {
+                "type": "search",
+                "query": "Go 1.26 release date"
+              }
+            }
+          }
+        },
+        {
+          "kind": "text",
+          "id": "msg_go126_1",
+          "text": "Go 1.26 was released in February 2026.",
+          "annotations": [
+            {
+              "kind": "url_citation",
+              "url": "https://go.dev/doc/devel/release",
+              "title": "Go Release History",
+              "start_index": 0,
+              "end_index": 38
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Now search for the Go 1.27 encoding/json/v2 release notes and summarize its status."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "hosted",
+      "name": "web_search",
+      "hosted": {
+        "origin": "openai_responses",
+        "type": "web_search",
+        "raw": {
+          "type": "web_search",
+          "search_context_size": "medium"
+        }
+      }
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 512
+}

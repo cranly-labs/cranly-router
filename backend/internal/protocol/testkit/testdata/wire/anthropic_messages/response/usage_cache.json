@@ -1,0 +1,25 @@
+{
+  "id": "msg_usage_cache",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [
+    {
+      "type": "text",
+      "text": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 120,
+    "cache_creation_input_tokens": 300,
+    "cache_read_input_tokens": 640,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 180,
+      "ephemeral_1h_input_tokens": 120
+    },
+    "output_tokens": 28,
+    "speed": "fast"
+  }
+}

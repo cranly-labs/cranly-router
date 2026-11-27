@@ -12,7 +12,8 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
@@ -340,34 +341,54 @@ func (m BodyCodec) TrimGrokInvalidEncryptedContentRetryBody(body []byte) ([]byte
 
 // PatchGrokResponsesBody applies the base model and compatibility patch sequence
 // to a complete JSON body. Callers needing client-tool restoration use
-// PatchGrokResponsesBodyWithClientTools, which also returns the mapping required
-// by the response reader.
+// PatchGrokResponsesBodyWithToolMap, which also returns the ToolMap required by
+// the response reader.
 func (m BodyCodec) PatchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 	return m.PatchGrokResponsesBodyBase(body, upstreamModel)
 }
 
-// PatchGrokResponsesBodyWithClientTools promotes carried tools, adapts client
-// protocol shapes, and applies base Grok patching. It rejects invalid or
-// trailing JSON documents and returns a mapping paired with the resulting body.
-// Callers retain that mapping through response restoration; failed preparation
-// returns no usable mapping.
-func (m BodyCodec) PatchGrokResponsesBodyWithClientTools(body []byte, upstreamModel string) ([]byte, protocolbridge.ResponsesClientToolMapping, error) {
+// PatchGrokResponsesBodyWithToolMap promotes carried additional_tools items,
+// lowers unsupported client tools via convert.AdaptResponsesTools when needed,
+// and applies base Grok model and wire compatibility patches. Invalid or
+// trailing JSON documents return an error before any state is produced.
+func (m BodyCodec) PatchGrokResponsesBodyWithToolMap(
+	body []byte,
+	upstreamModel string,
+	dialect convert.Dialect,
+) ([]byte, *convert.ToolMap, []ir.Loss, error) {
 	if !json.Valid(body) {
-		return nil, protocolbridge.ResponsesClientToolMapping{}, fmt.Errorf("invalid json request body")
+		return nil, nil, nil, fmt.Errorf("invalid json request body")
 	}
 	promoted, err := m.SanitizeGrokResponsesInput(body)
 	if err != nil {
-		return nil, protocolbridge.ResponsesClientToolMapping{}, err
+		return nil, nil, nil, err
 	}
-	adapted, mapping, err := protocolbridge.AdaptResponsesClientToolsJSON(promoted, "Grok")
-	if err != nil {
-		return nil, protocolbridge.ResponsesClientToolMapping{}, err
+	if dialect.Tools == 0 {
+		dialect.Tools = ir.ToolSupportFunction | ir.ToolSupportHostedWebSearch
+	}
+	adapted := promoted
+	var toolMap *convert.ToolMap
+	var losses []ir.Loss
+	if convert.NeedsResponsesToolAdaptation(dialect, promoted, nil) {
+		hadNonEmptyTools := len(gjson.GetBytes(promoted, "tools").Array()) > 0
+		adapted, toolMap, losses, err = convert.AdaptResponsesTools(promoted, dialect, nil)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		// Remove an empty tools array left behind when every declared client
+		// namespace had zero inner functions so tool-free Grok requests omit tools.
+		if hadNonEmptyTools && gjson.GetBytes(adapted, "tools").IsArray() && len(gjson.GetBytes(adapted, "tools").Array()) == 0 {
+			adapted, err = sjson.DeleteBytes(adapted, "tools")
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		}
 	}
 	patched, err := m.PatchGrokResponsesBodyBase(adapted, upstreamModel)
 	if err != nil {
-		return nil, protocolbridge.ResponsesClientToolMapping{}, err
+		return nil, nil, nil, err
 	}
-	return patched, mapping, nil
+	return patched, toolMap, losses, nil
 }
 
 // PatchGrokResponsesBodyBase validates one complete JSON document and applies

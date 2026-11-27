@@ -2,18 +2,14 @@ package session
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
-// stores.go defines gateway cache interfaces for routing affinity, session
-// ownership, and protocol-specific continuation state. The interfaces expose
-// storage results so callers can distinguish a miss, an unavailable store, and
-// an ownership comparison that rejected a stale claimant.
-
-// ErrReasoningContentNotFound identifies an absent reasoning item so conversion
-// callers can continue with other history evidence when this cache has no text.
-var ErrReasoningContentNotFound = errors.New("reasoning content not found")
+// stores.go defines gateway cache interfaces for sticky routing affinity,
+// session-window ownership, transcript blocking, and deferred video billing.
+// Each interface separates cache misses, unavailable storage errors, and
+// rejected ownership or claim comparisons so callers apply their own recovery
+// or authorization rules.
 
 // OpenAIWSSessionPreemptionCache atomically replaces and compares shared Responses
 // session-window owners. GatewayCache implementations may supply this capability;
@@ -87,18 +83,6 @@ type GatewayCache interface {
 	// ttl. It leaves the recorded group unchanged; EnsureIsolation calls it after
 	// matching the owner group and propagates storage errors.
 	RefreshSessionOwnerTTL(ctx context.Context, userID int64, source, sessionHash string, ttl time.Duration) error
-}
-
-// ReasoningContentCache supplies item-ID reasoning text for Responses-to-Chat conversion.
-type ReasoningContentCache interface {
-	// SetReasoningContent stores text under itemID for the supplied lifetime.
-	// The production cache ignores empty IDs or text and defaults nonpositive TTL;
-	// write failures are returned to the caller's warning policy.
-	SetReasoningContent(ctx context.Context, itemID string, content string, ttl time.Duration) error
-	// GetReasoningContent returns reasoning text under itemID or an error on failure.
-	// The production cache uses ErrReasoningContentNotFound for an empty ID or miss;
-	// ReasoningHistory treats every read error as unavailable text.
-	GetReasoningContent(ctx context.Context, itemID string) (string, error)
 }
 
 // GrokVideoBillingCache stores video billing snapshots and expiring settlement claims.

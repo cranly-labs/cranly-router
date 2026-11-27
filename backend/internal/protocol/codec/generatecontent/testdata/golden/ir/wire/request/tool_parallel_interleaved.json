@@ -1,0 +1,51 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Fetch weather in Tokyo and local time in Asia/Tokyo simultaneously."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "city": {
+            "type": "STRING",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    },
+    {
+      "kind": "function",
+      "name": "get_time",
+      "description": "Get the local time for an IANA timezone.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "timezone": {
+            "type": "STRING",
+            "description": "IANA timezone identifier"
+          }
+        },
+        "required": [
+          "timezone"
+        ]
+      }
+    }
+  ],
+  "max_output_tokens": 256
+}

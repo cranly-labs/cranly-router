@@ -1,0 +1,44 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_stream_error_event",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 20,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "error",
+    "error": {
+      "type": "overloaded_error",
+      "message": "Upstream model capacity exhausted during stream generation."
+    }
+  }
+]

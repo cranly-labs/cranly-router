@@ -10,7 +10,6 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -214,7 +213,7 @@ func ReadSSEAsJSON(ctx context.Context, resp *http.Response, c *upstream.OutputC
 		// output from accumulated delta events so the client gets full content.
 		// gjson Array() returns empty slice for null, missing, or empty arrays.
 		if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
-			if outputJSON, reconstructed := bridge.ReconstructResponseOutputFromSSE(bodyText); reconstructed {
+			if outputJSON, reconstructed := wire.ReconstructResponseOutputFromSSE(bodyText); reconstructed {
 				// Optional reconstruction keeps the terminal response when patching fails,
 				// so usage and other final metadata remain available instead of losing the whole result.
 				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {

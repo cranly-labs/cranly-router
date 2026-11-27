@@ -8,19 +8,19 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// openai_text_anthropic.go dispatches Messages, Chat and Responses requests to
-// native Anthropic execution.
-// A selected Anthropic-compatible upstream can serve Messages directly or
-// receive requests converted from Chat or Responses. These HTTP entry facades
-// create adapters with the corresponding client protocol kind so the shared
-// native runner chooses the right conversion and error output.
+// openai_text_anthropic.go dispatches Messages, Chat, and Responses requests to
+// compatible Anthropic execution.
+// A selected Anthropic-compatible upstream serves Messages directly or receives
+// requests converted from Chat or Responses. Direct Messages unpacks or strips
+// trc1 continuity envelopes via PrepareNativeReplay, while converted OpenAI
+// flows record raw UpstreamResponseModel observations before returning.
 
 // NativeMessages executes one selected provider through its native Anthropic
-// endpoint. The native runner maps the model, cleans the body and owns the
-// response lifetime; callers retain the HTTP context until its synchronous
-// output and usage observation finish.
+// endpoint, unpacking or stripping trc1 continuity envelopes before model
+// preparation.
 func (s *OpenAITextExecutor) NativeMessages(
 	ctx context.Context,
 	c *gin.Context,
@@ -28,15 +28,17 @@ func (s *OpenAITextExecutor) NativeMessages(
 	body []byte,
 	defaultMappedModel string,
 ) (*forwardcore.OpenAIResult, error) {
-	adapter := &openAINativeAnthropicAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider}, kind: openaiexecution.NativeMessages}
+	adapter := &openAINativeAnthropicAdapter{
+		openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider},
+		kind:                           openaiexecution.NativeMessages,
+	}
 	result, err := openaiexecution.ForwardNativeMessages(ctx, body, defaultMappedModel, adapter)
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// NativeChat executes Chat input through the selected native Anthropic
-// endpoint. The runner converts Chat through Responses into Anthropic and
-// converts returned events back into Chat output; callers inspect the returned
-// result and error for completion eligibility.
+// NativeChat executes Chat input through the selected compatible Anthropic
+// endpoint via ForwardConvertedAnthropic and records raw UpstreamResponseModel
+// observations.
 func (s *OpenAITextExecutor) NativeChat(
 	ctx context.Context,
 	c *gin.Context,
@@ -44,15 +46,19 @@ func (s *OpenAITextExecutor) NativeChat(
 	body []byte,
 	defaultMappedModel string,
 ) (*forwardcore.OpenAIResult, error) {
-	adapter := &openAINativeAnthropicAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider}, kind: openaiexecution.NativeChat}
-	result, err := openaiexecution.ForwardNativeChat(ctx, body, defaultMappedModel, adapter)
-	return openaiexecution.ToForwardResult(result), err
+	adapter := &openAINativeAnthropicAdapter{
+		openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider},
+		kind:                           openaiexecution.NativeChat,
+	}
+	result, err := openaiexecution.ForwardConvertedAnthropic(ctx, protocol.ProtocolOpenAIChatCompletions, body, defaultMappedModel, adapter)
+	out := openaiexecution.ToForwardResult(result)
+	captureResponseModel(c, out)
+	return out, err
 }
 
-// NativeResponses executes Responses input through the selected native
-// Anthropic endpoint. The runner converts the request and Anthropic response
-// events for the Responses client, owns the upstream body lifetime, and may
-// return observed usage with a failure.
+// NativeResponses executes Responses input through the selected compatible
+// Anthropic endpoint via ForwardConvertedAnthropic and records raw
+// UpstreamResponseModel observations.
 func (s *OpenAITextExecutor) NativeResponses(
 	ctx context.Context,
 	c *gin.Context,
@@ -60,7 +66,12 @@ func (s *OpenAITextExecutor) NativeResponses(
 	body []byte,
 	defaultMappedModel string,
 ) (*forwardcore.OpenAIResult, error) {
-	adapter := &openAINativeAnthropicAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider}, kind: openaiexecution.NativeResponses}
-	result, err := openaiexecution.ForwardNativeResponses(ctx, body, defaultMappedModel, adapter)
-	return openaiexecution.ToForwardResult(result), err
+	adapter := &openAINativeAnthropicAdapter{
+		openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider},
+		kind:                           openaiexecution.NativeResponses,
+	}
+	result, err := openaiexecution.ForwardConvertedAnthropic(ctx, protocol.ProtocolOpenAIResponses, body, defaultMappedModel, adapter)
+	out := openaiexecution.ToForwardResult(result)
+	captureResponseModel(c, out)
+	return out, err
 }

@@ -1,19 +1,22 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tokenestimate"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
@@ -25,12 +28,14 @@ import (
 // a local estimate or an unsupported response, so a handled nil error does not
 // imply that a network count exchange occurred for every platform.
 //
-// Gemini preparation converts the Messages body, resolves its upstream model,
-// and wraps the result under generateContentRequest for native countTokens.
-// The output adapter reads successful totalTokens events and retains a local
+// Grok estimates Anthropic input locally via tokenestimate.Anthropic, while
+// Gemini preparation converts the Messages body via protocol/convert with
+// ReplayScheme and PlaceholderToken cleared, resolves its upstream model, and
+// wraps the result under generateContentRequest for native countTokens. The
+// output adapter reads successful totalTokens events and retains a local
 // estimate for the runtime's OAuth-scope rejection path. Both paths write the
-// Messages count shape, while other native failures use the shared Google
-// error mapping translated back into an Anthropic error.
+// Messages count shape, while other native failures use the shared Google error
+// mapping translated back into an Anthropic error.
 
 // messagesCountGoogleOutput translates native count output through the shared Google error adapter.
 type messagesCountGoogleOutput struct {
@@ -93,36 +98,157 @@ func ForwardSelectedCountTokens(ctx context.Context, c *gin.Context, target *gat
 	return errors.New("count_tokens executor is unavailable")
 }
 
-// forwardGeminiMessagesCount converts system prompts and tools for native Gemini counting and its OAuth scope retry.
-// The caller supplies a configured runtime and parsed Messages input. Conversion
-// errors write bad-request output, while JSON patch errors return directly.
-//
-// Upstream model resolution precedes insertion of the models/ name into the
-// converted body. Native counting receives that body in generateContentRequest,
-// retaining its converted system and tool fields. A local estimate of the same
-// body is captured before forwarding for the scope-rejection Count callback;
-// normal native output instead passes through the totalTokens sink.
-func forwardGeminiMessagesCount(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, parsed *requeststate.ParsedRequest, executor *GeminiExecutor) error {
-	// Convert Messages system, messages, and tools together, then insert the
-	// resolved model and wrap the generation request. Gemini counting consumes
-	// that nested shape, and the scope fallback estimates the same converted input.
-	body, err := bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(bridge.NativeGeminiOptions{}, parsed.Body.Bytes())
+// forwardGeminiMessagesCount translates an Anthropic Messages count_tokens
+// body into a Gemini generateContentRequest payload through convert.Exchange
+// with ReplayScheme and PlaceholderToken cleared. Request conversion errors
+// write an Anthropic HTTP 400 response, while valid payloads delegate native
+// countTokens execution and OAuth scope fallback estimation to ForwardNative.
+func forwardGeminiMessagesCount(
+	ctx context.Context,
+	c *gin.Context,
+	target *gatewayadapter.ExecutionProvider,
+	parsed *requeststate.ParsedRequest,
+	executor *GeminiExecutor,
+) error {
+	rawClient := parsed.Body.Bytes()
+	upstreamModel := gatewayadapter.ExecutionModelPolicy(target).UpstreamModel(ctx, parsed.Model)
+
+	attributes, err := gatewayadapter.ResolveModelAttributes(
+		ctx,
+		target,
+		upstreamModel,
+		executor.Runtime.Attributes,
+		"gemini_generate_content",
+	)
+	if err != nil {
+		return err
+	}
+	attributes.Target.Endpoint = "count_tokens"
+	adjusted := attributes.ForRequest(gatewayadapter.ModelRequestState(rawClient))
+	dialect := gatewayadapter.ConversionDialect(ctx, target, adjusted, protocol.ProtocolGeminiGenerateContent)
+	// Clear ReplayScheme and PlaceholderToken on count_tokens preflight payloads
+	// so historical signatures and dummy placeholders never inflate token counts.
+	dialect.ReplayScheme = ""
+	dialect.PlaceholderToken = ""
+	if !dialect.StripEffort && gatewayadapter.ExecutionModelPolicy(target).ShouldStripWireEffort(ctx, parsed.Model) {
+		dialect.StripEffort = true
+	}
+
+	exchange, err := convert.NewExchange(rawClient, convert.Options{
+		Route: convert.Route{
+			Client:   protocol.ProtocolAnthropicMessages,
+			Upstream: protocol.ProtocolGeminiGenerateContent,
+			Dialect:  dialect,
+		},
+		ClientModel: parsed.Model,
+		Runtime:     convert.DefaultRuntime(),
+	})
 	if err != nil {
 		WriteAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body")
 		return err
 	}
-	upstreamModel := gatewayadapter.ExecutionModelPolicy(target).UpstreamModel(ctx, parsed.Model)
-	body, err = sjson.SetBytes(body, "model", "models/"+upstreamModel)
+	geminiBody, err := exchange.UpstreamRequest()
+	if err != nil {
+		WriteAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "", err.Error())
+		return err
+	}
+
+	patchedBody, request, err := wrapGeminiCountTokensRequestBytes(geminiBody, upstreamModel)
 	if err != nil {
 		return err
 	}
-	request, err := json.Marshal(map[string]json.RawMessage{"generateContentRequest": body})
-	if err != nil {
-		return err
+	output := &messagesCountGoogleOutput{
+		GoogleBoundary: NewGoogleBoundary(c, executor.Runtime.Options, false),
+		context:        c,
+		fallback:       gemininative.EstimateGeminiCountTokens(patchedBody),
 	}
-	output := &messagesCountGoogleOutput{GoogleBoundary: NewGoogleBoundary(c, executor.Runtime.Options, false), context: c, fallback: gemininative.EstimateGeminiCountTokens(body)}
 	_, err = executor.Runtime.ForwardNative(ctx, output, target, parsed.Model, "countTokens", false, request)
 	return err
+}
+
+// wrapGeminiCountTokensRequestBytes inserts "model":"models/<upstreamModel>"
+// into geminiBody via ordered jsontext tokens and wraps the resulting object
+// under {"generateContentRequest": ...} without float64 re-decoding. Both the
+// patched inner object (used for scope-fallback token estimation) and the outer
+// countTokens request bytes are returned.
+func wrapGeminiCountTokensRequestBytes(geminiBody []byte, upstreamModel string) ([]byte, []byte, error) {
+	// rawMember pairs one top-level JSON key with its verbatim raw value bytes.
+	type rawMember struct {
+		key string         // decoded member name
+		val jsontext.Value // cloned raw JSON value
+	}
+	dec := jsontext.NewDecoder(bytes.NewReader(geminiBody), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '{' {
+		return nil, nil, errors.New("gemini count_tokens payload must be a JSON object")
+	}
+	var members []rawMember
+	for dec.PeekKind() != '}' {
+		kTok, kErr := dec.ReadToken()
+		if kErr != nil {
+			return nil, nil, kErr
+		}
+		key := kTok.String()
+		vRaw, vErr := dec.ReadValue()
+		if vErr != nil {
+			return nil, nil, vErr
+		}
+		if key == "model" {
+			continue
+		}
+		members = append(members, rawMember{
+			key: key,
+			val: bytes.Clone(vRaw),
+		})
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return nil, nil, err
+	}
+	if _, err := dec.ReadToken(); err != io.EOF {
+		return nil, nil, errors.New("trailing tokens after gemini count_tokens object")
+	}
+
+	qualifiedModel := "models/" + strings.TrimPrefix(strings.TrimSpace(upstreamModel), "models/")
+
+	var innerBuf bytes.Buffer
+	innerEnc := jsontext.NewEncoder(&innerBuf, jsontext.AllowInvalidUTF8(true))
+	if err := innerEnc.WriteToken(jsontext.BeginObject); err != nil {
+		return nil, nil, err
+	}
+	if err := innerEnc.WriteToken(jsontext.String("model")); err != nil {
+		return nil, nil, err
+	}
+	if err := innerEnc.WriteToken(jsontext.String(qualifiedModel)); err != nil {
+		return nil, nil, err
+	}
+	for _, m := range members {
+		if err := innerEnc.WriteToken(jsontext.String(m.key)); err != nil {
+			return nil, nil, err
+		}
+		if err := innerEnc.WriteValue(m.val); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := innerEnc.WriteToken(jsontext.EndObject); err != nil {
+		return nil, nil, err
+	}
+	patchedBody := bytes.TrimSpace(innerBuf.Bytes())
+
+	var outerBuf bytes.Buffer
+	outerEnc := jsontext.NewEncoder(&outerBuf, jsontext.AllowInvalidUTF8(true))
+	if err := outerEnc.WriteToken(jsontext.BeginObject); err != nil {
+		return nil, nil, err
+	}
+	if err := outerEnc.WriteToken(jsontext.String("generateContentRequest")); err != nil {
+		return nil, nil, err
+	}
+	if err := outerEnc.WriteValue(jsontext.Value(patchedBody)); err != nil {
+		return nil, nil, err
+	}
+	if err := outerEnc.WriteToken(jsontext.EndObject); err != nil {
+		return nil, nil, err
+	}
+	return patchedBody, bytes.TrimSpace(outerBuf.Bytes()), nil
 }
 
 // Count writes the estimate captured before native Gemini forwarding.

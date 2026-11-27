@@ -1,0 +1,95 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 4096,
+  "store": false,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "read_config",
+      "description": "Read a YAML configuration file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Config path"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Note: literal marker trc1:openai:demo in docs is plain text. Inspect gateway.yaml."
+        }
+      ]
+    },
+    {
+      "id": "rs_nat_same_1",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Read gateway.yaml to check read and write timeouts."
+        }
+      ],
+      "encrypted_content": "trc1:openai:eyJkIjoiZ0FBQUFBQm5OYXRpdmVPcGVuQUlTYW1lQWNjdDAxIiwicCI6MTAxfQ"
+    },
+    {
+      "id": "fc_nat_cfg_1",
+      "type": "function_call",
+      "call_id": "call_cfg_1",
+      "name": "read_config",
+      "arguments": "{\"path\":\"gateway.yaml\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_cfg_1",
+      "output": "{\"read_timeout_s\":30,\"write_timeout_s\":60}"
+    },
+    {
+      "id": "rs_nat_empty_2",
+      "type": "reasoning",
+      "summary": [],
+      "encrypted_content": "trc1:xai:eyJkIjoiZW5jX3hhaV9uYXRpdmVfZm9yZWlnbl8wMiIsInAiOjIwMn0"
+    },
+    {
+      "id": "msg_nat_2",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Read timeout is 30s and write timeout is 60s."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Do those timeouts satisfy our 45s upstream SLA?"
+        }
+      ]
+    }
+  ]
+}

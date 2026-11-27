@@ -12,6 +12,7 @@ import (
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -183,4 +184,18 @@ func (o GoogleBoundary) MappedClaudeError(a *gatewayadapter.ExecutionProvider, s
 // handle the returned error.
 func (o GoogleBoundary) MapAntigravityCollectionError(err error) error {
 	return o.Antigravity.MapAntigravityCollectionError(err)
+}
+
+// MapAntigravityFailure delegates single-pass Antigravity failure observation,
+// error-body logging, and Messages passthrough-rule matching to o.Antigravity.
+// Callers write the returned status, type, code, and message once via terminal
+// SSE or HTTP JSON helpers.
+func (o GoogleBoundary) MapAntigravityFailure(
+	a *gatewayadapter.ExecutionProvider,
+	source protocol.ProtocolID,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+) (int, string, string, string, error) {
+	return o.Antigravity.MapAntigravityFailure(a, source, upstreamStatus, upstreamRequestID, body)
 }

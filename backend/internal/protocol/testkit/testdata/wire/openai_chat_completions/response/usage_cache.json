@@ -1,0 +1,33 @@
+{
+  "id": "chatcmpl_usage_cache",
+  "object": "chat.completion",
+  "created": 1760002000,
+  "model": "gpt-4o",
+  "service_tier": "priority",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1060,
+    "completion_tokens": 28,
+    "total_tokens": 1088,
+    "prompt_tokens_details": {
+      "cached_tokens": 640,
+      "cache_write_tokens": 300,
+      "audio_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 4,
+      "rejected_prediction_tokens": 2
+    }
+  }
+}

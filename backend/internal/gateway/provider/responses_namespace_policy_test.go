@@ -9,7 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
@@ -190,7 +190,7 @@ func TestStripOpenAIResponsesInputNamespaces(t *testing.T) {
 		]
 	}`)
 
-	stripped, err := protocolbridge.StripOpenAIResponsesInputNamespaces(body, false)
+	stripped, err := openai.StripOpenAIResponsesInputNamespaces(body, false)
 	require.NoError(t, err)
 	for index := range 8 {
 		require.False(t, gjson.GetBytes(stripped, "input."+strconv.Itoa(index)+".namespace").Exists())
@@ -216,7 +216,7 @@ func TestStripOpenAIResponsesInputNamespacesLeavesOtherShapesByteExact(t *testin
 	}
 	for _, body := range tests {
 		for _, keepToolCallNamespaces := range []bool{false, true} {
-			stripped, err := protocolbridge.StripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
+			stripped, err := openai.StripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
 			require.NoError(t, err)
 			require.Equal(t, body, stripped)
 		}
@@ -228,7 +228,7 @@ func TestStripOpenAIResponsesInputNamespacesLeavesOtherShapesByteExact(t *testin
 // the message field while retaining call identity and exact large integers.
 func TestStripOpenAIResponsesInputNamespacesHandlesEscapedKeys(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message","role":"user","na\u006despace":"discard","content":"hello","large":9007199254740993},{"type":"function_call","name":"js","na\u006despace":"browser","arguments":"{}"}]}`)
-	cleaned, err := protocolbridge.StripOpenAIResponsesInputNamespaces(body, true)
+	cleaned, err := openai.StripOpenAIResponsesInputNamespaces(body, true)
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(cleaned, "input.0.namespace").Exists())
 	require.Equal(t, "browser", gjson.GetBytes(cleaned, "input.1.namespace").String())
@@ -254,7 +254,7 @@ func TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces(t *testing.T
 		]
 	}`)
 
-	stripped, err := protocolbridge.StripOpenAIResponsesInputNamespaces(body, true)
+	stripped, err := openai.StripOpenAIResponsesInputNamespaces(body, true)
 	require.NoError(t, err)
 
 	require.Equal(t, "collaboration", gjson.GetBytes(stripped, "input.0.namespace").String())
@@ -269,17 +269,17 @@ func TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces(t *testing.T
 
 	// Type matching ignores case and surrounding whitespace.
 	mixedCase := []byte(`{"input":[{"type":" Function_Call ","namespace":"collaboration","name":"spawn_agent"}]}`)
-	keptMixedCase, err := protocolbridge.StripOpenAIResponsesInputNamespaces(mixedCase, true)
+	keptMixedCase, err := openai.StripOpenAIResponsesInputNamespaces(mixedCase, true)
 	require.NoError(t, err)
 	require.Equal(t, mixedCase, keptMixedCase)
 
 	// An input containing only calls can pass through byte for byte.
 	callsOnly := []byte(`{"input":[{"type":"function_call","namespace":"collaboration","name":"spawn_agent"}]}`)
-	unchanged, err := protocolbridge.StripOpenAIResponsesInputNamespaces(callsOnly, true)
+	unchanged, err := openai.StripOpenAIResponsesInputNamespaces(callsOnly, true)
 	require.NoError(t, err)
 	require.Equal(t, callsOnly, unchanged)
 
-	strippedAll, err := protocolbridge.StripOpenAIResponsesInputNamespaces(body, false)
+	strippedAll, err := openai.StripOpenAIResponsesInputNamespaces(body, false)
 	require.NoError(t, err)
 	for index := range 8 {
 		require.False(t, gjson.GetBytes(strippedAll, "input."+strconv.Itoa(index)+".namespace").Exists())

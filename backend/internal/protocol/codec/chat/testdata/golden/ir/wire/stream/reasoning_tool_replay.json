@@ -1,0 +1,100 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_reasoning_tool_replay",
+      "model": "deepseek-reasoner",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {}
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "SKU-42 has 4 units against a reorder point of 20; "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "now query SKU-99 stock."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "SKU-42 has 4 units against a reorder point of 20; now query SKU-99 stock."
+        ]
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inv_sku99_2",
+        "tool": {
+          "kind": "function",
+          "name": "query_inventory"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"sku\":"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "\"SKU-99\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 96,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 52,
+      "reasoning": 28
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inv_sku99_2",
+        "tool": {
+          "kind": "function",
+          "name": "query_inventory"
+        },
+        "arguments": "{\"sku\":\"SKU-99\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

@@ -1,0 +1,77 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "query_inventory",
+          "description": "Query warehouse stock counts for an SKU.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "sku": {
+                "type": "STRING",
+                "description": "Catalog SKU code"
+              }
+            },
+            "required": [
+              "sku"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Check warehouse stock for SKU-42 and SKU-99, then recommend reorder quantities."
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "text": "First inspect SKU-42 stock levels before querying SKU-99.",
+          "thought": true,
+          "thoughtSignature": "CpEBCocB_gem_inv_thought_turn1"
+        },
+        {
+          "functionCall": {
+            "id": "call_inv_sku42_1",
+            "name": "query_inventory",
+            "args": {
+              "sku": "SKU-42"
+            }
+          },
+          "thoughtSignature": "CpEBCocB_gem_inv_fc_turn1"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "call_inv_sku42_1",
+            "name": "query_inventory",
+            "response": {
+              "sku": "SKU-42",
+              "on_hand": 4,
+              "reorder_point": 20
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingBudget": 2048,
+      "includeThoughts": true
+    }
+  }
+}

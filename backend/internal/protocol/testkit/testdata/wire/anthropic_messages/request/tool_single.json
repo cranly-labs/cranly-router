@@ -1,0 +1,54 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Check the weather in Tokyo, then check Osaka."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_weather_tok_1",
+          "name": "get_weather",
+          "input": {
+            "city": "Tokyo"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_weather_tok_1",
+          "content": "{\"city\":\"Tokyo\",\"temp_c\":18,\"condition\":\"clear\"}"
+        }
+      ]
+    }
+  ]
+}

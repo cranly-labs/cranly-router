@@ -1,0 +1,102 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_tools_namespace",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_ns_trace_2",
+        "tool": {
+          "kind": "function",
+          "name": "enterprise_observability_telemetry_connector__query_di__5375327d"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"service\":\"checkout\","
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\"limit\":20}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 132,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 38
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_ns_trace_2",
+        "tool": {
+          "kind": "function",
+          "name": "enterprise_observability_telemetry_connector__query_di__5375327d"
+        },
+        "arguments": "{\"service\":\"checkout\",\"limit\":20}"
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_ns_spawn_2",
+        "tool": {
+          "kind": "function",
+          "name": "collaboration__spawn_agent"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"task\":\"summarize slow spans\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_ns_spawn_2",
+        "tool": {
+          "kind": "function",
+          "name": "collaboration__spawn_agent"
+        },
+        "arguments": "{\"task\":\"summarize slow spans\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

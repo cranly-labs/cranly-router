@@ -1,0 +1,41 @@
+{
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a concise protocol engineer."
+      },
+      {
+        "text": "Always include unit names next to numbers."
+      }
+    ]
+  },
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "What is the default HTTP keepalive timeout?"
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "text": "The default timeout is 30 seconds."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Also include the equivalent in milliseconds.\n\nRestate the timeout."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

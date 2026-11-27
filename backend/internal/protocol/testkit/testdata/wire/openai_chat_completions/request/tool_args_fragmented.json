@@ -1,0 +1,40 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "write_note",
+        "description": "Write text content to a note path.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Relative file path"
+            },
+            "text": {
+              "type": "string",
+              "description": "Note body"
+            }
+          },
+          "required": [
+            "path",
+            "text"
+          ]
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write notes/a.txt containing quotes, a newline, Japanese text, and a literal backslash."
+    }
+  ]
+}
