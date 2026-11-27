@@ -1,0 +1,122 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_tool_parallel_interleaved",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_interleaved_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"ci"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "ty\":\"To"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "kyo\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 52,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 28
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_interleaved_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": "{\"city\":\"Tokyo\"}"
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_interleaved_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_time"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"time"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "zone\":\"Asia/"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "Tokyo\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_interleaved_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_time"
+        },
+        "arguments": "{\"timezone\":\"Asia/Tokyo\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

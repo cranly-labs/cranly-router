@@ -1,0 +1,67 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "lookup_host",
+          "description": "Resolve an internal hostname to its IPv4 address.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "hostname": {
+                "type": "STRING",
+                "description": "Internal DNS hostname"
+              }
+            },
+            "required": [
+              "hostname"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "First resolve gateway.internal."
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "name": "lookup_host",
+            "args": {
+              "hostname": "gateway.internal"
+            }
+          },
+          "thoughtSignature": "sig_fc_lookup_0"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "lookup_host",
+            "response": {
+              "ip": "10.0.0.1"
+            }
+          }
+        },
+        {
+          "text": "Now resolve both db-primary.internal and db-replica.internal."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

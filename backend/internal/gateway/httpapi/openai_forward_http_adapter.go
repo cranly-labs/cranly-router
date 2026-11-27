@@ -138,14 +138,14 @@ func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, 
 			return err
 		},
 		WrapResponseBody: func(resp *http.Response) {
-			if mapping, ok := OpenAIResponsesClientToolMapping(c); ok && openai.IsEventStreamResponse(resp.Header) {
+			if toolMap, ok := OpenAIResponsesClientToolMap(c); ok && openai.IsEventStreamResponse(resp.Header) {
 				limit := OpenAIResponseDefaultMaxLineSize
 				if s.Output.Options.MaxLineSize > 0 {
 					limit = s.Output.Options.MaxLineSize
 				}
-				// A request mapping identifies lowered client tools. Restore its SSE
-				// nodes while preserving response-body cleanup through the wrapper's Close.
-				resp.Body = upstream.NewResponsesClientToolStreamBody(resp.Body, mapping, limit)
+				// Restore lowered client-tool SSE events through convert.NewResponsesToolStream
+				// while preserving underlying response-body cleanup through Close.
+				resp.Body = upstream.NewResponsesToolStreamBody(resp.Body, toolMap, limit)
 			}
 		},
 		BindResponseOwner: func(ctx context.Context, id string) { s.Output.BindResponseProvider(ctx, c, provider, id) },

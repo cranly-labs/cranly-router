@@ -46,9 +46,8 @@ type ExecutionRules struct {
 	OmitEmptyToolConfig    bool              `json:"omit_empty_tool_config,omitempty"`   // omit empty Gemini tool configuration
 	OmitStopSequences      bool              `json:"omit_stop_sequences,omitempty"`      // omit transformed Gemini stop sequences
 	AdaptiveThinkingBudget int               `json:"adaptive_thinking_budget,omitempty"` // tokens
-	// BudgetPadding reserves output tokens above the thinking budget.
-	// GeminiThinking subtracts it from the resolved output limit when bounding
-	// a positive budget.
+	// BudgetPadding reserves output tokens above positive thinking budgets;
+	// ConversionDialect forwards it so encoders cap budgets at OutputLimit-BudgetPadding.
 	BudgetPadding int `json:"budget_padding,omitempty"`
 	// ImageGenerationTool, OutputParameter, ToolSearch, and Verbosity retain nil
 	// when no control rule is declared. Populated booleans distinguish declared

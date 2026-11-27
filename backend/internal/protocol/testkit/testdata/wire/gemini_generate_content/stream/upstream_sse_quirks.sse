@@ -1,0 +1,12 @@
+: gemini-proxy-keepalive   
+
+data:{"responseId":"gem_upstream_sse_quirks","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Normalized quirky upstream SSE "}]}}]}  
+
+data: {"responseId":"gem_upstream_sse_quirks","modelVersion":"gemini-2.5-pro",  
+data: "candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Normalized quirky upstream SSE frames cleanly."}]}}]}
+
+data: {"responseId":"gem_upstream_sse_quirks","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":"call_gem_quirk_1","name":"get_region_health","args":{"region":"us-east"}},"thoughtSignature":"gem_sig_quirk_step_1"}]}}]}
+
+data: {"responseId":"gem_upstream_sse_quirks","modelVersion":"gemini-2.5-pro",  
+data: "candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":"call_gem_quirk_1","name":"get_region_health","args":{"region":"us-east"}}},{"functionCall":{"id":"call_gem_quirk_2","name":"get_region_health","args":{"region":"eu-west"}}}]},"finishReason":"STOP"}],
+data: "usageMetadata":{"promptTokenCount":26,"candidatesTokenCount":18,"totalTokenCount":44}}

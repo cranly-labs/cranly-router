@@ -18,6 +18,7 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
@@ -109,11 +110,11 @@ func TestOpenCodeGeminiCompatibleRetriesUseOuterBudget(t *testing.T) {
 			var err error
 			switch client {
 			case "messages":
-				_, err = svc.Forward(context.Background(), output, value, []byte(`{"model":"gemini-2.5-flash","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`))
+				_, err = svc.ForwardConverted(context.Background(), output, value, protocol.ProtocolAnthropicMessages, []byte(`{"model":"gemini-2.5-flash","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`))
 			case "responses":
-				_, err = svc.ForwardAsResponses(context.Background(), output, value, []byte(`{"model":"gemini-2.5-flash","input":"hi"}`), nil)
+				_, err = svc.ForwardConverted(context.Background(), output, value, protocol.ProtocolOpenAIResponses, []byte(`{"model":"gemini-2.5-flash","input":"hi"}`))
 			case "chat":
-				_, err = svc.ForwardAsChatCompletions(context.Background(), output, value, []byte(`{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}`))
+				_, err = svc.ForwardConverted(context.Background(), output, value, protocol.ProtocolOpenAIChatCompletions, []byte(`{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}`))
 			}
 			var failure *forward.UpstreamFailoverError
 			require.ErrorAs(t, err, &failure)

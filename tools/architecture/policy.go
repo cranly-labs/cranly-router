@@ -72,7 +72,14 @@ func nearest(directory string, table map[string]dependencySet) string {
 	return best
 }
 
-// 目录约定决定角色；只对真实存在的非标准布局作少量明确声明。
+// locate classifies a repository-relative Go filename into its owning module,
+// nearest leaf or platform entry, test flag, and architectural role. Unregistered
+// top-level modules and unregistered internal/upstream subdirectories keep an
+// empty role so rulesFor restricts them to the minimal closed standard-library set.
+//
+// Fixture directories match before pure directories and leaf entries so testkit
+// packages under pure modules such as internal/protocol/testkit receive fixture
+// standard-library access while retaining their leafDependencies internal-import boundary.
 func locate(filename string) location {
 	dir := path.Dir(filename)
 	parts := strings.Split(dir, "/")
@@ -91,14 +98,14 @@ func locate(filename string) location {
 		return l
 	}
 	switch {
-	case within(dir, "internal/pkg"), within(dir, "internal/protocol"),
-		strings.HasPrefix(dir, "internal/") && (slices.Contains(parts, "dto") || slices.Contains(parts, "contract")),
-		l.leaf != "" && !strings.HasPrefix(l.leaf, "internal/app/"):
-		l.role = "pure"
 	case within(dir, "tests/integration"), within(dir, "internal/testutil"),
 		len(parts) > 2 && parts[2] == "testkit",
 		within(dir, "internal/gateway/httpapi/testkit"), within(dir, "internal/gateway/session/testkit"), within(dir, "internal/upstream/grok/testkit"):
 		l.role = "fixture"
+	case within(dir, "internal/pkg"), within(dir, "internal/protocol"),
+		strings.HasPrefix(dir, "internal/") && (slices.Contains(parts, "dto") || slices.Contains(parts, "contract")),
+		l.leaf != "" && !strings.HasPrefix(l.leaf, "internal/app/"):
+		l.role = "pure"
 	case l.module == "cmd", l.module == "internal/app", l.module == "internal/setup":
 		l.role = "assembly"
 	case l.module == "ent", l.module == "migrations":

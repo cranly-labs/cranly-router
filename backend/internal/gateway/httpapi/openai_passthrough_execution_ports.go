@@ -16,7 +16,9 @@ import (
 	forward "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -43,6 +45,9 @@ import (
 // openAIResponsesRejectedFieldRetryBudgetContextKey identifies the request-wide repair allowance
 // reused by per-provider body-deduplication states during passthrough recovery.
 const openAIResponsesRejectedFieldRetryBudgetContextKey = "openai_responses_rejected_field_retry_budget"
+
+// Interface assertion confirms openAIPassthroughExecutionAdapter satisfies PassthroughPorts.
+var _ forward.PassthroughPorts = (*openAIPassthroughExecutionAdapter)(nil)
 
 // openAIPassthroughExecutionAdapter binds passthrough Responses execution to
 // shared text attempt services.
@@ -159,20 +164,6 @@ func (p *openAIPassthroughExecutionAdapter) CompatibilityBodyWithSkip(body []byt
 // Codex tool state.
 func (p *openAIPassthroughExecutionAdapter) MergeToolNames(value map[string]string) {
 	MergeCodexToolNameReverse(p.c, value)
-}
-
-// AdaptClientTools lowers client tool nodes and publishes their restoration
-// mapping on success. An error leaves current mapping state unchanged; callers
-// clear prior attempt mappings before preparation to keep the later response
-// associated with adopted bytes.
-func (p *openAIPassthroughExecutionAdapter) AdaptClientTools(body []byte) ([]byte, error) {
-	updated, mapping, err := protocolbridge.AdaptOpenAIResponsesClientTools(body)
-	// Bind reverse names only after successful lowering; the response mapping
-	// must describe the prepared tool body the passthrough runner actually adopts.
-	if err == nil {
-		SetOpenAIResponsesClientToolMapping(p.c, mapping)
-	}
-	return updated, err
 }
 
 // NormalizeLite delegates provider-specific Responses Lite request
@@ -350,19 +341,18 @@ func (p *openAIPassthroughExecutionAdapter) ErrorResponsePass(ctx context.Contex
 	return p.s.Output.PassthroughError(ctx, r, p.c, p.provider, body, payload)
 }
 
-// WrapResponseBody installs client-tool SSE restoration when this request has
-// a mapping and the upstream declares event-stream. A positive MaxLineSize is
-// used regardless of Configured; otherwise the default applies, and response
-// closure follows the wrapper's underlying body.
+// WrapResponseBody installs client-tool SSE restoration from the stored IR
+// ToolMap when this request lowered client tools and the upstream declares
+// event-stream, preserving underlying response-body cleanup through Close.
 func (p *openAIPassthroughExecutionAdapter) WrapResponseBody(r *http.Response) {
-	if mapping, ok := OpenAIResponsesClientToolMapping(p.c); ok && openai.IsEventStreamResponse(r.Header) {
+	if toolMap, ok := OpenAIResponsesClientToolMap(p.c); ok && openai.IsEventStreamResponse(r.Header) {
 		limit := OpenAIResponseDefaultMaxLineSize
-		if p.s.Output.Options.MaxLineSize > 0 {
+		if p.s.Output != nil && p.s.Output.Options.MaxLineSize > 0 {
 			limit = p.s.Output.Options.MaxLineSize
 		}
-		// Restore lowered client-tool nodes while the reader consumes this same
-		// response; the wrapper retains closure of the original body through Close.
-		r.Body = upstream.NewResponsesClientToolStreamBody(r.Body, mapping, limit)
+		// Restore lowered client-tool SSE events through convert.NewResponsesToolStream
+		// while retaining closure of the underlying HTTP response body on Close.
+		r.Body = upstream.NewResponsesToolStreamBody(r.Body, toolMap, limit)
 	}
 }
 
@@ -474,4 +464,89 @@ func (p *openAIPassthroughExecutionAdapter) ModelAttributes(ctx context.Context,
 		WriteOpenAIModelAttributeError(p.c, err, p.c.Writer.Written())
 	}
 	return result, err
+}
+
+// PrepareNativeResponsesReplay unpacks matching trc1 continuity envelopes or
+// strips incompatible items on native HTTP Responses passthrough. Carrier-free
+// payloads return body unchanged without resolving model catalog attributes.
+func (p *openAIPassthroughExecutionAdapter) PrepareNativeResponsesReplay(ctx context.Context, model string, body []byte) ([]byte, error) {
+	if p == nil {
+		return body, nil
+	}
+	ctx = p.resolveContext(ctx)
+	rewritten, _, err := gatewayadapter.PrepareNativeReplay(
+		ctx,
+		p.provider,
+		model,
+		body,
+		p.s.modelAttributes(),
+		protocol.ProtocolOpenAIResponses,
+		protocol.ProtocolOpenAIResponses,
+	)
+	return rewritten, err
+}
+
+// resolveContext returns ctx when non-nil for downstream attribute and replay
+// lookups. When ctx is nil, it falls back to the inbound Gin HTTP request
+// context or context.Background if no request is attached.
+func (p *openAIPassthroughExecutionAdapter) resolveContext(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
+	}
+	if p != nil && p.c != nil && p.c.Request != nil {
+		return p.c.Request.Context()
+	}
+	return context.Background()
+}
+
+// NeedsClientToolAdaptation clears any prior attempt's IR ToolMap from request
+// state before resolving model's target Dialect. It reports whether body
+// requires Responses client-tool lowering on this API Key passthrough attempt.
+func (p *openAIPassthroughExecutionAdapter) NeedsClientToolAdaptation(ctx context.Context, model string, body []byte) bool {
+	ClearOpenAIResponsesClientToolMap(p.c)
+	dialect := p.resolveClientToolDialect(ctx, model, body)
+	return convert.NeedsResponsesToolAdaptation(dialect, body, nil)
+}
+
+// AdaptClientTools lowers unsupported client tools via convert.AdaptResponsesTools
+// and publishes the resulting ToolMap on success. Validation or collision errors
+// write a local HTTP 400 invalid_request_error on tools and return a
+// MODEL_CAPABILITY_UNSUPPORTED error so failover and health penalties are skipped.
+func (p *openAIPassthroughExecutionAdapter) AdaptClientTools(ctx context.Context, model string, body []byte) ([]byte, error) {
+	dialect := p.resolveClientToolDialect(ctx, model, body)
+	updated, toolMap, losses, err := convert.AdaptResponsesTools(body, dialect, nil)
+	if err != nil {
+		SetOpsUpstreamError(p.c, http.StatusBadRequest, err.Error(), "")
+		MarkResponseCommitted(p.c)
+		WriteOpenAIForwardRejection(p.c, http.StatusBadRequest, "invalid_request_error", err.Error(), "tools")
+		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(err)
+	}
+	if len(losses) > 0 {
+		logging.FromContext(p.resolveContext(ctx)).Debug(
+			"gateway.openai_passthrough_tool_adaptation_losses",
+			zap.Int64("provider_id", p.provider.Record.ID),
+			zap.String("model", model),
+			zap.Int("loss_count", len(losses)),
+		)
+	}
+	// Publish the active ToolMap only after lowering succeeds so response
+	// restoration matches the outgoing request bytes adopted by RunPassthrough.
+	SetOpenAIResponsesClientToolMap(p.c, toolMap)
+	return updated, nil
+}
+
+// resolveClientToolDialect constructs the target convert.Dialect for passthrough
+// client-tool lowering. Catalog lookup failures fall back to zero resolution so
+// subsequent ModelAttributes admission retains ownership of model-lookup errors.
+func (p *openAIPassthroughExecutionAdapter) resolveClientToolDialect(ctx context.Context, model string, body []byte) convert.Dialect {
+	reqCtx := p.resolveContext(ctx)
+	// Fall back to a zero resolution when catalog lookup fails here so downstream
+	// ModelAttributes admission keeps ownership of reporting invalid model errors.
+	res, err := gatewayadapter.ResolveModelAttributes(reqCtx, p.provider, model, p.s.modelAttributes(), "openai_responses")
+	if err != nil {
+		res = modelrules.Resolution{}
+	} else {
+		res = res.ForRequest(gatewayadapter.ModelRequestState(body))
+	}
+	return gatewayadapter.ConversionDialect(reqCtx, p.provider, res, protocol.ProtocolOpenAIResponses)
 }

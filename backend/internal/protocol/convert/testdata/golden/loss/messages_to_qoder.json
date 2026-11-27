@@ -1,0 +1,1003 @@
+{
+  "route": "messages_to_qoder",
+  "entries": [
+    {
+      "fixture": "wire/anthropic_messages/request/document_input.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "extra_dropped",
+          "path": "messages[0].parts[0].extra"
+        },
+        {
+          "kind": "media_unsupported",
+          "path": "messages[0].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/empty_response.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/image_input.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "media_unsupported",
+          "path": "messages[0].parts[0]"
+        },
+        {
+          "kind": "media_unsupported",
+          "path": "messages[0].parts[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/legacy_history.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0].reasoning"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0].reasoning"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/max_tokens.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_carrier_native.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0].reasoning"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0].reasoning"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_carrier_roundtrip.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[3].parts[0]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0].reasoning"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[3].parts[0].reasoning"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_summary.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_token_foreign.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0].reasoning"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/reasoning_tool_replay.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "replay_token_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0].reasoning"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/refusal.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/stop_sequence.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "stop_dropped",
+          "path": "stop"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/stream_error_event.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/stream_truncated.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/structured_output.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "output_format_approximated",
+          "path": "output"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/system_roles.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/text_basic.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/text_unicode_split.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_args_empty.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_args_fragmented.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_ids_missing.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_parallel.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_parallel_interleaved.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_result_error.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_result_image.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "media_unsupported",
+          "path": "messages[2].parts[0].result.content[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tool_single.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/tools_hosted_search.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "hosted_tool_dropped",
+          "path": "tools[0]",
+          "detail": "web_search_20250305"
+        },
+        {
+          "kind": "opaque_item_dropped",
+          "path": "messages[1].parts[0]"
+        },
+        {
+          "kind": "opaque_item_dropped",
+          "path": "messages[1].parts[1]"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "messages[1].parts[2].extra"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/upstream_sse_quirks.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/anthropic_messages/request/usage_cache.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[0].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1].cache"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_text/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[10]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[8]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[9]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[10]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[11]",
+          "detail": "strict"
+        },
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2].cache"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_text_bare/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2].cache"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[10]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[8]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[9]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[10]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[11]",
+          "detail": "strict"
+        },
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2].cache"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "tool_lowered",
+          "path": "tools[10]"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[4]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[5]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[6]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[7]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[8]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[9]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[10]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[11]",
+          "detail": "strict"
+        },
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2].cache"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[2].parts[0].cache"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool_bare/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2].cache"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/claude-code/2.1.330/lab_tool_bare/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[1].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[2].cache"
+        },
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[2].parts[0].cache"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_text_messages/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "strict"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[0].extra"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[1].extra"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[2].extra"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[3].cache"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[3].extra"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0].cache"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_messages/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "strict"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[0].extra"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[1].extra"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[2].extra"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[3].cache"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[3].extra"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0].cache"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_messages/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "schema_approximated",
+          "path": "tools[0]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[1]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[2]",
+          "detail": "strict"
+        },
+        {
+          "kind": "schema_approximated",
+          "path": "tools[3]",
+          "detail": "strict"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[0].extra"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[1].extra"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[2].extra"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "tools[3].cache"
+        },
+        {
+          "kind": "extra_dropped",
+          "path": "tools[3].extra"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "system[0].cache"
+        },
+        {
+          "kind": "cache_mark_dropped",
+          "path": "messages[2].parts[0].cache"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/text_basic.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/text_unicode_split.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/reasoning_summary.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/reasoning_tool_replay.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_single.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_parallel.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_args_empty.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_xml_text.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_json_text.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_dsml_text.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tools_custom.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tools_namespace.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tools_search.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/usage_cache.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/max_tokens.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/anthropic_envelope.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/empty_response.sse",
+      "kind": "stream"
+    }
+  ]
+}

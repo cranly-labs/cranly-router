@@ -109,7 +109,8 @@ func (s *modelTestSink) Emit(e upstream.OutputEvent) error { _, err := s.Write(e
 func TestQoderDoesNotReportSynthesizedModel(t *testing.T) {
 	for _, wire := range []protocol.ProtocolID{protocol.ProtocolOpenAIResponses, protocol.ProtocolOpenAIChatCompletions, protocol.ProtocolAnthropicMessages} {
 		for _, stream := range []bool{false, true} {
-			t.Run(string(wire)+map[bool]string{false: "/json", true: "/stream"}[stream], func(t *testing.T) {
+			mode := map[bool]string{false: "/json", true: "/stream"}[stream]
+			t.Run(string(wire)+mode, func(t *testing.T) {
 				executor := NewExecutor(ExecuteOptions{})
 				target := &Target{ProviderID: 1, Session: func(context.Context) (*SessionContext, error) { return &SessionContext{}, nil }, Client: func() (StreamClient, error) { return modelTestClient{}, nil }}
 				sink := &modelTestSink{}

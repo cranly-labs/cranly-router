@@ -1,0 +1,32 @@
+{
+  "id": "gem_reasoning_encrypted_only",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."
+        ],
+        "summary": true,
+        "token": {
+          "data": "CpEBCocB_gem_enconly_sig_02"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 88,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 54,
+    "reasoning": 24
+  }
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_tools_hosted_search",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Go 1.27 ships encoding/json/v2 and "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "encoding/json/jsontext in the standard library."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 84,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 24
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "\n\n---\nWeb search queries: Go 1.27 encoding json v2 release notes\n\nSources:\n[1] [Go 1.27 Release Notes](https://go.dev/doc/go1.27)"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Go 1.27 ships encoding/json/v2 and encoding/json/jsontext in the standard library.\n\n---\nWeb search queries: Go 1.27 encoding json v2 release notes\n\nSources:\n[1] [Go 1.27 Release Notes](https://go.dev/doc/go1.27)",
+      "annotations": [
+        {
+          "kind": "url_citation",
+          "url": "https://go.dev/doc/go1.27",
+          "title": "Go 1.27 Release Notes"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

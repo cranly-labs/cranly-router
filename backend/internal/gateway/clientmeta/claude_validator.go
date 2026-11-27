@@ -35,7 +35,7 @@ const (
 	// claudeCodeBillingHeaderPrefix identifies the billing-attribution block in
 	// Claude Code system prompts. This block identifies subrequests that lack
 	// identity text. Fixed auxiliary requests have separate detection rules.
-	// See protocol/bridge/anthropic_to_responses.go for the corresponding protocol conversion.
+	// See protocol/convert/markers.go for the corresponding protocol conversion.
 	claudeCodeBillingHeaderPrefix = wire.ClaudeCodeBillingHeaderPrefix
 	// claudeCodeEntrypointMarker detects the presence of an entrypoint field.
 	// Entrypoint values such as cli, claude-vscode, jetbrains, and sdk can be

@@ -10,7 +10,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
@@ -162,10 +162,15 @@ type PreludePorts interface {
 	// Compact and explicitly flattened routes use their endpoint rules; ordinary
 	// Responses retains historical tool identities across earlier turns.
 	KeepNamespaces(TransportDecision, bool, bool) bool
-	// AdaptClientTools lowers client tools and installs their response restoration
-	// mapping on success. Call after clearing attempt mappings; an error stops
-	// preparation before the body and view are published.
-	AdaptClientTools([]byte) ([]byte, error)
+	// NeedsClientToolAdaptation evaluates body against the resolved upstream
+	// model Dialect without allocating an IR tree on unsupported frames. It
+	// reports whether declarations, tool_choice, or history items require lowering.
+	NeedsClientToolAdaptation(ctx context.Context, model string, body []byte) bool
+	// AdaptClientTools lowers unsupported client tools via AdaptResponsesTools
+	// and stores the resulting ToolMap on request state for response restoration.
+	// Call after clearing attempt mappings; validation or collision failures write
+	// a local HTTP 400 rejection on tools before returning the error.
+	AdaptClientTools(ctx context.Context, model string, body []byte) ([]byte, error)
 	// BindMessagesBridge records the attempt's bridge classification for later
 	// request construction.
 	BindMessagesBridge(bool)
@@ -287,7 +292,7 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 	// disposable.
 	if p.StripNamespacesRequired(value.Transport, profile.Passthrough) {
 		keep := p.KeepNamespaces(value.Transport, profile.Passthrough, value.Compact)
-		body, err = protocolbridge.StripOpenAIResponsesInputNamespaces(body, keep)
+		body, err = protocolopenai.StripOpenAIResponsesInputNamespaces(body, keep)
 		if err != nil {
 			p.Reject(Rejection{Status: 400, Type: "invalid_request_error", Message: err.Error(), Param: "input", ObserveUpstream: true})
 			return nil, err
@@ -296,12 +301,19 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 	// Native DeepSeek API Key Responses lowers client-tool shapes after namespace
 	// preparation, allowing the response adapter to restore those tools for the
 	// caller.
-	if profile.EncodeResponsesClientTools && profile.APIKey && !value.Compact && protocolbridge.NeedsOpenAIResponsesClientToolAdaptation(body) {
-		body, err = p.AdaptClientTools(body)
-		if err != nil {
-			return nil, fmt.Errorf("adapt DeepSeek Responses client tools: %w", err)
+	if profile.EncodeResponsesClientTools && profile.APIKey && !value.Compact {
+		rawModel := requeststate.NewOpenAIRequestView(body).Model
+		adaptModel := p.MappedModel(rawModel)
+		if adaptModel == "" {
+			adaptModel = rawModel
 		}
-		value.SanitizedToolSchemasPlatform = ""
+		if p.NeedsClientToolAdaptation(ctx, adaptModel, body) {
+			body, err = p.AdaptClientTools(ctx, adaptModel, body)
+			if err != nil {
+				return nil, err
+			}
+			value.SanitizedToolSchemasPlatform = ""
+		}
 	}
 	value.Body = body
 	value.OriginalBody = body

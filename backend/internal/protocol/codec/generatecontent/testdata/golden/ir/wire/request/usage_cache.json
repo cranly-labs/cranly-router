@@ -1,0 +1,53 @@
+{
+  "model": "",
+  "system": [
+    {
+      "kind": "text",
+      "text": "You are a gateway billing auditor. Keep answers concise and cite exact token bucket relationships."
+    },
+    {
+      "kind": "text",
+      "text": "Reference policy: Anthropic input_tokens excludes cached reads and writes, whereas OpenAI input_tokens and prompt_tokens include them."
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Summarize how the cached system prefix and fresh context were accounted in this turn."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "lookup_cache_policy",
+      "description": "Reads active prompt cache TTL settings.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "scope": {
+            "type": "STRING",
+            "description": "Tenant cache namespace"
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      }
+    }
+  ],
+  "sampling": {
+    "temperature": 0.1
+  },
+  "max_output_tokens": 256,
+  "extra": {
+    "origin": "gemini_generate_content",
+    "members": {
+      "cachedContent": "cachedContents/tenant-42-cache-policy-v1"
+    }
+  }
+}

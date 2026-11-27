@@ -1,0 +1,33 @@
+{
+  "id": "resp_stop_sequence",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_stop_sequence_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "<answer>42"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 26,
+    "output_tokens": 4,
+    "total_tokens": 30,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

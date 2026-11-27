@@ -1,0 +1,37 @@
+{
+  "id": "chatcmpl_tools_custom",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_patch_2",
+            "type": "function",
+            "function": {
+              "name": "apply_patch",
+              "arguments": "{\"input\":\"*** Begin Patch\\n*** Update File: README.md\\n@@\\n-Default timeout: 5s\\n+Default timeout: 15s\\n*** End Patch\\n\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 104,
+    "completion_tokens": 42,
+    "total_tokens": 146,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

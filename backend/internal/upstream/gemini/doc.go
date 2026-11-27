@@ -10,8 +10,8 @@
 //   - response.go: Parses Gemini responses and writes output events.
 //
 // File groups:
-//   - exchange*.go: Streaming and buffered Messages, Gemini, and OpenAI exchanges.
-//   - response*.go: Response reads, protocol output, and completion state.
+//   - exchange*.go: Native Gemini and IR-converted exchanges and retry coordination.
+//   - response*.go: Native and IR-converted response reads, protocol output, and completion state.
 //   - request.go, url.go, model_get.go: Request construction, model URLs, and model queries.
 //   - images.go, image_observation.go: Image generation, decoding, and output counts.
 //   - batch*.go: Batch API calls and JSONL encoding.

@@ -1,0 +1,92 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_tool_args_empty",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_empty_str_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_clock"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_empty_str_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_clock"
+        },
+        "arguments": "{}",
+        "token": {
+          "data": "sig_fc_empty_1"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_empty_obj_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_uptime"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 44,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 20
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_empty_obj_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_uptime"
+        },
+        "arguments": "{}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

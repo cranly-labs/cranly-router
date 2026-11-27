@@ -1,0 +1,17 @@
+﻿: chat-compat-keepalive   
+
+id: 1
+retry: 1500
+data:{"id":"chatcmpl_upstream_sse_quirks","object":"chat.completion.chunk","created":1760002200,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","reasoning":"Check framing edge cases first."},"finish_reason":null}]}  
+
+data: {"id":"chatcmpl_upstream_sse_quirks","object":"chat.completion.chunk",  
+data: "created":1760002200,"model":"gpt-4o",
+data: "choices":[{"index":0,"delta":{"content":"Normalized quirky upstream SSE "},"finish_reason":null}]}
+
+data:{"id":"chatcmpl_upstream_sse_quirks","object":"chat.completion.chunk","created":1760002200,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"frames cleanly."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_upstream_sse_quirks","object":"chat.completion.chunk","created":1760002200,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_upstream_sse_quirks","object":"chat.completion.chunk","created":1760002200,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":26,"completion_tokens":16,"total_tokens":42,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":6}}}
+
+data: [DONE]

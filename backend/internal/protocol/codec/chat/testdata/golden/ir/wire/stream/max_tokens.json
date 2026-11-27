@@ -1,0 +1,50 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_max_tokens",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Token bucket rate limiters absorb short traffic bursts by spending accumulated permits, "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "while sliding window counters enforce stricter rolling boundaries at the cost of per-window "
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 28,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 32
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Token bucket rate limiters absorb short traffic bursts by spending accumulated permits, while sliding window counters enforce stricter rolling boundaries at the cost of per-window "
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "length"
+    }
+  }
+]

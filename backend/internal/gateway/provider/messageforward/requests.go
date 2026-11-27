@@ -41,6 +41,17 @@ func (r *Runtime) buildRequest(ctx context.Context, output HTTPBoundary, state *
 	if err != nil {
 		return nil, nil, err
 	}
+	body, _, err = gatewayadapter.PrepareNativeReplayWithResolution(
+		ctx,
+		target,
+		attributes,
+		body,
+		protocol.ProtocolAnthropicMessages,
+		protocol.ProtocolAnthropicMessages,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
 	body, err = gatewayadapter.ApplyModelAttributeParameters(body, attributes)
 	if err != nil {
 		return nil, nil, err
@@ -111,6 +122,17 @@ func (r *Runtime) buildPassthroughRequest(ctx context.Context, output HTTPBounda
 	if err != nil {
 		return nil, nil, err
 	}
+	body, _, err = gatewayadapter.PrepareNativeReplayWithResolution(
+		ctx,
+		target,
+		attributes,
+		body,
+		protocol.ProtocolAnthropicMessages,
+		protocol.ProtocolAnthropicMessages,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
 	body, err = gatewayadapter.ApplyModelAttributeParameters(body, attributes)
 	if err != nil {
 		return nil, nil, err
@@ -164,9 +186,20 @@ func stripAnthropicWireEffortIfMatched(ctx context.Context, target *gatewayadapt
 }
 
 // buildCountRequest builds counting with shared request options and the
-// selected passthrough mode. Passthrough returns nil wire bytes beside its
-// request; ordinary counting returns the upstream builder wire bytes.
+// selected passthrough mode. Token-path trc1 continuity envelopes are unpacked
+// or stripped before building the counting request; passthrough returns nil
+// wire bytes beside its request while ordinary counting returns the upstream
+// builder wire bytes.
 func (r *Runtime) buildCountRequest(ctx context.Context, output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, body []byte, token, tokenType, model string, mimic, passthrough bool) (*http.Request, []byte, error) {
+	countModel := strings.TrimSpace(model)
+	if countModel == "" {
+		countModel = strings.Clone(strings.TrimSpace(wirejson.ParseView(body).Get("model").String()))
+	}
+	var err error
+	body, err = r.prepareNativeMessagesReplay(ctx, target, countModel, body)
+	if err != nil {
+		return nil, nil, err
+	}
 	if passthrough {
 		options := r.countOptions(ctx, output, state, target, "", "apikey", false, true)
 		request, err := anthropic.BuildCountTokensRequestPassthrough(ctx, body, token, options)
@@ -174,6 +207,28 @@ func (r *Runtime) buildCountRequest(ctx context.Context, output HTTPBoundary, st
 	}
 	options := r.countOptions(ctx, output, state, target, model, tokenType, mimic, false)
 	return anthropic.BuildCountTokensRequest(ctx, body, token, tokenType, model, mimic, options)
+}
+
+// prepareNativeMessagesReplay resolves target attributes for model and unpacks
+// or strips token-path trc1 continuity envelopes in a native Anthropic Messages
+// payload. Payloads lacking a token-path trc1 carrier return body byte-for-byte
+// unchanged without allocating a rewritten request buffer.
+func (r *Runtime) prepareNativeMessagesReplay(
+	ctx context.Context,
+	target *gatewayadapter.ExecutionProvider,
+	model string,
+	body []byte,
+) ([]byte, error) {
+	rewritten, _, err := gatewayadapter.PrepareNativeReplay(
+		ctx,
+		target,
+		model,
+		body,
+		r.dependencies.Attributes,
+		protocol.ProtocolAnthropicMessages,
+		protocol.ProtocolAnthropicMessages,
+	)
+	return rewritten, err
 }
 
 // requestOptions captures target, HTTP adapter, and attempt state for Anthropic

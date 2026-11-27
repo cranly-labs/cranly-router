@@ -13,6 +13,8 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
@@ -117,6 +119,28 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	imageIntent := transformed.ImageIntent
 	fingerprintIDs := transformed.Fingerprint
 	reqBody := transformed.Decoded
+	if !prepared.Compact {
+		// Unpack matching trc1 encrypted_content or strip cross-account and
+		// foreign envelopes ahead of lineage digest lookup so transformed native
+		// Responses requests never leak gateway carriers or mark foreign digests.
+		rewritten, _, prepErr := gatewayprovider.PrepareNativeReplay(
+			ctx,
+			provider,
+			upstreamModel,
+			body,
+			s.modelAttributes(),
+			protocol.ProtocolOpenAIResponses,
+			protocol.ProtocolOpenAIResponses,
+		)
+		if prepErr != nil {
+			return nil, prepErr
+		}
+		if !bytes.Equal(rewritten, body) {
+			body = rewritten
+			requestView = requeststate.NewOpenAIRequestView(body)
+			reqBody = nil
+		}
+	}
 	// HTTP ciphertext recovery reuses model/policy preparation. Apply pending byte
 	// patches before decoding so the mutable map describes the body selected for this retry.
 	ensureReqBody := func() (map[string]any, error) {
@@ -270,4 +294,21 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 // policy for the selected attempt provider.
 func shouldForwardOpenAIResponsesViaRawChatCompletions(provider *gatewayprovider.ExecutionProvider) bool {
 	return gatewayprovider.ExecutionModelPolicy(provider).RawChat()
+}
+
+// modelAttributes resolves the shared ModelAttributeService attached to this
+// Responses executor. It prefers s.Text's attribute reader when present, falls
+// back to s.Requests.Readers.Attributes, and returns nil for nil receivers or
+// unconfigured test fixtures.
+func (s *OpenAIResponsesExecutor) modelAttributes() *routing.ModelAttributeService {
+	if s == nil {
+		return nil
+	}
+	if s.Text != nil {
+		return s.Text.modelAttributes()
+	}
+	if s.Requests != nil && s.Requests.Readers != nil {
+		return s.Requests.Readers.Attributes
+	}
+	return nil
 }

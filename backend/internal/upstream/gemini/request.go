@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	geminiwire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
@@ -171,7 +171,7 @@ func BuildRequest(ctx context.Context, body []byte, plan RequestPlan) (*http.Req
 	// Code Assist wrapper carries its separately prepared request representation
 	// and routing fields.
 	if !plan.Native && !wrapped {
-		wire = bridge.NativeNormalizeGeminiRequestForAIStudio(wire)
+		wire = geminiwire.NativeNormalizeGeminiRequestForAIStudio(wire)
 	}
 	// Capture the final wire count after wrapping and normalization so completion
 	// never depends on an earlier attempt or the client's original protocol shape.

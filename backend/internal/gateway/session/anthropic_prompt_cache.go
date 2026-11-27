@@ -1,7 +1,9 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 	"sync"
@@ -196,6 +198,210 @@ func AnthropicMetadataPromptCacheKey(req *protocolanthropic.AnthropicRequest) st
 		return ""
 	}
 	parsed := protocolanthropic.ParseMetadataUserID(metadata.UserID)
+	if parsed == nil || strings.TrimSpace(parsed.SessionID) == "" {
+		return ""
+	}
+	seed := strings.Join([]string{
+		"anthropic-metadata",
+		strings.TrimSpace(parsed.DeviceID),
+		strings.TrimSpace(parsed.AccountUUID),
+		strings.TrimSpace(parsed.SessionID),
+	}, "|")
+	return "anthropic-metadata-" + upstream.HashSensitiveValueForLog(seed)
+}
+
+// BuildAnthropicDigestChainBytes hashes top-level system and messages[].content
+// raw JSON tokens directly from body without unmarshaling into a subset struct.
+// Empty, non-object, or syntactically invalid bodies return an empty chain, while
+// valid requests produce the exact role-prefixed digest chain as BuildAnthropicDigestChain.
+func BuildAnthropicDigestChainBytes(body []byte) string {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ""
+	}
+	dec := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '{' {
+		return ""
+	}
+
+	var systemRaw []byte
+	type msgDigestPart struct {
+		role    string // message role string
+		content []byte // trimmed raw JSON content token
+	}
+	var messages []msgDigestPart
+
+	for dec.PeekKind() != '}' {
+		kTok, err := dec.ReadToken()
+		if err != nil {
+			return ""
+		}
+		switch kTok.String() {
+		case "system":
+			val, err := dec.ReadValue()
+			if err != nil {
+				return ""
+			}
+			systemRaw = bytes.Clone(bytes.TrimSpace(val))
+
+		case "messages":
+			if dec.PeekKind() != '[' {
+				if err := dec.SkipValue(); err != nil {
+					return ""
+				}
+				continue
+			}
+			if _, err := dec.ReadToken(); err != nil {
+				return ""
+			}
+			for dec.PeekKind() != ']' {
+				role, content, ok := readAnthropicDigestMessage(dec)
+				if !ok {
+					return ""
+				}
+				messages = append(messages, msgDigestPart{role: role, content: content})
+			}
+			if _, err := dec.ReadToken(); err != nil {
+				return ""
+			}
+
+		default:
+			if err := dec.SkipValue(); err != nil {
+				return ""
+			}
+		}
+	}
+
+	parts := make([]string, 0, len(messages)+1)
+	if len(systemRaw) > 0 && string(systemRaw) != "null" {
+		parts = append(parts, "s:"+upstream.ShortHash(systemRaw))
+	}
+	for _, msg := range messages {
+		if len(msg.content) == 0 {
+			continue
+		}
+		prefix := "u"
+		if strings.TrimSpace(msg.role) == "assistant" {
+			prefix = "a"
+		}
+		parts = append(parts, prefix+":"+upstream.ShortHash(msg.content))
+	}
+	return strings.Join(parts, "-")
+}
+
+// readAnthropicDigestMessage reads one element of a Messages "messages" array
+// from dec and returns its role string and trimmed raw content JSON bytes.
+// Non-object elements or syntax errors return ok=false so callers abort chain derivation.
+func readAnthropicDigestMessage(dec *jsontext.Decoder) (string, []byte, bool) {
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '{' {
+		return "", nil, false
+	}
+	var role string
+	var content []byte
+	for dec.PeekKind() != '}' {
+		kTok, err := dec.ReadToken()
+		if err != nil {
+			return "", nil, false
+		}
+		switch kTok.String() {
+		case "role":
+			if dec.PeekKind() == '"' {
+				vTok, err := dec.ReadToken()
+				if err != nil {
+					return "", nil, false
+				}
+				role = vTok.String()
+			} else if err := dec.SkipValue(); err != nil {
+				return "", nil, false
+			}
+		case "content":
+			val, err := dec.ReadValue()
+			if err != nil {
+				return "", nil, false
+			}
+			content = bytes.Clone(bytes.TrimSpace(val))
+		default:
+			if err := dec.SkipValue(); err != nil {
+				return "", nil, false
+			}
+		}
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return "", nil, false
+	}
+	return role, content, true
+}
+
+// AnthropicMetadataPromptCacheKeyBytes derives an anthropic-metadata prompt
+// cache key by streaming metadata.user_id directly from body via jsontext.
+// Malformed JSON, absent metadata, or unrecognized user_id formats return empty.
+func AnthropicMetadataPromptCacheKeyBytes(body []byte) string {
+	userID := extractAnthropicMetadataUserID(body)
+	if userID == "" {
+		return ""
+	}
+	return formatAnthropicMetadataPromptCacheKey(userID)
+}
+
+// extractAnthropicMetadataUserID scans top-level metadata.user_id from body
+// using jsontext while tolerating invalid UTF-8 strings on unrelated fields.
+// Empty, non-object, or malformed payloads return an empty string.
+func extractAnthropicMetadataUserID(body []byte) string {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ""
+	}
+	dec := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '{' {
+		return ""
+	}
+	for dec.PeekKind() != '}' {
+		kTok, err := dec.ReadToken()
+		if err != nil {
+			return ""
+		}
+		if kTok.String() != "metadata" {
+			if err := dec.SkipValue(); err != nil {
+				return ""
+			}
+			continue
+		}
+		if dec.PeekKind() != '{' {
+			if err := dec.SkipValue(); err != nil {
+				return ""
+			}
+			continue
+		}
+		if _, err := dec.ReadToken(); err != nil {
+			return ""
+		}
+		var userID string
+		for dec.PeekKind() != '}' {
+			mKey, err := dec.ReadToken()
+			if err != nil {
+				return ""
+			}
+			if mKey.String() == "user_id" && dec.PeekKind() == '"' {
+				vTok, err := dec.ReadToken()
+				if err != nil {
+					return ""
+				}
+				userID = vTok.String()
+			} else if err := dec.SkipValue(); err != nil {
+				return ""
+			}
+		}
+		return userID
+	}
+	return ""
+}
+
+// formatAnthropicMetadataPromptCacheKey parses userID and formats the stable
+// anthropic-metadata hash key when a non-blank session identifier is present.
+// Unrecognized identity strings or blank session IDs return an empty string.
+func formatAnthropicMetadataPromptCacheKey(userID string) string {
+	parsed := protocolanthropic.ParseMetadataUserID(userID)
 	if parsed == nil || strings.TrimSpace(parsed.SessionID) == "" {
 		return ""
 	}

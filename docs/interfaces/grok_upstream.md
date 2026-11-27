@@ -36,8 +36,11 @@ Grok 平台名固定为 `grok`，正式支持两类提供商（其余通用类�
 主要网关入口包括 `/v1/responses`、`/responses`、Chat Completions、Messages、Responses WebSocket、`/v1/web_search`、`/v1/x_search`、`/v1/tts`、`/v1/stt`、`/v1/custom-voices` 和 `/v1/realtime`（Voice 与搜索同时支持不带 `/v1` 的别名）。
 
 - 原生与转换协议：提供商原生协议集合为 HTTP Responses、Chat、Images、Video 和 Voice；Responses WebSocket、Compact、Web/X 搜索属于分组转换到 Responses 的入口，不作为提供商原生选项（见[统一协议能力](protocol_capabilities.md)）。
-- 文本协议门禁：分组通过 `allowed_protocols` 控制 Messages、Responses 与 Chat（见[统一协议能力](protocol_capabilities.md#group_protocol_routes)）。禁用时在提供商选择、计费、重试和 fallback 之前返回对应协议 `403`。Chat 桥接不适用时回到原生 Chat 分支。
-- 交换次数与观测边界：原生 Responses 在同提供商内保留一次密文/Compact 解码恢复；Chat 转 Responses 与图片辅助请求仅交换一次。HTTP 提交、关闭重试窗口、语义输出与 TTFT 相互独立；执行结果可与错误并存，失败结算按 Grok 入口规则判定，仅凭响应 ID、前导事件或部分输出不足以触发成功路径动作。
+- 文本协议门禁：分组通过 `allowed_protocols` 控制 Messages、Responses 与 Chat（见[统一协议能力](protocol_capabilities.md#group_protocol_routes)），禁用时在选号、计费和重试前返回对应协议 `403`。
+- 跨协议转换：Messages、显式路由 Responses 及 Chat 转 Responses（含带 `input` 的 Cursor 请求）经 `protocol/convert` 执行，省略默认 `store` 与 `include` 且仅对 Grok OAuth 无工具免费档注入伴生搜索工具；未规划路由的自适应 OAuth Chat 在桥接不适用时回到原生 Chat。
+- 推理连续性信封（`trc1:xai`）：跨协议输出写入带签发 `ProviderID`（键 `p`）的 `trc1:xai` 信封；后续跨协议及原生 HTTP/WS 桥请求（计算缓存身份前执行 `PrepareNativeReplay`）仅在同方案同账号时解封密文，跨账号与异源信封在本地剥离（见[推理连续性](../architecture/protocol_conversion.md#reasoning_continuity)）。
+- 同协议客户端工具适配：Grok HTTP Responses 与 WS HTTP 桥经 `AdaptResponsesTools`、`NewResponsesToolStream` 与 `RestoreResponsesTools` 轻量降级和还原 `custom`、`namespace`、`tool_search` 及 `additional_tools`（兼容 `Compact` 构造，WS 跨预热与省略 `tools` 轮继承 `ToolMap`），其余字段与原生搜索流事件原样保留。
+- 交换次数与观测边界：原生与跨协议 Responses 遇到同号失效密文或 Compact 解码 `400` 时在同提供商内按字节无损剥离密文并最多恢复重试一次；图片辅助请求仅交换一次。HTTP 提交、关闭重试窗口、语义输出与 TTFT 相互独立；执行结果可与错误并存，失败结算按 Grok 入口规则判定，仅凭响应 ID、前导事件或部分输出不足以触发成功路径动作。
 - SSE 保活：上游 `event: ping` 按通用规则在读取侧丢弃，下游连接由统一保活维护（见[SSE 保活](../architecture/gateway_request_lifecycle.md#sse_keepalive)）；JSON `type` 声明业务事件时保留，未知字段、缓冲上限和不完整帧遵循保守放行。
 - WS 与媒体隔离：Responses WebSocket 仅原生支持 Grok 与 OpenAI，兼容开关不扩展到其他平台；图片和视频受独立媒体资格与分组策略控制，与文本协议集合无关。
 

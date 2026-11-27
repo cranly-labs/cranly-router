@@ -1,0 +1,49 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_tool_result_image",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "The latency_p99 panel shows a flat 12 ms baseline "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "with no spike."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 96,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 16
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "The latency_p99 panel shows a flat 12 ms baseline with no spike."
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

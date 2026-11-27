@@ -3,15 +3,14 @@ package googleforward
 // These exports expose private preparation, policy, and response helpers so
 // external fixtures can inspect platform behavior through the HTTP adapter.
 var (
-	ResolveProjectForTest      = resolveAntigravityProjectID
-	EnsureSignatureForTest     = ensureGeminiFunctionCallThoughtSignatures
-	ConvertClaudeForTest       = convertClaudeMessagesToGeminiGenerateContent
-	GeminiResponseForTest      = (*Gemini).geminiResponseAdapter
-	AntigravityResponseForTest = (*Antigravity).antigravityResponseAdapter
-	ErrorBodyLimitForTest      = (*Antigravity).upstreamErrorBodyReadLimit
-	GeminiFailoverForTest      = (*Gemini).shouldFailoverGeminiUpstreamError
-	GeminiPolicyForTest        = (*Gemini).applyGeminiUpstreamErrorPolicy
-	AntigravityBodyForTest     = (*Antigravity).buildAntigravityCompatGeminiBody
+	ResolveProjectForTest                   = resolveAntigravityProjectID
+	EnsureSignatureForTest                  = ensureGeminiFunctionCallThoughtSignatures
+	ReplaceThoughtSignaturesLosslessForTest = replaceGeminiThoughtSignaturesLossless
+	GeminiResponseForTest                   = (*Gemini).geminiResponseAdapter
+	AntigravityResponseForTest              = (*Antigravity).antigravityResponseAdapter
+	ErrorBodyLimitForTest                   = (*Antigravity).upstreamErrorBodyReadLimit
+	GeminiFailoverForTest                   = (*Gemini).shouldFailoverGeminiUpstreamError
+	GeminiPolicyForTest                     = (*Gemini).applyGeminiUpstreamErrorPolicy
 )
 
 // AttemptForTest exposes request-local attempt observations to external

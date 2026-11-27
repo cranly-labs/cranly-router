@@ -1,0 +1,19 @@
+{
+  "id": "gem_usage_cache",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 120,
+    "cache_read": 640,
+    "cache_write": 0,
+    "output": 28
+  }
+}

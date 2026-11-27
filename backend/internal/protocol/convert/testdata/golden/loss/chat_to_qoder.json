@@ -1,0 +1,264 @@
+{
+  "route": "chat_to_qoder",
+  "entries": [
+    {
+      "fixture": "wire/openai_chat_completions/request/document_input.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "media_unsupported",
+          "path": "messages[0].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/empty_response.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/image_input.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "media_unsupported",
+          "path": "messages[0].parts[0]"
+        },
+        {
+          "kind": "media_unsupported",
+          "path": "messages[0].parts[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/max_tokens.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/reasoning_summary.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/reasoning_tool_replay.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "reasoning_text_dropped",
+          "path": "messages[1].parts[0].reasoning"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/refusal.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "refusal_inlined",
+          "path": "messages[1].parts[0]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/stop_sequence.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "stop_dropped",
+          "path": "stop"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/stream_error_event.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/stream_truncated.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/structured_output.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "output_format_approximated",
+          "path": "output"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/system_roles.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/text_basic.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "sampling_dropped",
+          "path": "sampling.temperature",
+          "detail": "temperature"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/text_unicode_split.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_args_empty.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_args_fragmented.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_ids_missing.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_parallel.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_parallel_interleaved.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_result_error.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_result_image.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "media_unsupported",
+          "path": "messages[3].parts[1]"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/tool_single.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/upstream_sse_quirks.json",
+      "kind": "request"
+    },
+    {
+      "fixture": "wire/openai_chat_completions/request/usage_cache.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_text_chat/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_chat/1.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "corpus/clients/pi/1.6.0/lab_tool_chat/2.request.json",
+      "kind": "request",
+      "losses": [
+        {
+          "kind": "system_relocated",
+          "path": "system"
+        }
+      ]
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/text_basic.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/text_unicode_split.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/reasoning_summary.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/reasoning_tool_replay.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_single.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_parallel.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_args_empty.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_xml_text.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_json_text.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tool_dsml_text.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tools_custom.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tools_namespace.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/tools_search.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/usage_cache.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/max_tokens.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/anthropic_envelope.sse",
+      "kind": "stream"
+    },
+    {
+      "fixture": "wire/qoder_chat/stream/empty_response.sse",
+      "kind": "stream"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "id": "gem_tool_ids_missing",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-primary.internal\"}",
+        "token": {
+          "data": "sig_fc_lookup_1"
+        }
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-replica.internal\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 58,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 30
+  }
+}

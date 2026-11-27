@@ -1,0 +1,81 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Capture the latency_p99 chart and summarize what you see."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "tool_call",
+          "id": "fc_chart_1",
+          "call": {
+            "call_id": "call_chart_1",
+            "tool": {
+              "kind": "function",
+              "name": "capture_chart"
+            },
+            "arguments": "{\"panel\":\"latency_p99\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_chart_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "Captured panel latency_p99 (1x1 preview)."
+              },
+              {
+                "kind": "media",
+                "media": {
+                  "type": "image",
+                  "mime": "image/png",
+                  "source": "base64",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "capture_chart",
+      "description": "Capture a PNG snapshot of a dashboard chart panel.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "panel": {
+            "type": "string",
+            "description": "Dashboard panel identifier"
+          }
+        },
+        "required": [
+          "panel"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 256
+}

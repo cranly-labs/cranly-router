@@ -1,0 +1,25 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_empty_response",
+      "model": "gpt-5",
+      "created_at": 1760002300
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 18,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 0
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

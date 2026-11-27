@@ -1,0 +1,12 @@
+# Unmodeled field census for gemini_generate_content (3 corpus requests)
+[summary]
+extra	$.systemInstruction.role
+
+[corpus/clients/pi/1.6.0/lab_text_gemini/1.request.json]
+extra	$.systemInstruction.role
+
+[corpus/clients/pi/1.6.0/lab_tool_gemini/1.request.json]
+extra	$.systemInstruction.role
+
+[corpus/clients/pi/1.6.0/lab_tool_gemini/2.request.json]
+extra	$.systemInstruction.role

@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl_tool_args_empty","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_empty_str_1","type":"function","function":{"name":"get_clock","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_args_empty","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_empty_obj_2","type":"function","function":{"name":"get_uptime","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_args_empty","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_args_empty","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl_tool_args_empty","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":44,"completion_tokens":20,"total_tokens":64,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]
+

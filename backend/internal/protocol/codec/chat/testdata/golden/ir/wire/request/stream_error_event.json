@@ -1,0 +1,16 @@
+{
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Outline a three-step regional failover plan for the gateway."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256,
+  "include_usage": true
+}

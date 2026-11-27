@@ -1,0 +1,30 @@
+{
+  "id": "msg_reasoning_summary",
+  "model": "claude-sonnet-4-5",
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Merge sort preserves equal-key order during left-before-right merging. In-place quicksort partitions swap non-adjacent elements and can invert equal keys."
+        ],
+        "token": {
+          "data": "EqQBCgIYAiJAbWVyZ2VfcXVpY2tzb3J0X3N0YWJpbGl0eV9zaWdfMDE"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Merge sort is stable because equal elements keep their original order when sorted halves merge. Standard in-place quicksort is unstable because long-range partition swaps can reorder equal keys."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 42,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 68
+  }
+}

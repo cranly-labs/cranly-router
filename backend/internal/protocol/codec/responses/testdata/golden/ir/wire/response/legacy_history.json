@@ -1,0 +1,35 @@
+{
+  "id": "resp_legacy_history",
+  "model": "gpt-5",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "reasoning",
+      "id": "rs_leg_reply_3",
+      "reasoning": {
+        "segments": [
+          "Migration checks for the requested tenants are ready to finalize."
+        ],
+        "summary": true,
+        "token": {
+          "data": "gAAAAABnLegacyHistoryReplyEnc03"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "id": "msg_leg_reply_3",
+      "text": "Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 112,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 48,
+    "reasoning": 22
+  }
+}

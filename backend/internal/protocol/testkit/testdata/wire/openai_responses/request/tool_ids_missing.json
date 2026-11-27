@@ -1,0 +1,38 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "stream": true,
+  "parallel_tool_calls": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "lookup_host",
+      "description": "Resolve an internal hostname to its IPv4 address.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string",
+            "description": "Internal DNS hostname"
+          }
+        },
+        "required": [
+          "hostname"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Resolve both db-primary.internal and db-replica.internal."
+        }
+      ]
+    }
+  ]
+}

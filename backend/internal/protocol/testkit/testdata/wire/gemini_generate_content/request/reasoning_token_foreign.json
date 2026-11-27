@@ -1,0 +1,77 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "lookup_region_quota",
+          "description": "Look up GPU quota usage in a cloud region.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "region": {
+                "type": "STRING",
+                "description": "Region name"
+              }
+            },
+            "required": [
+              "region"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Compare regional GPU quota headroom in us-east-1 and eu-west-1."
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "text": "Check us-east-1 quota usage before comparing eu-west-1.",
+          "thought": true,
+          "thoughtSignature": "trc1:anthropic:eyJkIjoiRXFRQkNnSVlBaUpBWm05eVpXbG5ibDloYm5Sb1gzRjFiM1JoWHpBeCIsInQiOiJDaGVjayB1cy1lYXN0LTEgcXVvdGEgdXNhZ2UgYmVmb3JlIGNvbXBhcmluZyBldS13ZXN0LTEuIn0"
+        },
+        {
+          "functionCall": {
+            "id": "call_quota_use1",
+            "name": "lookup_region_quota",
+            "args": {
+              "region": "us-east-1"
+            }
+          },
+          "thoughtSignature": "trc1:openai:eyJkIjoiZ0FBQUFBQm5Gb3JlaWduT3BlbkFJUXVvdGEwMSIsInAiOjEwMX0"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "call_quota_use1",
+            "name": "lookup_region_quota",
+            "response": {
+              "region": "us-east-1",
+              "used": 12,
+              "limit": 64
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingBudget": 2048,
+      "includeThoughts": true
+    }
+  }
+}

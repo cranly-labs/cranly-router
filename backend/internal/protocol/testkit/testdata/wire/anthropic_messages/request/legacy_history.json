@@ -1,0 +1,91 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 4096,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  },
+  "tools": [
+    {
+      "name": "check_migration_state",
+      "description": "Check tenant database migration version and status.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "description": "Tenant ID"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Verify pre-upgrade migration status for tenant-7 and tenant-12."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Check tenant-7 migration row before checking tenant-12.",
+          "signature": "gAAAAABnLegacyBareEncryptedContentFromPreUpgradeTurn1"
+        },
+        {
+          "type": "tool_use",
+          "id": "call_mig_t7_1",
+          "name": "check_migration_state",
+          "input": {
+            "tenant_id": "tenant-7"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_mig_t7_1",
+          "content": "{\"tenant_id\":\"tenant-7\",\"schema_version\":42,\"status\":\"applied\"}"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "tenant-7 is at version 42; now check tenant-12 migration row.",
+          "signature": ""
+        },
+        {
+          "type": "tool_use",
+          "id": "call_mig_t12_2",
+          "name": "check_migration_state",
+          "input": {
+            "tenant_id": "tenant-12"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_mig_t12_2",
+          "content": "{\"tenant_id\":\"tenant-12\",\"schema_version\":42,\"status\":\"applied\"}"
+        }
+      ]
+    }
+  ]
+}

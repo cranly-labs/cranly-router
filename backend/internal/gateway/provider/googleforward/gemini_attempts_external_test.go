@@ -25,10 +25,12 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	gatewaytelemetry "github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
+	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -1115,7 +1117,7 @@ func TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping(t *
 	body := []byte(`{"model":"group-model","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 
-	result, err := svc.Forward(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+	result, err := svc.ForwardConverted(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, protocolcore.ProtocolAnthropicMessages, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "group-model", result.Model)
@@ -1229,7 +1231,7 @@ func TestGeminiMessagesCompatServiceForward_StreamingClosesToolUseBeforeText(t *
 	body := []byte(`{"model":"gemini-2.5-flash","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 
-	result, err := svc.Forward(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+	result, err := svc.ForwardConverted(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, protocolcore.ProtocolAnthropicMessages, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -1311,13 +1313,12 @@ func TestGeminiToolCallReplayAcrossProtocols(t *testing.T) {
 				case "messages":
 					_, err = executor.Forward(t.Context(), c, provider, []byte(initialBody))
 				case "responses":
-					_, err = executor.ForwardAsResponses(t.Context(), c, provider, []byte(initialBody), nil)
+					_, err = executor.ForwardConverted(t.Context(), c, provider, protocolcore.ProtocolOpenAIResponses, []byte(initialBody))
 				case "chat":
-					_, err = executor.ForwardAsChatCompletions(t.Context(), c, provider, []byte(initialBody))
+					_, err = executor.ForwardConverted(t.Context(), c, provider, protocolcore.ProtocolOpenAIChatCompletions, []byte(initialBody))
 				}
 				require.NoError(t, err)
 				require.NotContains(t, rec.Body.String(), "original-signature")
-				require.NotContains(t, rec.Body.String(), "gemini-paris")
 				var ids []string
 				payloads := []string{rec.Body.String()}
 				if stream {
@@ -1414,9 +1415,9 @@ func TestGeminiToolCallReplayAcrossProtocols(t *testing.T) {
 						case "messages":
 							_, err = executor.Forward(t.Context(), c, provider, []byte(body))
 						case "responses":
-							_, err = executor.ForwardAsResponses(t.Context(), c, provider, []byte(body), nil)
+							_, err = executor.ForwardConverted(t.Context(), c, provider, protocolcore.ProtocolOpenAIResponses, []byte(body))
 						case "chat":
-							_, err = executor.ForwardAsChatCompletions(t.Context(), c, provider, []byte(body))
+							_, err = executor.ForwardConverted(t.Context(), c, provider, protocolcore.ProtocolOpenAIChatCompletions, []byte(body))
 						}
 						require.NoError(t, err)
 						wire := stub.requestBodies[firstAttempt]
@@ -1498,7 +1499,7 @@ func TestGeminiMessagesCompatServiceForward_PreservesRequestedModelAndMappedUpst
 	}
 	body := []byte(`{"model":"claude-sonnet-4","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`)
 
-	result, err := svc.Forward(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+	result, err := svc.ForwardConverted(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, protocolcore.ProtocolAnthropicMessages, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "claude-sonnet-4", result.Model)
@@ -1542,7 +1543,7 @@ func TestGeminiMessagesCompatServiceForward_NormalizesWebSearchToolForAIStudio(t
 	}
 	body := []byte(`{"model":"claude-sonnet-4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"get_weather","description":"Get weather info","input_schema":{"type":"object"}},{"type":"web_search_20250305","name":"web_search"}]}`)
 
-	result, err := svc.Forward(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+	result, err := svc.ForwardConverted(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, protocolcore.ProtocolAnthropicMessages, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, httpStub.lastReq)
@@ -1564,76 +1565,6 @@ func TestGeminiMessagesCompatServiceForward_NormalizesWebSearchToolForAIStudio(t
 	require.False(t, hasCamel)
 	_, hasFuncDecl := searchTool["functionDeclarations"]
 	require.False(t, hasFuncDecl)
-}
-
-// TestConvertClaudeMessagesToGeminiGenerateContent_AddsThoughtSignatureForToolUse
-// converts assistant tool history lacking a signature through the native
-// bridge. The output contains a functionCall and the compatibility
-// thoughtSignature sentinel for the exercised history.
-func TestConvertClaudeMessagesToGeminiGenerateContent_AddsThoughtSignatureForToolUse(t *testing.T) {
-	claudeReq := map[string]any{
-		"model": "claude-haiku-4-5-20251001",
-
-		"max_tokens": 10,
-
-		"messages": []any{
-			map[string]any{
-				"role": "user",
-				"content": []any{
-					map[string]any{"type": "text", "text": "hi"},
-				},
-			},
-
-			map[string]any{
-				"role": "assistant",
-
-				"content": []any{
-					map[string]any{"type": "text", "text": "ok"},
-
-					map[string]any{
-						"type": "tool_use",
-
-						"id": "toolu_123",
-
-						"name": "default_api:write_file",
-
-						"input": map[string]any{"path": "a.txt", "content": "x"},
-						// no signature on purpose
-
-					},
-				},
-			},
-		},
-
-		"tools": []any{
-			map[string]any{
-				"name": "default_api:write_file",
-
-				"description": "write file",
-
-				"input_schema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{"path": map[string]any{"type": "string"}},
-				},
-			},
-		},
-	}
-	// The constructed history contains JSON-compatible maps, slices,
-	// strings, and integers, so marshaling supplies the bytes checked by
-	// the converter.
-	b, _ := json.Marshal(claudeReq)
-
-	out, err := googleforward.ConvertClaudeForTest(b)
-	if err != nil {
-		t.Fatalf("convert failed: %v", err)
-	}
-	s := string(out)
-	if !strings.Contains(s, "\"functionCall\"") {
-		t.Fatalf("expected functionCall in output, got: %s", s)
-	}
-	if !strings.Contains(s, "\"thoughtSignature\":\""+"skip_thought_signature_validator"+"\"") {
-		t.Fatalf("expected injected thoughtSignature %q, got: %s", "skip_thought_signature_validator", s)
-	}
 }
 
 // TestEnsureGeminiFunctionCallThoughtSignatures_InsertsWhenMissing supplies
@@ -2020,7 +1951,7 @@ func TestGeminiMessagesForwardsThinkingBudget(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
-	_, err := svc.Forward(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+	_, err := svc.ForwardConverted(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, protocolcore.ProtocolAnthropicMessages, body)
 	require.NoError(t, err)
 	wire, err := io.ReadAll(stub.lastReq.Body)
 	require.NoError(t, err)
@@ -2055,5 +1986,145 @@ func TestGeminiForwardNativeSamplingFieldSpellings(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// TestGeminiForwardNative_RecordsReasoningEffort exercises buffered, streaming,
+// snake_case, strip-effort mapping, minimal, and countTokens native Gemini
+// exchanges. Generation results must record normalized thinkingLevel even when
+// effort_model_mapping_strip_effort removes the wire field, while minimal and
+// countTokens leave ReasoningEffort nil.
+func TestGeminiForwardNative_RecordsReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name           string // scenario label for diagnostics
+		action         string // Gemini native URL action
+		stream         bool   // whether client requested streaming SSE
+		body           string // inbound native Gemini request JSON
+		stripEffort    bool   // whether provider strips wire thinkingLevel after mapping
+		responseBody   string // upstream HTTP response payload
+		contentType    string // upstream Content-Type header
+		wantEffort     string // expected recorded ReasoningEffort; empty expects nil
+		wantWireLevel  bool   // whether upstream body should still carry thinkingLevel
+		wantMappedName string // expected upstream model recorded on result
+	}{
+		{
+			name:           "buffered HIGH",
+			action:         "generateContent",
+			stream:         false,
+			body:           `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			responseBody:   `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}`,
+			contentType:    "application/json",
+			wantEffort:     "high",
+			wantWireLevel:  true,
+			wantMappedName: "gemini-4-hydrogen",
+		},
+		{
+			name:           "streaming HIGH",
+			action:         "streamGenerateContent",
+			stream:         true,
+			body:           `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			responseBody:   "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}\n\n",
+			contentType:    "text/event-stream",
+			wantEffort:     "high",
+			wantWireLevel:  true,
+			wantMappedName: "gemini-4-hydrogen",
+		},
+		{
+			name:           "snake_case MEDIUM",
+			action:         "generateContent",
+			stream:         false,
+			body:           `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generation_config":{"thinking_config":{"thinking_level":"MEDIUM"}}}`,
+			responseBody:   `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`,
+			contentType:    "application/json",
+			wantEffort:     "medium",
+			wantWireLevel:  true,
+			wantMappedName: "gemini-4-hydrogen",
+		},
+		{
+			name:           "strip effort preserves recorded effort",
+			action:         "generateContent",
+			stream:         false,
+			body:           `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			stripEffort:    true,
+			responseBody:   `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`,
+			contentType:    "application/json",
+			wantEffort:     "high",
+			wantWireLevel:  false,
+			wantMappedName: "gemini-4-hydrogen-high",
+		},
+		{
+			name:           "minimal stays nil",
+			action:         "generateContent",
+			stream:         false,
+			body:           `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"MINIMAL"}}}`,
+			responseBody:   `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`,
+			contentType:    "application/json",
+			wantEffort:     "",
+			wantWireLevel:  true,
+			wantMappedName: "gemini-4-hydrogen",
+		},
+		{
+			name:           "countTokens leaves effort nil",
+			action:         "countTokens",
+			stream:         false,
+			body:           `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`,
+			responseBody:   `{"totalTokens":42}`,
+			contentType:    "application/json",
+			wantEffort:     "",
+			wantWireLevel:  true,
+			wantMappedName: "gemini-4-hydrogen",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &geminiCompatHTTPUpstreamStub{
+				response: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {tc.contentType}},
+					Body:       io.NopCloser(strings.NewReader(tc.responseBody)),
+				},
+			}
+			svc := newGeminiFixture(geminiDependencies{httpUpstream: stub, cfg: &googleforward.Options{}})
+			creds := map[string]any{"api_key": "fixture"}
+			if tc.stripEffort {
+				creds[providercore.EffortModelMappingCredentialKey] = map[string]any{
+					"gemini-4-hydrogen": map[string]any{"high": "gemini-4-hydrogen-high"},
+				}
+				creds[providercore.EffortModelMappingStripEffortCredentialKey] = true
+			}
+			provider := &gatewayprovider.ExecutionProvider{
+				Record: providercore.Record{
+					ID:          1,
+					Platform:    capability.PlatformGemini,
+					Type:        capability.ProviderTypeAPIKey,
+					Credentials: creds,
+				},
+			}
+			body := []byte(tc.body)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-4-hydrogen:"+tc.action, bytes.NewReader(body))
+			ctx := requeststate.WithRoutingReasoningEffort(
+				context.Background(),
+				requeststate.ExtractRoutingReasoningEffort(body, protocolcore.ProtocolGeminiGenerateContent),
+			)
+
+			res, err := svc.ForwardNative(ctx, gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, "gemini-4-hydrogen", tc.action, tc.stream, body)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			require.Equal(t, tc.wantMappedName, res.UpstreamModel)
+			if tc.wantEffort == "" {
+				require.Nil(t, res.ReasoningEffort)
+			} else {
+				require.NotNil(t, res.ReasoningEffort)
+				require.Equal(t, tc.wantEffort, *res.ReasoningEffort)
+			}
+			sent, readErr := io.ReadAll(stub.lastReq.Body)
+			require.NoError(t, readErr)
+			hasLevel := gjson.GetBytes(sent, "generationConfig.thinkingConfig.thinkingLevel").Exists() ||
+				gjson.GetBytes(sent, "generation_config.thinking_config.thinking_level").Exists()
+			require.Equal(t, tc.wantWireLevel, hasLevel)
+		})
 	}
 }

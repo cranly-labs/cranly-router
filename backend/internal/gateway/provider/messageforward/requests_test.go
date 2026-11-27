@@ -24,6 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	catalogprovider "github.com/TokenFlux/TokenRouter/internal/modelcatalog/provider"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -1157,4 +1158,92 @@ func (s *stubIdentityCache) GetMaskedSessionID(_ context.Context, _ int64) (stri
 // tests do not retain masked-session values for later reads.
 func (s *stubIdentityCache) SetMaskedSessionID(_ context.Context, _ int64, _ string) error {
 	return nil
+}
+
+// TestGatewayService_BuildMessagesAndCountRequests_PrepareNativeReplay exercises
+// buildRequest (OAuth and Vertex service_account) and buildCountRequest (ordinary
+// and passthrough) native continuity-carrier replay. Literal user "trc1:" text
+// stays byte-identical, matching Anthropic envelopes restore signatures, and
+// foreign envelopes strip cleanly.
+func TestGatewayService_BuildMessagesAndCountRequests_PrepareNativeReplay(t *testing.T) {
+	anthCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAnthropic,
+		Data:   "EqQBVertexAndOAuthSig",
+		Text:   "Restored canonical thought.",
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_foreign_openai",
+		ProviderID: 77,
+	})
+	require.NoError(t, err)
+
+	bodyWithCarriers := []byte(`{"model":"claude-sonnet-4-6","max_tokens":256,"nonce":9007199254740993,"messages":[{"role":"user","content":"prompt with literal trc1:plain:demo"},{"role":"assistant","content":[{"type":"thinking","thinking":"summary","signature":"` + anthCarrier + `"},{"type":"thinking","thinking":"drop","signature":"` + foreignCarrier + `"},{"type":"text","text":"answer"}]}]}`)
+	literalOnly := []byte(`{"model":"claude-sonnet-4-6","nonce":9007199254740993,"messages":[{"role":"user","content":"prompt with literal trc1:plain:demo"}]}`)
+
+	c := &requestBoundaryFixture{Request: httptest.NewRequest(http.MethodPost, "/v1/messages", nil)}
+	vertexTarget := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           311,
+			Platform:     capability.PlatformAnthropic,
+			Type:         capability.ProviderTypeServiceAccount,
+			Credentials:  map[string]any{"project_id": "vertex-proj", "location": "us-east5"},
+		},
+	}
+	oauthTarget := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           312,
+			Platform:     capability.PlatformAnthropic,
+			Type:         capability.ProviderTypeOAuth,
+		},
+	}
+	apikeyTarget := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           313,
+			Platform:     capability.PlatformAnthropic,
+			Type:         capability.ProviderTypeAPIKey,
+			Credentials:  map[string]any{"api_key": "sk-ant", "base_url": "https://api.anthropic.com"},
+			Extra:        map[string]any{"anthropic_passthrough": true},
+		},
+	}
+
+	svc := NewRuntime(Dependencies{}, Options{Configured: true})
+
+	// Without token-path carriers: passthrough count_tokens keeps exact byte slice.
+	countLit, _, err := svc.buildCountRequest(context.Background(), c, &AttemptState{}, apikeyTarget, literalOnly, "sk-ant", "apikey", "", false, true)
+	require.NoError(t, err)
+	require.Equal(t, literalOnly, readRequestBodyForTest(t, countLit))
+
+	// Vertex buildRequest restores trc1:anthropic and strips trc1:openai.
+	reqVtx, _, err := svc.buildRequest(context.Background(), c, &AttemptState{}, vertexTarget, bodyWithCarriers, "vtx-tok", "service_account", "claude-sonnet-4-6@20260218", false, false)
+	require.NoError(t, err)
+	gotVtx := readRequestBodyForTest(t, reqVtx)
+	require.Equal(t, "EqQBVertexAndOAuthSig", gjson.GetBytes(gotVtx, "messages.1.content.0.signature").String())
+	require.Equal(t, "Restored canonical thought.", gjson.GetBytes(gotVtx, "messages.1.content.0.thinking").String())
+	require.Equal(t, "text", gjson.GetBytes(gotVtx, "messages.1.content.1.type").String())
+	require.Contains(t, gjson.GetBytes(gotVtx, "messages.0.content").String(), "trc1:plain:demo")
+
+	// OAuth buildRequest and ordinary + passthrough buildCountRequest.
+	reqOAuth, _, err := svc.buildRequest(context.Background(), c, &AttemptState{}, oauthTarget, bodyWithCarriers, "oauth-tok", "oauth", "claude-sonnet-4-6", false, false)
+	require.NoError(t, err)
+	gotOAuth := readRequestBodyForTest(t, reqOAuth)
+	require.Equal(t, "EqQBVertexAndOAuthSig", gjson.GetBytes(gotOAuth, "messages.1.content.0.signature").String())
+	require.Equal(t, "text", gjson.GetBytes(gotOAuth, "messages.1.content.1.type").String())
+
+	countOrd, _, err := svc.buildCountRequest(context.Background(), c, &AttemptState{}, oauthTarget, bodyWithCarriers, "oauth-tok", "oauth", "claude-sonnet-4-6", false, false)
+	require.NoError(t, err)
+	gotCountOrd := readRequestBodyForTest(t, countOrd)
+	require.Equal(t, "EqQBVertexAndOAuthSig", gjson.GetBytes(gotCountOrd, "messages.1.content.0.signature").String())
+	require.Equal(t, "text", gjson.GetBytes(gotCountOrd, "messages.1.content.1.type").String())
+
+	countPass, _, err := svc.buildCountRequest(context.Background(), c, &AttemptState{}, apikeyTarget, bodyWithCarriers, "sk-ant", "apikey", "", false, true)
+	require.NoError(t, err)
+	gotCountPass := readRequestBodyForTest(t, countPass)
+	require.Equal(t, "EqQBVertexAndOAuthSig", gjson.GetBytes(gotCountPass, "messages.1.content.0.signature").String())
+	require.Equal(t, "text", gjson.GetBytes(gotCountPass, "messages.1.content.1.type").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(gotCountPass, "nonce").Raw)
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
 // google_executors.go creates request-local HTTP output adapters for Gemini
@@ -28,11 +28,26 @@ type AntigravityExecutor struct {
 	Runtime *googleforward.Antigravity // bound Antigravity execution
 }
 
-// Forward delegates Messages execution to the bound Gemini runtime and its
-// HTTP output. The caller retains provider selection and completion ownership,
-// including any partial result returned with an error.
+// ForwardConverted delegates protocol-agnostic IR conversion for source onto
+// the bound Gemini runtime with a fresh request-local GoogleBoundary. The
+// caller retains provider failover and completion ownership, including any
+// partial usage result returned alongside an error.
+func (s *GeminiExecutor) ForwardConverted(
+	ctx context.Context,
+	c *gin.Context,
+	a *gatewayadapter.ExecutionProvider,
+	source protocol.ProtocolID,
+	body []byte,
+) (*forward.MessagesResult, error) {
+	return s.Runtime.ForwardConverted(ctx, NewGoogleBoundary(c, s.Runtime.Options, false), a, source, body)
+}
+
+// Forward delegates Anthropic Messages execution to the bound Gemini runtime's
+// ForwardConverted entry with request-local HTTP output. The caller retains
+// provider selection and completion ownership, including any partial result
+// returned with an error.
 func (s *GeminiExecutor) Forward(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, body []byte) (*forward.MessagesResult, error) {
-	return s.Runtime.Forward(ctx, NewGoogleBoundary(c, s.Runtime.Options, false), a, body)
+	return s.Runtime.ForwardConverted(ctx, NewGoogleBoundary(c, s.Runtime.Options, false), a, protocol.ProtocolAnthropicMessages, body)
 }
 
 // ForwardNative delegates one Gemini model action with its explicit stream
@@ -42,25 +57,27 @@ func (s *GeminiExecutor) ForwardNative(ctx context.Context, c *gin.Context, a *g
 	return s.Runtime.ForwardNative(ctx, NewGoogleBoundary(c, s.Runtime.Options, false), a, model, action, stream, body)
 }
 
-// ForwardAsResponses runs the selected provider through Gemini preparation for
-// Responses output. The supplied HTTP context owns synchronous writes, and the
-// runtime receives this attempt's original body and parsed request.
-func (s *GeminiExecutor) ForwardAsResponses(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, body []byte, parsed *requeststate.ParsedRequest) (*forward.MessagesResult, error) {
-	return s.Runtime.ForwardAsResponses(ctx, NewGoogleBoundary(c, s.Runtime.Options, false), a, body, parsed)
+// ForwardConverted delegates protocol-agnostic IR conversion for source onto
+// the bound Antigravity runtime with a fresh request-local GoogleBoundary and
+// sticky-session flag. The caller retains provider selection, failover, and
+// completion ownership, including any partial usage result returned with an error.
+func (s *AntigravityExecutor) ForwardConverted(
+	ctx context.Context,
+	c *gin.Context,
+	a *gatewayadapter.ExecutionProvider,
+	source protocol.ProtocolID,
+	body []byte,
+	sticky bool,
+) (*forward.MessagesResult, error) {
+	return s.Runtime.ForwardConverted(ctx, NewGoogleBoundary(c, s.Runtime.Options, true), a, source, body, sticky)
 }
 
-// ForwardAsChatCompletions delegates this attempt to Gemini preparation with
-// Chat output. The runtime performs conversion and response handling; the
-// outer request loop interprets failures before any provider switch.
-func (s *GeminiExecutor) ForwardAsChatCompletions(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, body []byte) (*forward.MessagesResult, error) {
-	return s.Runtime.ForwardAsChatCompletions(ctx, NewGoogleBoundary(c, s.Runtime.Options, false), a, body)
-}
-
-// Forward delegates Messages execution to the bound Antigravity runtime and
-// its HTTP output. The caller retains provider selection and completion
-// ownership, including any partial result returned with an error.
+// Forward delegates Anthropic Messages execution to the bound Antigravity
+// runtime's ForwardConverted entry with request-local HTTP output. The caller
+// retains provider selection and completion ownership, including any partial
+// result returned with an error.
 func (s *AntigravityExecutor) Forward(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, body []byte, sticky bool) (*forward.MessagesResult, error) {
-	return s.Runtime.Forward(ctx, NewGoogleBoundary(c, s.Runtime.Options, true), a, body, sticky)
+	return s.Runtime.ForwardConverted(ctx, NewGoogleBoundary(c, s.Runtime.Options, true), a, protocol.ProtocolAnthropicMessages, body, sticky)
 }
 
 // ForwardGemini delegates a Gemini-format attempt to Antigravity with sticky
@@ -69,21 +86,6 @@ func (s *AntigravityExecutor) Forward(ctx context.Context, c *gin.Context, a *ga
 // completion.
 func (s *AntigravityExecutor) ForwardGemini(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, model, action string, stream bool, body []byte, sticky bool, options ...forward.GeminiSessionOption) (*forward.MessagesResult, error) {
 	return s.Runtime.ForwardGemini(ctx, NewGoogleBoundary(c, s.Runtime.Options, true), a, model, action, stream, body, sticky, options...)
-}
-
-// ForwardAsResponses runs the selected provider through Antigravity
-// preparation for Responses output. The supplied HTTP context owns synchronous
-// writes, and the runtime receives this attempt's original body and parsed
-// request.
-func (s *AntigravityExecutor) ForwardAsResponses(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, body []byte, parsed *requeststate.ParsedRequest) (*forward.MessagesResult, error) {
-	return s.Runtime.ForwardAsResponses(ctx, NewGoogleBoundary(c, s.Runtime.Options, true), a, body, parsed)
-}
-
-// ForwardAsChatCompletions delegates this attempt to Antigravity preparation
-// with Chat output. The runtime performs conversion and response handling; the
-// outer request loop interprets failures before any provider switch.
-func (s *AntigravityExecutor) ForwardAsChatCompletions(ctx context.Context, c *gin.Context, a *gatewayadapter.ExecutionProvider, body []byte, parsed *requeststate.ParsedRequest) (*forward.MessagesResult, error) {
-	return s.Runtime.ForwardAsChatCompletions(ctx, NewGoogleBoundary(c, s.Runtime.Options, true), a, body, parsed)
 }
 
 // WriteMappedClaudeError presents the supplied Antigravity upstream failure as

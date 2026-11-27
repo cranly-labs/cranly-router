@@ -1,0 +1,16 @@
+data: {"id":"chatcmpl_reasoning_token_foreign","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"us-east-1 has 52 GPUs available; "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_token_foreign","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"query eu-west-1 quota next."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_token_foreign","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_quota_euw2","type":"function","function":{"name":"lookup_region_quota","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_token_foreign","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"region\":"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_token_foreign","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"eu-west-1\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_token_foreign","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl_reasoning_token_foreign","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[],"usage":{"prompt_tokens":104,"completion_tokens":50,"total_tokens":154,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":26}}}
+
+data: [DONE]
+

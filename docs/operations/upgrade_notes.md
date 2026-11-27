@@ -18,6 +18,30 @@
 
 ## 未发布与近期升级
 
+<a id="ir_protocol_conversion"></a>
+### 未发布：协议转换引擎统一为 IR 管线（无数据库迁移）
+
+- 转换引擎替换：四个文本协议跨协议转换、Antigravity 与 Qoder 转换，以及同协议 Responses 客户端工具轻量适配（OpenAI API Key、Grok、DeepSeek 与 WS HTTP 桥）统一切换至 `internal/protocol/convert` 与 `internal/protocol/codec/*`（见[协议转换与中间表示](../architecture/protocol_conversion.md)）。
+- 无运行时回退开关：旧 `internal/protocol/bridge` 与成对串联转换代码随同一版本删除；不设运行时配置项、环境变量或请求头引擎开关，升级与回退均按单实例前后端同版本整体切换执行。
+- 旧会话裸签名边界：升级前旧引擎写入客户端历史的裸签名或密文（如曾写入 Messages `thinking.signature` 的 Grok 或 OpenAI `encrypted_content`）不含 `trc1:` 前缀，升级后首轮跨协议请求将其标为 `unknown` 并在本地丢弃、补齐合法消息结构，请求正常完成但不延续该段历史推理（同协议透传路径继续原样转发裸令牌）。
+- 旧会话推理缓存与直连边界：升级前生成且仅含 `encrypted_content`（`summary` 为空）的历史 Responses 推理条目，升级后转往 Chat 上游时不再从 Redis 取回旧明文推理，表现等同于此前缓存未命中（新无令牌推理改由 `trc1:plain` 信封携带）。包含 `trc1:` 信封的会话历史若绕过网关直连官方 API 会被拒绝校验，与此前含异源裸令牌时的边界一致。
+- 首轮提示缓存命中：存量长会话在升级后的首轮请求中，若遇到降级工具名变化、消息块原序保留或确定性 JSON 成员序列化差异，上游前缀可能出现一次提示缓存未命中；后续轮次对相同输入生成逐字节确定的请求体，恢复稳定命中。
+- 数据库、Redis 与进程内状态：无 PostgreSQL schema 迁移，`config.yaml` 版本和字段以及 `TokenUsage`、`usage_logs` 各缓存分档计费口径不变；Redis 存量 `reasoning_content:` 前缀旧键停止读写并随原有 7 天 TTL 自然过期，无需手工清理；进程内 `GeminiToolCalls`（1 小时 TTL）与 WS 连接内 `ToolMap` 重启后清空并随新请求自动建立。
+- 回退限制：停止新进程并切回上一版前后端二进制即可回退。旧版二进制不识别 `trc1:` 信封；升级期间已写入 `trc1:` 信封的活跃跨协议或混合分组会话在回退后会被当作无法校验的裸签名或密文处理，按各上游既有容错触发一次签名剥离重试或需由客户端新开会话，不会损坏数据库或 Redis 数据。
+
+客户端与运维可感知的行为差异摘要如下：
+
+| 类别 | 行为变化 | 客户端与运维影响 |
+| --- | --- | --- |
+| `D6` | 跨协议转换统一在客户端不透明令牌字段（Messages 的 `thinking.signature` 与 `redacted_thinking.data`、Responses 的 `reasoning.encrypted_content`）写入无填充 `base64url` 编码的 `trc1:<scheme>:<payload>` 信封（方案为 `anthropic`、`antigravity_claude`、`openai`、`xai`、`gemini`、`plain`）；Gemini 推理签名与无令牌明文推理同样封装写出 | 客户端可见正文、工具调用与计费用量不变；Claude Code、Codex 与 `pi` 原样保存并在下一轮带回信封，Messages 客户端不再收到空串 `signature` |
+| `D7` | 出站令牌不按 `gAAAA` 前缀猜测归属，也不把 Messages 历史裸签名写进 Responses `encrypted_content`；`openai` 与 `xai` 信封携带签发提供商 ID `p`，同分组切到其他账号时在网关本地剥离；`passback` Messages 上游在工具轮回传无签名明文 `thinking` 块 | 消除跨账号切换时必败的上游 `400 invalid_encrypted_content` 往返，同方案同账号续聊完整保留上游推理状态 |
+| `D8` | `custom`、`namespace`、`tool_search` 降级函数名及非法起始字符、超长工具名的清洗结果在跨版本升级时可能变化一次 | 同版本内相同工具声明与历史生成的名字确定稳定，响应侧始终按 `ToolMap` 向客户端还原原始工具名与工具类型 |
+| `D9` | Responses 客户端转 Chat 上游时直接从 `reasoning.encrypted_content` 中的 `trc1:plain` 信封恢复历史 `reasoning_content` | 取消服务端 Redis 推理文本存取依赖，直接满足强制工具轮携带 `reasoning_content` 的 Chat 上游 |
+| `D10` | 原生 Messages 路径（含各认证类型、Bedrock、Vertex、兼容端点与 `/v1/messages/count_tokens`）和原生 Responses 路径（HTTP、`/v1/responses/input_tokens` 与三类 WS 链路）在协议令牌路径含 `trc1:` 信封时执行 `PrepareNativeReplay` | 混合分组在转换路径与原生路径之间切号时无需客户端干预即可续聊；协议令牌路径不含 `trc1:` 的原生请求（含正文字面量 `"trc1:"`）保持逐字节不变 |
+| `D11` | Messages 显式关闭思考转往 Responses 或 Chat 时按目标模型推理能力裁决（支持 `"none"` 发 `effort="none"` 且省略 `summary`，支持 `"minimal"` 回退 `"minimal"`，纯推理模型取最低档位，仅开关、非推理或未知目录模型直接省略努力度）；Chat 转往 `HistoryNone` 上游时丢弃无令牌历史 `reasoning_content` | 避免向不支持禁用思考或努力度参数的上游误发 `effort` 引发 400 或意外开启思考，也不向历史助手正文拼接 `<thinking>` 标签 |
+| `D13` | 跨协议发往不接受客户端计费头的上游（Gemini、Antigravity、OpenAI 兼容平台；Qoder 保留并归一化 `cch=<cch>;`）时统一剥离 `x-anthropic-billing-header:` 系统提示块 | 避免 Claude Code 内部计费遥测头泄漏进非 Anthropic 上游的 `systemInstruction` 或 `developer` 指令 |
+| `D14` | Antigravity 将 Messages、Responses、Chat 合并为单跳 `v1internal` 管线：两模型族统一生效自定义 `identity_patch_prompt` 与 `CleanAntigravitySchema`，按显式 `tool_choice` 与 `stop_sequences` 映射，省略未传 `maxOutputTokens` 与 `request.sessionId` 并固定 `requestType: "agent"`，OpenAI 兼容入口保持原工具名直发，拆分 `trc1:antigravity_claude` 与 `trc1:gemini` 方案 | 消除双管线参数膨胀、强制 `VALIDATED` 工具模式与停止词覆盖差异；同分组下 Antigravity `gemini-*` 与标准 Gemini 可安全互通重放签名，并与 `claude-*` 隔离 |
+
 <a id="qoder_account_catalog"></a>
 ### 未发布：Qoder 桌面账号目录
 

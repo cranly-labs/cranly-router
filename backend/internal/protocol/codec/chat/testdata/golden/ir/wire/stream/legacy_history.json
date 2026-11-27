@@ -1,0 +1,85 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_legacy_history",
+      "model": "deepseek-reasoner",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {}
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Migration checks for the requested tenants "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "are ready to finalize."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Migration checks for the requested tenants are ready to finalize."
+        ]
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "Pre-upgrade migration verification succeeded: "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "schema version 42 is applied cleanly."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 112,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 48,
+      "reasoning": 22
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "text",
+      "text": "Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly."
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

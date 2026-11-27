@@ -1,0 +1,117 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_tool_parallel",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 96,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_weather_tyo_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"city\":"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\"Tokyo\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_weather_tyo_1",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": "{\"city\":\"Tokyo\"}"
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_time_tyo_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_time"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"timezone\":"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "\"Asia/Tokyo\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_time_tyo_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_time"
+        },
+        "arguments": "{\"timezone\":\"Asia/Tokyo\"}"
+      }
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 96,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 32
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

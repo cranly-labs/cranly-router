@@ -1,0 +1,93 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_reasoning_encrypted_only",
+      "model": "gpt-5",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "id": "rs_enconly_reply_2",
+      "reasoning": {}
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Step go-test exited with code 1 in TestPoolTimeout; "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "summarize the root cause."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "id": "rs_enconly_reply_2",
+      "reasoning": {
+        "segments": [
+          "Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."
+        ],
+        "summary": true,
+        "token": {
+          "data": "gAAAAABnEncOnlyReplyOpenAI02"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "text",
+      "id": "msg_enconly_reply_2"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "Build job-8841 failed during the go-test step with exit code 1 "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "because TestPoolTimeout timed out."
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "text",
+      "id": "msg_enconly_reply_2",
+      "text": "Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 88,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 54,
+      "reasoning": 24
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

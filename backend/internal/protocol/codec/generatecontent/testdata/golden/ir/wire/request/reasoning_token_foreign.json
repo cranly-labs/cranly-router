@@ -1,0 +1,91 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Compare regional GPU quota headroom in us-east-1 and eu-west-1."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "segments": [
+              "Check us-east-1 quota usage before comparing eu-west-1."
+            ],
+            "summary": true,
+            "token": {
+              "data": "trc1:anthropic:eyJkIjoiRXFRQkNnSVlBaUpBWm05eVpXbG5ibDloYm5Sb1gzRjFiM1JoWHpBeCIsInQiOiJDaGVjayB1cy1lYXN0LTEgcXVvdGEgdXNhZ2UgYmVmb3JlIGNvbXBhcmluZyBldS13ZXN0LTEuIn0"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "call": {
+            "call_id": "call_quota_use1",
+            "tool": {
+              "kind": "function",
+              "name": "lookup_region_quota"
+            },
+            "arguments": "{\"region\":\"us-east-1\"}",
+            "token": {
+              "data": "trc1:openai:eyJkIjoiZ0FBQUFBQm5Gb3JlaWduT3BlbkFJUXVvdGEwMSIsInAiOjEwMX0"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_quota_use1",
+            "tool": {
+              "kind": "function",
+              "name": "lookup_region_quota"
+            },
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"region\":\"us-east-1\",\"used\":12,\"limit\":64}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "lookup_region_quota",
+      "description": "Look up GPU quota usage in a cloud region.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "region": {
+            "type": "STRING",
+            "description": "Region name"
+          }
+        },
+        "required": [
+          "region"
+        ]
+      }
+    }
+  ],
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "mode": "enabled",
+    "budget_tokens": 2048,
+    "summary": "auto"
+  }
+}

@@ -75,9 +75,14 @@ func (a *anthropicPassthroughAdapter) ExecutePassthrough(ctx context.Context, in
 }
 
 // passthrough builds fresh attempt state and runs APIKeyPassthrough for the
-// selected provider. The shared flow validates credentials and controls
-// preparation, exchange, output, and partial-result handling for this call.
+// selected provider. Token-path trc1 continuity envelopes are unpacked or
+// stripped before shared passthrough filtering republishes the parsed request body.
 func (r *Runtime) passthrough(ctx context.Context, output HTTPBoundary, target *gatewayprovider.ExecutionProvider, input forwardcore.APIKeyInput) (*forwardcore.Result, error) {
+	var err error
+	input.Body, err = r.prepareNativeMessagesReplay(ctx, target, input.RequestModel, input.Body)
+	if err != nil {
+		return nil, err
+	}
 	adapter := &anthropicPassthroughAdapter{attempt: newAttempt(r, output, target)}
 	return forwardcore.APIKeyPassthrough(ctx, adapter, adapter.input(), input)
 }

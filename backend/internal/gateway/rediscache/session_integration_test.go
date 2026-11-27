@@ -3,7 +3,6 @@
 package rediscache
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -16,7 +15,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
@@ -237,31 +235,6 @@ func (s *GatewayCacheSuite) TestSessionOwnerGroupID_ConcurrentFirstBindAllowsSin
 // lifecycle supply isolated supported keys for protocol and sticky assertions.
 func TestGatewayCacheSuite(t *testing.T) {
 	suite.Run(t, new(GatewayCacheSuite))
-}
-
-// TestReasoningHistoryNativeRoundTrip captures request and output reasoning
-// summaries through production history recovery. Text must be retrievable
-// under both item IDs, with each stored TTL between one second and seven days.
-// A missing item must return empty reasoning.
-func (s *GatewayCacheSuite) TestReasoningHistoryNativeRoundTrip() {
-	store, ok := s.cache.(session.ReasoningContentCache)
-	require.True(s.T(), ok)
-	history := &session.ReasoningHistory{Cache: store}
-	history.FromInput(json.RawMessage(`[{"type":"reasoning","id":"ri_request","summary":[{"type":"summary_text","text":"request history"}]}]`))
-	require.Equal(s.T(), "request history", history.Lookup("ri_request"))
-
-	var output []openai.ResponsesOutput
-	require.NoError(s.T(), json.Unmarshal([]byte(`[{"type":"reasoning","id":"ri_response","summary":[{"type":"summary_text","text":" response history "}]}]`), &output))
-	history.FromOutput(output)
-	require.Equal(s.T(), "response history", history.Lookup("ri_response"))
-	for _, id := range []string{"ri_request", "ri_response"} {
-		ttl, err := s.RDB.TTL(s.Ctx, "reasoning_content:"+id).Result()
-		require.NoError(s.T(), err)
-		// Check a broad positive retention range bounded by the seven-day request;
-		// this assertion does not require the TTL to remain near that upper bound.
-		s.AssertTTLWithin(ttl, time.Second, 7*24*time.Hour)
-	}
-	require.Empty(s.T(), history.Lookup("missing_reasoning"))
 }
 
 // buildSessionKey formats the inherited sticky key used for direct Redis

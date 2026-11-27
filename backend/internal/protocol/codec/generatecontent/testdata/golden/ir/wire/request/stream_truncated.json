@@ -1,0 +1,34 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Check edge-gateway health and report active incidents."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "check_gateway_health",
+      "description": "Checks health metrics for a gateway service.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {
+          "service": {
+            "type": "STRING",
+            "description": "Service slug to inspect"
+          }
+        },
+        "required": [
+          "service"
+        ]
+      }
+    }
+  ],
+  "max_output_tokens": 256
+}

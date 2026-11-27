@@ -1,0 +1,11 @@
+{
+  "name": "tokenrouter-clientlab",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned CLI agent clients for TokenRouter T6 protocol conversion laboratory tests.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.330",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@openai/codex": "0.171.0"
+  }
+}

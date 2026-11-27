@@ -5,13 +5,13 @@
 //
 // Reading entry points:
 //   - execute.go: Selects one exchange, client output, and attempt observations.
-//   - request_transformer.go: Converts Claude input and chooses identity instructions.
+//   - payload.go: Wraps v1internal envelopes, injects identity instructions, and cleans schemas.
 //   - retry_loop.go: Selects rate-limit waits, capacity retries, and provider switching.
 //
 // File groups:
 //   - oauth.go and client.go: OAuth credentials, endpoint availability, and account queries.
 //   - payload.go and gemini_types.go: Request preparation and shared wire aliases.
-//   - response*.go and stream_transformer.go: Native and compatible response adaptation.
+//   - response_stream.go and response_converted.go: Native and IR-converted response adaptation.
 //   - retry*.go, quota_errors.go, and recovery*.go: Provider-local recovery decisions.
 //   - probe.go: Connection probes using the forwarding retry adapter.
 package antigravity

@@ -1,0 +1,37 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_stream_error_event",
+      "model": "gpt-4o",
+      "created_at": 1760002100
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "error",
+    "error": {
+      "type": "server_error",
+      "code": "upstream_overloaded",
+      "message": "Upstream model capacity exhausted during stream generation."
+    }
+  }
+]

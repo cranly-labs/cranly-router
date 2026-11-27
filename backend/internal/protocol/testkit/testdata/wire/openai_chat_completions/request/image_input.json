@@ -1,0 +1,29 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            "detail": "high"
+          }
+        },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "https://assets.example.com/diagrams/architecture-overview.png",
+            "detail": "auto"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Compare the inline PNG calibration swatch with the remote architecture diagram and state whether their aspect ratios match."
+        }
+      ]
+    }
+  ]
+}

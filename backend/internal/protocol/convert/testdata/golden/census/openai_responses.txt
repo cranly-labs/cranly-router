@@ -1,0 +1,113 @@
+# Unmodeled field census for openai_responses (10 corpus requests)
+[summary]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.messages[*].parts[*].status
+extra	$.messages[*].phase
+extra	$.messages[*].status
+extra	$.tools[*].execution
+extra	$.tools[*].parameters
+hosted_tool	$.tools[*] (openai_responses:web_search)
+
+[corpus/clients/codex/0.171.0/lab_custom_tool/1.request.json]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.tools[8].execution
+extra	$.tools[8].parameters
+hosted_tool	$.tools[9] (openai_responses:web_search)
+
+[corpus/clients/codex/0.171.0/lab_custom_tool/2.request.json]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.messages[4].parts[0].status
+extra	$.tools[8].execution
+extra	$.tools[8].parameters
+hosted_tool	$.tools[9] (openai_responses:web_search)
+
+[corpus/clients/codex/0.171.0/lab_reasoning_tool/1.request.json]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.tools[8].execution
+extra	$.tools[8].parameters
+hosted_tool	$.tools[9] (openai_responses:web_search)
+
+[corpus/clients/codex/0.171.0/lab_reasoning_tool/2.request.json]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.messages[5].phase
+extra	$.messages[5].status
+extra	$.messages[6].parts[0].status
+extra	$.tools[8].execution
+extra	$.tools[8].parameters
+hosted_tool	$.tools[9] (openai_responses:web_search)
+
+[corpus/clients/codex/0.171.0/lab_text/1.request.json]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.tools[8].execution
+extra	$.tools[8].parameters
+hosted_tool	$.tools[9] (openai_responses:web_search)
+
+[corpus/clients/codex/0.171.0/lab_tool/1.request.json]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.tools[8].execution
+extra	$.tools[8].parameters
+hosted_tool	$.tools[9] (openai_responses:web_search)
+
+[corpus/clients/codex/0.171.0/lab_tool/2.request.json]
+extra	$.client_metadata.root_turn_id
+extra	$.client_metadata.session_id
+extra	$.client_metadata.thread_id
+extra	$.client_metadata.turn_id
+extra	$.client_metadata.x-codex-installation-id
+extra	$.client_metadata.x-codex-turn-metadata
+extra	$.client_metadata.x-codex-window-id
+extra	$.messages[4].parts[0].status
+extra	$.tools[8].execution
+extra	$.tools[8].parameters
+hosted_tool	$.tools[9] (openai_responses:web_search)
+
+[corpus/clients/pi/1.6.0/lab_text_responses/1.request.json]
+(none)
+
+[corpus/clients/pi/1.6.0/lab_tool_responses/1.request.json]
+(none)
+
+[corpus/clients/pi/1.6.0/lab_tool_responses/2.request.json]
+(none)

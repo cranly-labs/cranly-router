@@ -1,0 +1,71 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_tools_custom",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_patch_2",
+        "tool": {
+          "kind": "function",
+          "name": "apply_patch"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"input\":\"*** Begin Patch\\n*** Update File: README.md\\n"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "@@\\n-Default timeout: 5s\\n"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "+Default timeout: 15s\\n*** End Patch\\n\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 104,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 42
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_patch_2",
+        "tool": {
+          "kind": "function",
+          "name": "apply_patch"
+        },
+        "arguments": "{\"input\":\"*** Begin Patch\\n*** Update File: README.md\\n@@\\n-Default timeout: 5s\\n+Default timeout: 15s\\n*** End Patch\\n\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

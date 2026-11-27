@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -65,41 +66,88 @@ func (s *executeSink) Emit(event upstream.OutputEvent) error {
 }
 
 // localTarget builds a one-attempt local target with conversion callbacks and
-// response-close counting. mode selects the client adapter; the stream
-// parameter is retained in the fixture signature and does not alter this
-// target construction.
-func localTarget(server *httptest.Server, mode ResponseMode, stream bool, closes *atomic.Int32) *Target {
-	return &Target{ProviderID: 41, Model: "gemini-fixture", Mode: mode, Exchange: ExchangeOptions{MaxRetries: 1, RequestIDHeader: "x-request-id", Build: func(ctx context.Context) (*http.Request, string, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(`{"contents":[]}`))
-		return req, "x-request-id", err
-	}, Do: func(req *http.Request) (*http.Response, error) {
-		res, err := server.Client().Do(req)
-		if res != nil {
-			res.Body = &executeBody{ReadCloser: res.Body, closes: closes}
+// response-close counting for clientKind ("native", "messages", "chat", "responses").
+func localTarget(t *testing.T, server *httptest.Server, clientKind string, stream bool, closes *atomic.Int32) (*Target, upstream.AttemptInput) {
+	t.Helper()
+	mode := ConvertedResponse
+	proto := protocol.ProtocolAnthropicMessages
+	reqBody := []byte(`{"model":"gemini-fixture","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	switch clientKind {
+	case "native":
+		mode = NativeResponse
+		proto = protocol.ProtocolGeminiGenerateContent
+		reqBody = []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	case "chat":
+		proto = protocol.ProtocolOpenAIChatCompletions
+		if stream {
+			reqBody = []byte(`{"model":"gemini-fixture","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`)
+		} else {
+			reqBody = []byte(`{"model":"gemini-fixture","messages":[{"role":"user","content":"hi"}]}`)
 		}
-		return res, err
-	}, CheckPolicy: func(_ context.Context, res *http.Response) (bool, *http.Response) { return false, res }, ShouldRetry: func(int) bool { return false }, ReadError: func(res *http.Response) []byte { body, _ := io.ReadAll(res.Body); return body }, Observe: func(ExchangeNotice) {}, SetError: func(int, string, string) {}, Sanitize: func(s string) string { return s }, Message: func(b []byte) string { return string(b) }, Detail: func([]byte) string { return "" }, BuildError: func(err error) error { return err }, FinalError: errors.New}, Response: ResponseOptions{ReadBody: io.ReadAll, WriteHeaders: func(dst, src http.Header) {
-		for key, values := range src {
-			dst[key] = append([]string(nil), values...)
-		}
-	}, ObserveImages: func([]byte) {}, ReverseTools: func(b []byte) []byte { return b }, ClaudeError: func(_ int, _ string, m string) error { return errors.New(m) }, ChatError: func(_ int, _ string, m string) error { return errors.New(m) }, GoogleError: func(_ int, m string) error { return errors.New(m) }, CompatError: func(_ OpenAICompatProtocol, _ int, _ string, m string) error { return errors.New(m) }}}
-}
+	case "responses":
+		proto = protocol.ProtocolOpenAIResponses
+		reqBody = []byte(`{"model":"gemini-fixture","input":"hi"}`)
+	}
 
-// nativeInput builds the client protocol and stream flag matching the target
-// test mode. It selects Responses separately within OpenAI mode and supplies
-// the fixed response model and generation body.
-func nativeInput(target *Target, stream bool) upstream.AttemptInput {
-	id := protocol.ProtocolAnthropicMessages
-	if target.Mode == NativeResponse {
-		id = protocol.ProtocolGeminiGenerateContent
+	target := &Target{
+		ProviderID: 41,
+		Model:      "gemini-fixture",
+		Mode:       mode,
+		Exchange: ExchangeOptions{
+			MaxRetries:      1,
+			RequestIDHeader: "x-request-id",
+			Build: func(ctx context.Context) (*http.Request, string, error) {
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(`{"contents":[]}`))
+				return req, "x-request-id", err
+			},
+			Do: func(req *http.Request) (*http.Response, error) {
+				res, err := server.Client().Do(req)
+				if res != nil {
+					res.Body = &executeBody{ReadCloser: res.Body, closes: closes}
+				}
+				return res, err
+			},
+			CheckPolicy: func(_ context.Context, res *http.Response) (bool, *http.Response) { return false, res },
+			ShouldRetry: func(int) bool { return false },
+			ReadError:   func(res *http.Response) []byte { body, _ := io.ReadAll(res.Body); return body },
+			Observe:     func(ExchangeNotice) {},
+			SetError:    func(int, string, string) {},
+			Sanitize:    func(s string) string { return s },
+			Message:     func(b []byte) string { return string(b) },
+			Detail:      func([]byte) string { return "" },
+			BuildError:  func(err error) error { return err },
+			FinalError:  errors.New,
+		},
+		Response: ResponseOptions{
+			ReadBody: io.ReadAll,
+			WriteHeaders: func(dst, src http.Header) {
+				for key, values := range src {
+					dst[key] = append([]string(nil), values...)
+				}
+			},
+			ObserveImages: func([]byte) {},
+			ReverseTools:  func(b []byte) []byte { return b },
+			GoogleError:   func(_ int, m string) error { return errors.New(m) },
+		},
 	}
-	if target.Mode == OpenAIResponse {
-		id = protocol.ProtocolOpenAIChatCompletions
-		if target.OpenAIProtocol == OpenAICompatResponses {
-			id = protocol.ProtocolOpenAIResponses
-		}
+	if mode == ConvertedResponse {
+		ex, err := convert.NewExchange(reqBody, convert.Options{
+			Route: convert.Route{
+				Client:   proto,
+				Upstream: protocol.ProtocolGeminiGenerateContent,
+			},
+			ClientModel: "gemini-fixture",
+		})
+		require.NoError(t, err)
+		target.Converted = ConvertedOptions{Exchange: ex}
 	}
-	return upstream.AttemptInput{Target: target, Protocol: id, Stream: stream, ResponseModel: "gemini-fixture", Body: []byte(`{"contents":[]}`)}
+	return target, upstream.AttemptInput{
+		Target:        target,
+		Protocol:      proto,
+		Stream:        stream,
+		ResponseModel: "gemini-fixture",
+		Body:          reqBody,
+	}
 }
 
 // TestExecuteGeminiNonStreamObservedZero returns visible content with explicit
@@ -116,23 +164,12 @@ func TestExecuteGeminiNonStreamObservedZero(t *testing.T) {
 			}))
 			defer server.Close()
 			var closes, releases atomic.Int32
-			mode := MessagesResponse
-			switch kind {
-			case "native":
-				mode = NativeResponse
-			case "chat", "responses":
-				mode = OpenAIResponse
-			}
-			target := localTarget(server, mode, false, &closes)
-			if kind == "responses" {
-				target.OpenAIProtocol = OpenAICompatResponses
-			}
+			target, input := localTarget(t, server, kind, false, &closes)
 			target.Enter = func() (func(), error) { return func() { releases.Add(1) }, nil }
 			sink := &executeSink{}
-			result, err := (Executor{}).Execute(context.Background(), nativeInput(target, false), sink)
+			result, err := (Executor{}).Execute(context.Background(), input, sink)
 			require.NoError(t, err)
 			require.True(t, result.HasUsage)
-			require.True(t, result.Served)
 			require.True(t, result.Served)
 			require.Nil(t, result.Timings.TTFTMs())
 			require.Zero(t, result.Usage.InputTokens)
@@ -154,13 +191,9 @@ func TestExecuteGeminiNonStreamObservedZero(t *testing.T) {
 // synchronous backpressure, progressive output, retained observed usage/model
 // on read failure, and final response closing.
 func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
-	for _, variant := range []int{0, 1, 2, 3} {
-		mode := ResponseMode(variant)
-		if variant == 3 {
-			mode = OpenAIResponse
-		}
+	for _, kind := range []string{"messages", "native", "chat", "responses"} {
 		for _, partial := range []bool{false, true} {
-			t.Run(fmt.Sprintf("mode=%d/partial=%v", variant, partial), func(t *testing.T) {
+			t.Run(fmt.Sprintf("kind=%s/partial=%v", kind, partial), func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "text/event-stream")
 					if partial {
@@ -175,10 +208,7 @@ func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
 				}))
 				defer server.Close()
 				var closes atomic.Int32
-				target := localTarget(server, mode, true, &closes)
-				if variant == 3 {
-					target.OpenAIProtocol = OpenAICompatResponses
-				}
+				_, input := localTarget(t, server, kind, true, &closes)
 				sink := &executeSink{first: make(chan struct{}), resume: make(chan struct{})}
 				done := make(chan struct{})
 				var result upstream.AttemptResult
@@ -186,24 +216,24 @@ func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
 				// Run Execute separately while the sink blocks its first payload; result
 				// and error are read after done closes to join the worker.
 				go func() {
-					result, runErr = (Executor{}).Execute(context.Background(), nativeInput(target, true), sink)
+					result, runErr = (Executor{}).Execute(context.Background(), input, sink)
 					close(done)
 				}()
 				select {
 				case <-sink.first:
 				case <-time.After(3 * time.Second):
-					t.Fatal("未取得渐进输出")
+					t.Fatal("failed to observe progressive output")
 				}
 				select {
 				case <-done:
-					t.Fatal("同步背压未生效")
+					t.Fatal("synchronous backpressure did not hold Execute")
 				default:
 				}
 				close(sink.resume)
 				select {
 				case <-done:
 				case <-time.After(3 * time.Second):
-					t.Fatal("流未结束")
+					t.Fatal("stream did not finish")
 				}
 				if partial {
 					require.Error(t, runErr)
@@ -217,7 +247,6 @@ func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
 				require.True(t, result.HasUsage)
 				require.True(t, result.Served)
 				require.Nil(t, result.Timings.TTFTMs())
-				require.True(t, result.Served)
 				require.Contains(t, sink.body.String(), "visible")
 				require.EqualValues(t, 1, closes.Load())
 				semantic := false
@@ -241,12 +270,12 @@ func TestExecuteGeminiCountFallbackIsNotUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
 	defer server.Close()
 	var closes atomic.Int32
-	target := localTarget(server, NativeResponse, false, &closes)
+	target, input := localTarget(t, server, "native", false, &closes)
 	target.Exchange.ShouldRetry = func(int) bool { return true }
 	target.Exchange.CountFallback = true
 	target.Exchange.EstimateCount = func() int { return 17 }
 	sink := &executeSink{}
-	result, err := (Executor{}).Execute(context.Background(), nativeInput(target, false), sink)
+	result, err := (Executor{}).Execute(context.Background(), input, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result.EstimatedTokenCount)
 	require.Equal(t, 17, *result.EstimatedTokenCount)
@@ -264,11 +293,11 @@ func TestExecuteGeminiCancelledRequestDoesNotReachServer(t *testing.T) {
 	var calls, closes, releases atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 	defer server.Close()
-	target := localTarget(server, NativeResponse, false, &closes)
+	target, input := localTarget(t, server, "native", false, &closes)
 	target.Enter = func() (func(), error) { return func() { releases.Add(1) }, nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := (Executor{}).Execute(ctx, nativeInput(target, false), &executeSink{})
+	result, err := (Executor{}).Execute(ctx, input, &executeSink{})
 	require.Error(t, err)
 	require.True(t, result.Cancelled)
 	require.Zero(t, calls.Load())

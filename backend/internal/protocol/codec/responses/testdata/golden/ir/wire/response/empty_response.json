@@ -1,0 +1,15 @@
+{
+  "id": "resp_empty_response",
+  "model": "gpt-5",
+  "created_at": 1760002300,
+  "parts": [],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 18,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 0
+  }
+}

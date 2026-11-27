@@ -20,10 +20,10 @@ import (
 // session.go stores gateway session state in Redis and arbitrates
 // response-window ownership and Live controller transitions.
 // Gateway session keys coordinate response-window owners, deferred video
-// billing, reasoning recovery, transcript blocks, and saved Live calls through
-// one Redis client. Atomic scripts replace or compare an owner before changing
-// its window, while Live scripts qualify stored controller transitions and
-// deduplicate closure claims.
+// billing, transcript blocks, and saved Live calls through one Redis client.
+// Atomic scripts replace or compare an owner before changing its window, while
+// Live scripts qualify stored controller transitions and deduplicate closure
+// claims.
 //
 // Transcript blocking publishes bounded exact-key batches before a coarse
 // scope marker, so a fresh marker does not advertise work that has not
@@ -46,16 +46,6 @@ const (
 	// persistent settlement remains independently deduplicated.
 	grokVideoPendingBillingPrefix = "grok_video_pending:" // video billing snapshot key namespace
 	grokVideoBilledPrefix         = "grok_video_billed:"  // video temporary claimant key namespace
-
-	// Reasoning cache keys retain recovered text by item identity; nonpositive
-	// caller TTL values select the seven-day default used by session history
-	// recovery.
-	reasoningContentPrefix = "reasoning_content:" // reasoning item text key namespace
-
-	// reasoningContentDefaultTTL allows cached reasoning to support session
-	// recovery for seven days.
-	// Nonpositive caller TTLs select this default.
-	reasoningContentDefaultTTL = 7 * 24 * time.Hour
 
 	// Transcript blocks separate exact content keys from a coarse scope marker,
 	// and command width bounds each write transaction or lookup batch over those
@@ -94,11 +84,10 @@ return 1
 `)
 
 	// These assertions keep the combined adapter discoverable through
-	// response-window, video, reasoning, transcript-block and Live-store
-	// interfaces consumed by the gateway's independent session components.
+	// response-window, video, transcript-block, and Live-store interfaces
+	// consumed by the gateway's independent session components.
 	_ session.OpenAIWSSessionPreemptionCache = (*gatewayCache)(nil)
 	_ session.GrokVideoBillingCache          = (*gatewayCache)(nil)
-	_ session.ReasoningContentCache          = (*gatewayCache)(nil)
 	_ session.CyberSessionBlockStore         = (*gatewayCache)(nil)
 	_ session.LiveCallStore                  = (*gatewayCache)(nil)
 
@@ -163,8 +152,8 @@ type gatewayCache struct {
 
 // NewGatewayCache binds the supplied client to sticky and protocol session
 // operations. Callers provide a usable client for direct transcript and Live
-// methods; guarded response, video, and reasoning methods report unavailable
-// when the client is nil.
+// methods; guarded response-window and video methods report unavailable when
+// the client is nil.
 func NewGatewayCache(rdb *redis.Client) session.GatewayCache {
 	return &gatewayCache{rdb: rdb, StickyCache: schedulerredis.NewStickyCache(rdb)}
 }
@@ -343,49 +332,6 @@ func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key string) e
 	// Remove the failed billing marker by key alone so a later poll can retry;
 	// this operation has no stored claimant token to distinguish another owner.
 	return c.rdb.Del(ctx, grokVideoBilledPrefix+key).Err()
-}
-
-// SetReasoningContent stores reasoning text under its trimmed item identifier.
-// Available cache ignores blank IDs or empty text; nonpositive TTL selects
-// seven days, while unavailable cache returns an error before that empty-input
-// handling.
-func (c *gatewayCache) SetReasoningContent(ctx context.Context, itemID string, content string, ttl time.Duration) error {
-	if c == nil || c.rdb == nil {
-		return errors.New("gateway cache unavailable")
-	}
-	itemID = strings.TrimSpace(itemID)
-	if itemID == "" || content == "" {
-		return nil
-	}
-	if ttl <= 0 {
-		ttl = reasoningContentDefaultTTL
-	}
-	return c.rdb.Set(ctx, reasoningContentPrefix+itemID, content, ttl).Err()
-}
-
-// GetReasoningContent returns cached text for a trimmed item identifier or
-// ErrReasoningContentNotFound for blank IDs and Redis misses. Unavailable
-// cache and other command failures remain distinct errors for session
-// recovery.
-func (c *gatewayCache) GetReasoningContent(ctx context.Context, itemID string) (string, error) {
-	if c == nil || c.rdb == nil {
-		return "", errors.New("gateway cache unavailable")
-	}
-	itemID = strings.TrimSpace(itemID)
-	if itemID == "" {
-		return "", session.ErrReasoningContentNotFound
-	}
-	val, err := c.rdb.Get(ctx, reasoningContentPrefix+itemID).Result()
-	if err != nil {
-		// Translate a Redis miss into the recovery sentinel so reasoning history can
-		// skip absent items while keeping actual command failures distinguishable
-		// for its caller.
-		if errors.Is(err, redis.Nil) {
-			return "", session.ErrReasoningContentNotFound
-		}
-		return "", err
-	}
-	return val, nil
 }
 
 // SetCyberSessionBlocked writes nonempty exact keys in bounded transactions

@@ -1,0 +1,46 @@
+{
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "system",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "You are a gateway billing auditor. Keep answers concise and cite exact token bucket relationships.\nReference policy: Anthropic input_tokens excludes cached reads and writes, whereas OpenAI input_tokens and prompt_tokens include them."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Summarize how the cached system prefix and fresh context were accounted in this turn."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "lookup_cache_policy",
+      "description": "Reads active prompt cache TTL settings.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Tenant cache namespace"
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      }
+    }
+  ],
+  "max_output_tokens": 256,
+  "include_usage": true,
+  "service_tier": "priority",
+  "cache_key": "tenant-42-cache-policy-v1"
+}

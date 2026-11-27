@@ -1,0 +1,35 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Read the current UTC clock and server uptime using the parameterless tools."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "get_clock",
+      "description": "Return the current UTC timestamp.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {}
+      }
+    },
+    {
+      "kind": "function",
+      "name": "get_uptime",
+      "description": "Return server uptime seconds.",
+      "input_schema": {
+        "type": "OBJECT",
+        "properties": {}
+      }
+    }
+  ],
+  "max_output_tokens": 256
+}

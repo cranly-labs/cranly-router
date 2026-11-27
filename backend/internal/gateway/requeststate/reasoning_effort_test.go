@@ -311,10 +311,10 @@ func TestValidateOpenAIReasoningEffort(t *testing.T) {
 	}
 }
 
-// TestCanonicalRequestedReasoningEffort supplies nested, flat and Anthropic
+// TestCanonicalRequestedReasoningEffort supplies OpenAI, Anthropic, and Gemini
 // explicit choices, plus omission and a body model suffix. Capture must retain
-// recognized choices including none and return nil when the actual body has no
-// choice.
+// recognized choices including none and minimal and return nil when the actual
+// body has no choice.
 func TestCanonicalRequestedReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name       string   // case label for diagnostics
@@ -325,6 +325,10 @@ func TestCanonicalRequestedReasoningEffort(t *testing.T) {
 		{name: "nested explicit", body: `{"model":"gpt-5.4","reasoning":{"effort":"MAX"}}`, want: "max"},
 		{name: "flat explicit", body: `{"model":"gpt-5.4","reasoning_effort":"x-high"}`, want: "xhigh"},
 		{name: "anthropic output config", body: `{"model":"claude-sonnet","output_config":{"effort":"high"}}`, want: "high"},
+		{name: "gemini camelCase thinkingLevel", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`, want: "high"},
+		{name: "gemini snake_case thinking_level", body: `{"generation_config":{"thinking_config":{"thinking_level":"MINIMAL"}}}`, want: "minimal"},
+		{name: "gemini none explicit", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"NONE"}}}`, want: "none"},
+		{name: "gemini blank camelCase falls back to snake_case", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"   "}},"generation_config":{"thinking_config":{"thinking_level":"MEDIUM"}}}`, want: "medium"},
 		{name: "none explicit", body: `{"model":"gpt-5.4","reasoning_effort":"none"}`, want: "none"},
 		{name: "candidate suffix", body: `{"model":"gpt-5.4"}`, candidates: []string{"gpt-5.4-max"}, want: ""},
 		{name: "body suffix fallback", body: `{"model":"gpt-5.4-high"}`, want: ""},
@@ -342,16 +346,71 @@ func TestCanonicalRequestedReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestExtractGeminiReasoningEffortFromBody feeds camelCase, snake_case, blank
+// fallback, minimal/none, budget-only, and unknown Gemini payloads. Reporting
+// must normalize supported thinkingLevel labels and return nil for omitted,
+// minimal, none, or unrecognized values.
+func TestExtractGeminiReasoningEffortFromBody(t *testing.T) {
+	tests := []struct {
+		name string // scenario label for test diagnostics
+		body string // raw Gemini GenerateContent JSON payload
+		want string // expected reporting effort; empty expects nil
+	}{
+		{name: "camelCase HIGH", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}`, want: "high"},
+		{name: "camelCase low", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"low"}}}`, want: "low"},
+		{name: "snake_case MEDIUM", body: `{"generation_config":{"thinking_config":{"thinking_level":"MEDIUM"}}}`, want: "medium"},
+		{name: "blank camelCase falls back to snake_case", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":" "}},"generation_config":{"thinking_config":{"thinking_level":"x-high"}}}`, want: "xhigh"},
+		{name: "max preserved", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"MAX"}}}`, want: "max"},
+		{name: "minimal dropped from reporting", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"MINIMAL"}}}`, want: ""},
+		{name: "none dropped from reporting", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"NONE"}}}`, want: ""},
+		{name: "unspecified label dropped", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"THINKING_LEVEL_UNSPECIFIED"}}}`, want: ""},
+		{name: "budget only returns nil", body: `{"generationConfig":{"thinkingConfig":{"thinkingBudget":4096}}}`, want: ""},
+		{name: "non-string ignored", body: `{"generationConfig":{"thinkingConfig":{"thinkingLevel":123}}}`, want: ""},
+		{name: "empty body returns nil", body: ``, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractGeminiReasoningEffortFromBody([]byte(tt.body))
+			if tt.want == "" {
+				require.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			require.Equal(t, tt.want, *got)
+		})
+	}
+}
+
 // TestCanonicalRequestedReasoningEffortFromReqBodyPreservesNone supplies padded
-// none in a decoded nested effort field. Pre-policy capture must return a
-// nonnil canonical none pointer even though effective reporting drops that
-// label.
+// none and Gemini thinkingLevel choices in decoded request maps. Pre-policy
+// capture must retain canonical none, minimal, and high labels across both
+// OpenAI and Gemini field spellings.
 func TestCanonicalRequestedReasoningEffortFromReqBodyPreservesNone(t *testing.T) {
 	got := CanonicalRequestedReasoningEffortFromReqBody(map[string]any{
 		"reasoning": map[string]any{"effort": " none "},
 	})
 	require.NotNil(t, got)
 	require.Equal(t, "none", *got)
+
+	gotGeminiCamel := CanonicalRequestedReasoningEffortFromReqBody(map[string]any{
+		"generationConfig": map[string]any{
+			"thinkingConfig": map[string]any{
+				"thinkingLevel": "HIGH",
+			},
+		},
+	})
+	require.NotNil(t, gotGeminiCamel)
+	require.Equal(t, "high", *gotGeminiCamel)
+
+	gotGeminiSnake := CanonicalRequestedReasoningEffortFromReqBody(map[string]any{
+		"generation_config": map[string]any{
+			"thinking_config": map[string]any{
+				"thinking_level": "MINIMAL",
+			},
+		},
+	})
+	require.NotNil(t, gotGeminiSnake)
+	require.Equal(t, "minimal", *gotGeminiSnake)
 }
 
 // TestExtractOpenAIServiceTier supplies recognized map tiers, a fast alias, a

@@ -1,8 +1,8 @@
 package openaiforward
 
 import (
+	"bytes"
 	"context"
-	"crypto/rand"
 	"io"
 	"net/http"
 	"strings"
@@ -14,9 +14,10 @@ import (
 	"go.uber.org/zap"
 
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
-	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -28,15 +29,30 @@ import (
 // Messages rewrites existing ephemeral cache markers for Claude targets while
 // leaving mapped passback models and uncached OpenAI conversions untouched.
 
+// cacheOutputSink retains serialized native-Anthropic response bytes in memory.
+type cacheOutputSink struct {
+	bytes.Buffer // captured client response bytes
+}
+
 // nativeFlowTestPorts binds production Anthropic cache helpers and in-memory
 // exchange responses to native Anthropic flow tests.
 type nativeFlowTestPorts struct {
-	sink           *cacheOutputSink                   // captured client output writer
-	provider       *gatewayprovider.ExecutionProvider // selected execution provider target
-	upstreamModel  string                             // mapped vendor model returned by UpstreamModel
-	streamResponse bool                               // whether SendNative returns SSE instead of JSON
-	builtBodies    [][]byte                           // captured request payloads passed to BuildNative
-	cacheModels    []string                           // captured model arguments passed to CacheTTL
+	sink           *cacheOutputSink                     // captured client output writer
+	provider       *gatewayprovider.ExecutionProvider   // selected execution provider target
+	upstreamModel  string                               // mapped vendor model returned by UpstreamModel
+	streamResponse bool                                 // whether SendNative returns SSE instead of JSON
+	replayFn       func([]byte, string) ([]byte, error) // optional native replay callback
+	builtBodies    [][]byte                             // captured request payloads passed to BuildNative
+	cacheModels    []string                             // captured model arguments passed to CacheTTL
+}
+
+// Begin accepts output metadata without writing synthetic response content.
+func (*cacheOutputSink) Begin(upstream.OutputHead) error { return nil }
+
+// Emit retains every serialized payload for final wire-level usage assertions.
+func (s *cacheOutputSink) Emit(event upstream.OutputEvent) error {
+	_, err := s.Write(event.Data)
+	return err
 }
 
 // BillingModel selects fallback when non-empty and otherwise retains model.
@@ -89,6 +105,16 @@ func (*nativeFlowTestPorts) Profile() MessagesProfile {
 // Error panics on unexpected local validation failures in valid flow scenarios.
 func (*nativeFlowTestPorts) Error(_ int, _, message string) {
 	panic("unexpected Error: " + message)
+}
+
+// PrepareNativeMessagesReplay invokes replayFn when set, or delegates to
+// gatewayprovider.PrepareNativeReplay against p.provider when replayFn is nil.
+func (p *nativeFlowTestPorts) PrepareNativeMessagesReplay(ctx context.Context, model string, body []byte) ([]byte, error) {
+	if p.replayFn != nil {
+		return p.replayFn(body, model)
+	}
+	out, _, err := gatewayprovider.PrepareNativeReplay(ctx, p.provider, model, body, nil, "anthropic_messages", "anthropic_messages")
+	return out, err
 }
 
 // PrepareModel returns the supplied Messages body without model-attribute rewrites.
@@ -191,43 +217,6 @@ func (*nativeFlowTestPorts) DirectOptions() NativeAnthropicOptions {
 	}
 }
 
-// AdaptResponsesTools returns body unchanged with an empty client-tool restoration map.
-func (*nativeFlowTestPorts) AdaptResponsesTools(body []byte) ([]byte, bridge.ResponsesClientToolMapping, error) {
-	return body, bridge.ResponsesClientToolMapping{}, nil
-}
-
-// ResponsesToAnthropic converts r into an Anthropic request via the production bridge.
-func (*nativeFlowTestPorts) ResponsesToAnthropic(r *protocolopenai.ResponsesRequest) (*protocolanthropic.AnthropicRequest, error) {
-	return bridge.ResponsesToAnthropicRequest(r)
-}
-
-// ChatToResponses converts r into a Responses request via the production bridge.
-func (*nativeFlowTestPorts) ChatToResponses(r *protocolopenai.ChatCompletionsRequest) (*protocolopenai.ResponsesRequest, error) {
-	return bridge.ChatCompletionsToResponses(r, bridge.RequestOptions{})
-}
-
-// ResponsesEffort returns nil because cache-policy tests omit explicit effort overrides.
-func (*nativeFlowTestPorts) ResponsesEffort([]byte, ...string) *string { return nil }
-
-// ChatEffort returns nil because cache-policy tests omit explicit effort overrides.
-func (*nativeFlowTestPorts) ChatEffort([]byte, ...string) *string { return nil }
-
-// MapStatus returns the upstream HTTP status code unchanged for test assertions.
-func (*nativeFlowTestPorts) MapStatus(status int) int { return status }
-
-// OutputOptions builds conversion reader callbacks for Responses and Chat flow tests.
-func (*nativeFlowTestPorts) OutputOptions() AnthropicOutputOptions {
-	return AnthropicOutputOptions{
-		Runtime:        bridge.Runtime{Now: time.Now, ReadRandom: rand.Read},
-		MaxLineSize:    func() int { return 1 << 20 },
-		StreamInterval: func() time.Duration { return 0 },
-		CopyHeaders:    func(http.Header, http.Header) {},
-		ReverseTools:   func(body []byte) []byte { return body },
-		Error:          func(_ int, _, message string) { panic("unexpected output error: " + message) },
-		Warn:           func(string, ...zap.Field) {},
-	}
-}
-
 // TestForwardNativeAnthropicFlows_RewritesExistingMessagesCacheControlWithoutSynthesizingConversions
 // runs native Messages, Responses, and Chat flows with the real production
 // cache-control helpers. Direct Messages rewrites existing ephemeral markers to
@@ -283,19 +272,103 @@ func TestForwardNativeAnthropicFlows_RewritesExistingMessagesCacheControlWithout
 
 	t.Run("responses_conversion_leaves_uncached_payload_without_cache_control", func(t *testing.T) {
 		respBody := []byte(`{"model":"claude-sonnet-4-6","instructions":"be helpful","input":"hello"}`)
-		ports := &nativeFlowTestPorts{sink: &cacheOutputSink{}, provider: target, upstreamModel: "claude-sonnet-4-6", streamResponse: true}
-		_, err := ForwardNativeResponses(enabledCtx, respBody, "", ports)
+		ports := &fakeConvertedAnthropicPorts{
+			profile:       MessagesProfile{Profile: Profile{Platform: "opencode"}, ID: 7},
+			upstreamModel: "claude-sonnet-4-6",
+			dialect:       convert.Dialect{Tools: convert.ToolSupportFunction, ToolNameMaxBytes: 128},
+			force1h:       true,
+		}
+		_, err := ForwardConvertedAnthropic(enabledCtx, protocol.ProtocolOpenAIResponses, respBody, "", ports)
 		require.NoError(t, err)
-		require.Empty(t, ports.cacheModels)
-		require.NotContains(t, string(ports.builtBodies[0]), "cache_control")
+		require.Len(t, ports.sentBodies, 1)
+		require.NotContains(t, string(ports.sentBodies[0]), "cache_control")
 	})
 
 	t.Run("chat_conversion_leaves_uncached_payload_without_cache_control", func(t *testing.T) {
 		chatBody := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"system","content":"be helpful"},{"role":"user","content":"hello"}]}`)
-		ports := &nativeFlowTestPorts{sink: &cacheOutputSink{}, provider: target, upstreamModel: "claude-sonnet-4-6", streamResponse: true}
-		_, err := ForwardNativeChat(enabledCtx, chatBody, "", ports)
+		ports := &fakeConvertedAnthropicPorts{
+			profile:       MessagesProfile{Profile: Profile{Platform: "opencode"}, ID: 7},
+			upstreamModel: "claude-sonnet-4-6",
+			dialect:       convert.Dialect{Tools: convert.ToolSupportFunction, ToolNameMaxBytes: 128},
+			force1h:       true,
+		}
+		_, err := ForwardConvertedAnthropic(enabledCtx, protocol.ProtocolOpenAIChatCompletions, chatBody, "", ports)
 		require.NoError(t, err)
-		require.Empty(t, ports.cacheModels)
-		require.NotContains(t, string(ports.builtBodies[0]), "cache_control")
+		require.Len(t, ports.sentBodies, 1)
+		require.NotContains(t, string(ports.sentBodies[0]), "cache_control")
 	})
+}
+
+// TestForwardNativeMessages_PrepareNativeMessagesReplay exercises compatible
+// platform ForwardNativeMessages carrier replay across literal user text,
+// OpenCode Claude signature restoration, and Kimi passback unsigned thinking.
+// Matching envelopes must unpack cleanly while foreign tokens drop without
+// altering literal user text.
+func TestForwardNativeMessages_PrepareNativeMessagesReplay(t *testing.T) {
+	anthCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAnthropic,
+		Data:   "EqQBOpenCodeClaudeSig",
+		Text:   "OpenCode Claude signed thought.",
+	})
+	require.NoError(t, err)
+	plainCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemePlain,
+		Text:   "Kimi passback thought.",
+	})
+	require.NoError(t, err)
+
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":128,"nonce":9007199254740993,"messages":[{"role":"user","content":"keep trc1:plain:demo"},{"role":"assistant","content":[{"type":"thinking","thinking":"stub","signature":"` + anthCarrier + `"},{"type":"thinking","thinking":"","signature":"` + plainCarrier + `"},{"type":"text","text":"done"}]}]}`)
+	literalOnly := []byte(`{"model":"claude-sonnet-4-6","max_tokens":128,"nonce":9007199254740993,"messages":[{"role":"user","content":"keep trc1:plain:demo"}]}`)
+
+	openCodeTarget := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 71, Platform: capability.PlatformOpenCode, Type: capability.ProviderTypeAPIKey},
+	}
+	kimiTarget := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 72, Platform: capability.PlatformKimi, Type: capability.ProviderTypeAPIKey},
+	}
+
+	// Literal user "trc1:" without token-path carriers remains byte-for-byte identical.
+	litPorts := &nativeFlowTestPorts{
+		sink:          &cacheOutputSink{},
+		provider:      openCodeTarget,
+		upstreamModel: "claude-sonnet-4-6",
+	}
+	_, err = ForwardNativeMessages(context.Background(), literalOnly, "", litPorts)
+	require.NoError(t, err)
+	require.Equal(t, literalOnly, litPorts.builtBodies[0])
+
+	// OpenCode Claude with canonical author resolution restores trc1:anthropic and strips trc1:plain.
+	claudePorts := &nativeFlowTestPorts{
+		sink:          &cacheOutputSink{},
+		provider:      openCodeTarget,
+		upstreamModel: "claude-sonnet-4-6",
+		replayFn: func(b []byte, model string) ([]byte, error) {
+			res, rErr := gatewayprovider.ResolveModelAttributes(context.Background(), openCodeTarget, model, nil, "anthropic_messages")
+			if rErr != nil {
+				return nil, rErr
+			}
+			res.Target.AttributeModel = "anthropic/claude-sonnet-4-6"
+			out, _, rErr := gatewayprovider.PrepareNativeReplayWithResolution(context.Background(), openCodeTarget, res, b, "anthropic_messages", "anthropic_messages")
+			return out, rErr
+		},
+	}
+	_, err = ForwardNativeMessages(context.Background(), body, "", claudePorts)
+	require.NoError(t, err)
+	require.Equal(t, "EqQBOpenCodeClaudeSig", gjson.GetBytes(claudePorts.builtBodies[0], "messages.1.content.0.signature").String())
+	require.Equal(t, "OpenCode Claude signed thought.", gjson.GetBytes(claudePorts.builtBodies[0], "messages.1.content.0.thinking").String())
+	require.Equal(t, "text", gjson.GetBytes(claudePorts.builtBodies[0], "messages.1.content.1.type").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(claudePorts.builtBodies[0], "nonce").Raw)
+
+	// Kimi passback retains unsigned thinking text from both trc1:anthropic and trc1:plain.
+	kimiPorts := &nativeFlowTestPorts{
+		sink:          &cacheOutputSink{},
+		provider:      kimiTarget,
+		upstreamModel: "kimi-k2.5",
+	}
+	_, err = ForwardNativeMessages(context.Background(), body, "", kimiPorts)
+	require.NoError(t, err)
+	require.Equal(t, "OpenCode Claude signed thought.", gjson.GetBytes(kimiPorts.builtBodies[0], "messages.1.content.0.thinking").String())
+	require.False(t, gjson.GetBytes(kimiPorts.builtBodies[0], "messages.1.content.0.signature").Exists())
+	require.Equal(t, "Kimi passback thought.", gjson.GetBytes(kimiPorts.builtBodies[0], "messages.1.content.1.thinking").String())
+	require.False(t, gjson.GetBytes(kimiPorts.builtBodies[0], "messages.1.content.1.signature").Exists())
 }

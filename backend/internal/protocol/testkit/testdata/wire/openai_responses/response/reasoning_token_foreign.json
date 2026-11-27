@@ -1,0 +1,39 @@
+{
+  "id": "resp_reasoning_token_foreign",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "rs_quota_euw2",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "us-east-1 has 52 GPUs available; query eu-west-1 quota next."
+        }
+      ],
+      "encrypted_content": "gAAAAABnQuotaEuWest1Enc02"
+    },
+    {
+      "id": "fc_quota_euw2",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_quota_euw2",
+      "name": "lookup_region_quota",
+      "arguments": "{\"region\":\"eu-west-1\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 104,
+    "output_tokens": 50,
+    "total_tokens": 154,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 26
+    }
+  }
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,8 +24,10 @@ import (
 	gatewaysession "github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 	groktestkit "github.com/TokenFlux/TokenRouter/internal/upstream/grok/testkit"
@@ -1098,7 +1101,7 @@ func TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming(t *testing.T) 
 		Body: io.NopCloser(strings.NewReader(`{
 			"id":"resp_protocol_oauth","object":"response","model":"grok-4.5","status":"completed",
 			"output":[
-				{"type":"function_call","id":"item_custom","call_id":"call_custom","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}","namespace":"must_not_leak"},
+				{"type":"function_call","id":"item_custom","call_id":"call_custom","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}","namespace":"functions"},
 				{"type":"function_call","id":"item_search","call_id":"call_search","name":"tool_search","arguments":"{\"query\":\"github\"}"},
 				{"type":"function_call","id":"item_namespace","call_id":"call_namespace","name":"collaboration__send_message","arguments":"{\"target\":\"root\"}"}
 			],
@@ -1388,4 +1391,241 @@ func requireGrokProtocolFrame(t *testing.T, frames []grokProtocolSSEFrame, event
 	}
 	t.Fatalf("missing SSE frame event=%q %s=%q", eventType, path, value)
 	return grokProtocolSSEFrame{}
+}
+
+// TestForwardGrokResponses_PrepareNativeReplay exercises Grok OAuth and API Key
+// native Responses forwarding across same-account and cross-account targets.
+// Same-account targets restore raw xAI ciphertext while preserving literal user
+// "trc1:" text, and cross-account targets strip mismatched envelopes cleanly.
+func TestForwardGrokResponses_PrepareNativeReplay(t *testing.T) {
+	xaiCarrier77, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeXAI,
+		Data:       "xai_enc_acct_77",
+		ProviderID: 77,
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_foreign_openai",
+		ProviderID: 77,
+	})
+	require.NoError(t, err)
+
+	body := []byte(`{"model":"grok-4.5","stream":false,"nonce":9007199254740993,"input":[{"type":"message","role":"user","content":"literal trc1:xai:demo"},{"type":"reasoning","id":"rs_xai","summary":[{"type":"summary_text","text":"grok summary"}],"encrypted_content":"` + xaiCarrier77 + `"},{"type":"reasoning","id":"rs_foreign","summary":[],"encrypted_content":"` + foreignCarrier + `"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)
+
+	okResp := func() *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"id":"resp_grok_replay","object":"response","model":"grok-4.5","status":"completed",
+				"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],
+				"usage":{"input_tokens":8,"output_tokens":2}
+			}`)),
+		}
+	}
+
+	runAttempt := func(provider *gatewayprovider.ExecutionProvider) []byte {
+		repo := &grokFixtureProviders{providersByID: map[int64]*gatewayprovider.ExecutionProvider{provider.Record.ID: provider}}
+		upstream := &auxiliaryHTTPRecorder{resp: okResp()}
+		svc := newResponsesFixture(responsesFixtureInputs{grokTokens: newHTTPGrokTokenFixture(repo, nil), transport: upstream, providers: repo})
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		_, fErr := svc.Grok.ForwardResponses(context.Background(), c, provider, body, "grok-4.5", false, time.Now())
+		require.NoError(t, fErr)
+		return upstream.lastBody
+	}
+
+	// Same-account Grok OAuth (ID=77) unpacks xai_enc_acct_77 and drops empty foreign item.
+	oauth77 := gatewaytestkit.HealthyGrokOAuthProvider(77, "access-token")
+	gotSameOAuth := runAttempt(oauth77)
+	require.Equal(t, "xai_enc_acct_77", gjson.GetBytes(gotSameOAuth, "input.1.encrypted_content").String())
+	require.Equal(t, "message", gjson.GetBytes(gotSameOAuth, "input.2.type").String())
+	require.Contains(t, gjson.GetBytes(gotSameOAuth, "input.0.content").String(), "trc1:xai:demo")
+	require.Equal(t, "9007199254740993", gjson.GetBytes(gotSameOAuth, "nonce").Raw)
+
+	// Cross-account Grok API Key (ID=88) strips mismatched account encrypted_content while keeping summary.
+	apiKey88 := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           88,
+			Name:         "grok-apikey-88",
+			Platform:     capability.PlatformGrok,
+			Type:         capability.ProviderTypeAPIKey,
+			Concurrency:  1,
+			Status:       billing.StatusActive,
+			Schedulable:  true,
+			Credentials:  map[string]any{"api_key": "xai-key-88", "base_url": "https://api.x.ai/v1"},
+		},
+	}
+	gotCrossAPIKey := runAttempt(apiKey88)
+	require.Equal(t, "reasoning", gjson.GetBytes(gotCrossAPIKey, "input.1.type").String())
+	require.Equal(t, "grok summary", gjson.GetBytes(gotCrossAPIKey, "input.1.summary.0.text").String())
+	require.False(t, gjson.GetBytes(gotCrossAPIKey, "input.1.encrypted_content").Exists())
+	require.Equal(t, "message", gjson.GetBytes(gotCrossAPIKey, "input.2.type").String())
+}
+
+// TestForwardGrokResponses_IRClientToolsCompactAndLocalRejection sends Grok
+// Responses requests with custom, search, namespace, and additional_tools items.
+// It verifies buffered and streaming client-tool restoration, Compact summary
+// wrapping, Grok wire field stripping, and local HTTP 400 conflict responses
+// without provider failover.
+func TestForwardGrokResponses_IRClientToolsCompactAndLocalRejection(t *testing.T) {
+	provider := gatewaytestkit.HealthyGrokOAuthProvider(77, "access-token")
+	repo := &grokFixtureProviders{providersByID: map[int64]*gatewayprovider.ExecutionProvider{provider.Record.ID: provider}}
+
+	reqBody := func(stream bool) []byte {
+		streamText := "false"
+		if stream {
+			streamText = "true"
+		}
+		return []byte(`{
+			"model":"grok-4.5",
+			"stream":` + streamText + `,
+			"prompt_cache_retention":"24h",
+			"metadata":{"env":"test"},
+			"tools":[
+				{"type":"custom","name":"exec","description":"Run command"},
+				{"type":"tool_search","execution":"client"}
+			],
+			"input":[
+				{"type":"additional_tools","tools":[
+					{"type":"namespace","name":"db","tools":[
+						{"type":"function","name":"query","parameters":{"type":"object"}},
+						{"type":"function","name":"tool_search","parameters":{"type":"object"}}
+					]}
+				]},
+				{"type":"message","role":"user","content":"run grok tools"}
+			]
+		}`)
+	}
+
+	t.Run("buffered", func(t *testing.T) {
+		body := reqBody(false)
+		upResp := `{"id":"resp_grok_buf","object":"response","model":"grok-4.5","status":"completed","output":[` +
+			`{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"whoami\"}"},` +
+			`{"type":"function_call","id":"fc_2","call_id":"c2","name":"tool_search","arguments":"{\"query\":\"db\"}"},` +
+			`{"type":"function_call","id":"fc_3","call_id":"c3","name":"db__query","arguments":"{}"}` +
+			`],"usage":{"input_tokens":5,"output_tokens":3}}`
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(upResp)),
+		}}
+		svc := newResponsesFixture(responsesFixtureInputs{grokTokens: newHTTPGrokTokenFixture(repo, nil), transport: up, providers: repo})
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		res, fErr := svc.Grok.ForwardResponses(context.Background(), c, provider, body, "grok-4.5", false, time.Now())
+		require.NoError(t, fErr)
+		require.NotNil(t, res)
+		require.False(t, gjson.GetBytes(up.lastBody, "prompt_cache_retention").Exists())
+		require.False(t, gjson.GetBytes(up.lastBody, "metadata").Exists())
+		require.Equal(t, "exec", gjson.GetBytes(up.lastBody, "tools.0.name").String())
+		require.Equal(t, "tool_search", gjson.GetBytes(up.lastBody, "tools.1.name").String())
+		require.Equal(t, "db__query", gjson.GetBytes(up.lastBody, "tools.2.name").String())
+		require.Equal(t, "custom_tool_call", gjson.Get(rec.Body.String(), "output.0.type").String())
+		require.Equal(t, "whoami", gjson.Get(rec.Body.String(), "output.0.input").String())
+		require.Equal(t, "tool_search_call", gjson.Get(rec.Body.String(), "output.1.type").String())
+		require.Equal(t, "db", gjson.Get(rec.Body.String(), "output.2.namespace").String())
+		require.Equal(t, "query", gjson.Get(rec.Body.String(), "output.2.name").String())
+	})
+
+	t.Run("streaming", func(t *testing.T) {
+		body := reqBody(true)
+		sse := strings.Join([]string{
+			`: keepalive`,
+			`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","status":"in_progress"}}`,
+			``,
+			`data: {"type":"response.function_call_arguments.done","sequence_number":1,"output_index":0,"item_id":"fc_1","name":"exec","arguments":"{\"input\":\"date\"}"}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"date\"}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":3,"output_index":1,"item":{"type":"function_call","id":"fc_2","call_id":"c2","name":"db__query","arguments":"{}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":4,"output_index":2,"item":{"type":"function_call","id":"fc_3","call_id":"c3","name":"db__tool_search","arguments":"{\"q\":\"idx\"}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.completed","sequence_number":5,"response":{"id":"resp_grok_sse","model":"grok-4.5","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"date\"}"},{"type":"function_call","id":"fc_2","call_id":"c2","name":"db__query","arguments":"{}"},{"type":"function_call","id":"fc_3","call_id":"c3","name":"db__tool_search","arguments":"{\"q\":\"idx\"}"}],"usage":{"input_tokens":5,"output_tokens":3}}}`,
+			``,
+		}, "\n")
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}}
+		svc := newResponsesFixture(responsesFixtureInputs{grokTokens: newHTTPGrokTokenFixture(repo, nil), transport: up, providers: repo})
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		res, fErr := svc.Grok.ForwardResponses(context.Background(), c, provider, body, "grok-4.5", true, time.Now())
+		require.NoError(t, fErr)
+		require.NotNil(t, res)
+		out := rec.Body.String()
+		require.Contains(t, out, `"type":"custom_tool_call"`)
+		require.Contains(t, out, `"type":"response.custom_tool_call_input.done"`)
+		require.Contains(t, out, `"input":"date"`)
+		require.Contains(t, out, `"namespace":"db"`)
+		require.Contains(t, out, `"name":"query"`)
+		require.Contains(t, out, `"name":"tool_search"`)
+		require.NotContains(t, out, `"type":"tool_search_call"`)
+	})
+
+	t.Run("ir_compact_mode_lowers_tools_and_builds_summary_request", func(t *testing.T) {
+		compactReq := reqBody(false)
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"id":"resp_grok_compact","object":"response","model":"grok-4.5","status":"completed",
+				"output":[
+					{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"xai-compact-state"},
+					{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"<summary>done</summary>"}]}
+				],
+				"usage":{"input_tokens":10,"output_tokens":4}
+			}`)),
+		}}
+		svc := newResponsesFixture(responsesFixtureInputs{grokTokens: newHTTPGrokTokenFixture(repo, nil), transport: up, providers: repo})
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(compactReq))
+		res, fErr := svc.Grok.ForwardResponses(context.Background(), c, provider, compactReq, "grok-4.5", false, time.Now())
+		require.NoError(t, fErr)
+		require.NotNil(t, res)
+		require.Equal(t, "none", gjson.GetBytes(up.lastBody, "tool_choice").String())
+		require.False(t, gjson.GetBytes(up.lastBody, "store").Bool())
+		require.Equal(t, "function", gjson.GetBytes(up.lastBody, "tools.0.type").String())
+		require.Equal(t, "compaction", gjson.Get(rec.Body.String(), "output.0.type").String())
+	})
+
+	t.Run("ir_tool_conflict_returns_local_400_without_failover_or_penalty", func(t *testing.T) {
+		conflictBody := []byte(`{
+			"model":"grok-4.5",
+			"stream":false,
+			"tools":[
+				{"type":"function","name":"db__query","parameters":{"type":"object"}},
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			],
+			"input":"hi"
+		}`)
+		up := &auxiliaryHTTPRecorder{}
+		svc := newResponsesFixture(responsesFixtureInputs{grokTokens: newHTTPGrokTokenFixture(repo, nil), transport: up, providers: repo})
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(conflictBody))
+		res, fErr := svc.Grok.ForwardResponses(context.Background(), c, provider, conflictBody, "grok-4.5", false, time.Now())
+		require.Error(t, fErr)
+		require.Nil(t, res)
+		require.True(t, routing.IsModelAttributeError(fErr))
+		var failoverErr *forwardcore.UpstreamFailoverError
+		require.False(t, errors.As(fErr, &failoverErr))
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+		require.Equal(t, "tools", gjson.Get(rec.Body.String(), "error.param").String())
+		require.Empty(t, up.bodies)
+	})
 }

@@ -1,0 +1,65 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_tool_single",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_weather_osa_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"city\":"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\"Osaka\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 64,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 18
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_weather_osa_2",
+        "tool": {
+          "kind": "function",
+          "name": "get_weather"
+        },
+        "arguments": "{\"city\":\"Osaka\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

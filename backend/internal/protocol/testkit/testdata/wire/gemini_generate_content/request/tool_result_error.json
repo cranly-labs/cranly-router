@@ -1,0 +1,66 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "read_audit_log",
+          "description": "Read the trailing lines of an audit log file.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "path": {
+                "type": "STRING",
+                "description": "Absolute audit log path"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Read /var/log/restricted-audit.log and report the last entry."
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "id": "call_audit_err_1",
+            "name": "read_audit_log",
+            "args": {
+              "path": "/var/log/restricted-audit.log"
+            }
+          },
+          "thoughtSignature": "sig_fc_audit_err_1"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "call_audit_err_1",
+            "name": "read_audit_log",
+            "response": {
+              "error": "EACCES: permission denied opening /var/log/restricted-audit.log"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

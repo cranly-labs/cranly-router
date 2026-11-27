@@ -1,0 +1,4 @@
+data: {"responseId":"gem_max_tokens","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Token bucket rate limiters absorb short traffic bursts by spending accumulated permits, "}]}}]}
+
+data: {"responseId":"gem_max_tokens","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"while sliding window counters enforce stricter rolling boundaries at the cost of per-window "}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":28,"candidatesTokenCount":32,"totalTokenCount":60}}
+

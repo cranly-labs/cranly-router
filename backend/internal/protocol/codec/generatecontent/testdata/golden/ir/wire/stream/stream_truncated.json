@@ -1,0 +1,42 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_stream_truncated",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Inspecting edge-gateway "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "health across active regions..."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Inspecting edge-gateway health across active regions..."
+    }
+  },
+  {
+    "kind": "error",
+    "error": {
+      "type": "api_error",
+      "code": "stream_truncated",
+      "message": "upstream gemini stream ended without finishReason"
+    }
+  }
+]

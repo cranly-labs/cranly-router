@@ -1,0 +1,15 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Write a detailed architectural comparison of token bucket and sliding window rate limiters."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 32
+}

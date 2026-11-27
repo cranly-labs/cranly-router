@@ -1,0 +1,6 @@
+data: {"responseId":"gem_reasoning_token_foreign","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"us-east-1 has 52 GPUs available; ","thought":true}]}}]}
+
+data: {"responseId":"gem_reasoning_token_foreign","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"query eu-west-1 quota next.","thought":true,"thoughtSignature":"CpEBCocB_gem_quota_thought_02"}]}}]}
+
+data: {"responseId":"gem_reasoning_token_foreign","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":"call_quota_euw2","name":"lookup_region_quota","args":{"region":"eu-west-1"}},"thoughtSignature":"CpEBCocB_gem_quota_fc_02"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":104,"candidatesTokenCount":24,"thoughtsTokenCount":26,"totalTokenCount":154}}
+

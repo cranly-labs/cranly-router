@@ -1,0 +1,20 @@
+{
+  "id": "chatcmpl_structured_output",
+  "model": "gpt-4o",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "text",
+      "text": "{\"service\":\"edge-gateway\",\"healthy\":true,\"error_rate\":0.0015,\"open_incidents\":[]}"
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 96,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 24
+  }
+}

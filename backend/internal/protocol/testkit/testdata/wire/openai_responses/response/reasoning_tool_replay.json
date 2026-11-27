@@ -1,0 +1,39 @@
+{
+  "id": "resp_reasoning_tool_replay",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "rs_inv_turn2",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "SKU-42 has 4 units against a reorder point of 20; now query SKU-99 stock."
+        }
+      ],
+      "encrypted_content": "gAAAAABnInvSku99Turn2Enc02"
+    },
+    {
+      "id": "fc_inv_sku99_2",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_inv_sku99_2",
+      "name": "query_inventory",
+      "arguments": "{\"sku\":\"SKU-99\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 96,
+    "output_tokens": 52,
+    "total_tokens": 148,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 28
+    }
+  }
+}

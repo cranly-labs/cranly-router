@@ -24,6 +24,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tokenestimate"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -392,4 +393,113 @@ func maxLocalInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestForwardCountTokensAsAnthropic_IRConversionProjectsFiveFieldsAndUnpacksCarriers
+// exercises ForwardCountTokensAsAnthropic across official OpenAI input_tokens
+// preflight and local compatible-provider estimation.
+// Only {model, instructions, input, tools, tool_choice} may appear on the
+// outbound wire while same-account trc1:openai: envelopes unpack and 64-bit
+// schema integers stay intact.
+func TestForwardCountTokensAsAnthropic_IRConversionProjectsFiveFieldsAndUnpacksCarriers(t *testing.T) {
+	sameAcctCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_aux_count_101",
+		ProviderID: 101,
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAnthropic,
+		Data:   "EqQBForeignAnthropicSig",
+		Text:   "Foreign Claude thought.",
+	})
+	require.NoError(t, err)
+
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"max_tokens":4096,
+		"stream":true,
+		"temperature":0.3,
+		"system":"Count accurately.",
+		"messages":[
+			{"role":"user","content":"check"},
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"","signature":"` + sameAcctCarrier + `"},
+				{"type":"thinking","thinking":"stub","signature":"` + foreignCarrier + `"},
+				{"type":"text","text":"checked"}
+			]},
+			{"role":"user","content":"next"}
+		],
+		"tools":[{"name":"lookup","description":"Look up record","input_schema":{"type":"object","properties":{"id":{"type":"integer","minimum":9007199254740993}}}}],
+		"tool_choice":{"type":"auto"}
+	}`)
+
+	runOfficialCount := func(providerID int64) []byte {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		upstreamRec := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"object":"response.input_tokens","input_tokens":88}`)),
+		}}
+		svc := newAuxiliaryFixture(auxiliaryFixtureInputs{transport: upstreamRec})
+		prov := &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation: time.LoadLocation,
+				ID:           providerID,
+				Name:         "openai-official",
+				Platform:     capability.PlatformOpenAI,
+				Type:         capability.ProviderTypeAPIKey,
+				Concurrency:  1,
+				Credentials:  map[string]any{"api_key": "sk-official"},
+				Status:       billing.StatusActive,
+				Schedulable:  true,
+			},
+		}
+		require.NoError(t, svc.ForwardCountTokensAsAnthropic(context.Background(), c, prov, body, "gpt-5.4"))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.JSONEq(t, `{"input_tokens":88}`, rec.Body.String())
+		require.NotNil(t, upstreamRec.lastReq)
+		require.Equal(t, openaiPlatformAPIInputTokensURL, upstreamRec.lastReq.URL.String())
+		return upstreamRec.lastBody
+	}
+
+	gotSame := runOfficialCount(101)
+	var topKeys map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(gotSame, &topKeys))
+	for k := range topKeys {
+		require.Contains(t, []string{"model", "instructions", "input", "tools", "tool_choice"}, k, "unexpected non-counting field %q in %s", k, string(gotSame))
+	}
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(gotSame, "model").String())
+	require.Equal(t, "gAAAA_aux_count_101", gjson.GetBytes(gotSame, "input.2.encrypted_content").String())
+	require.Equal(t, "message", gjson.GetBytes(gotSame, "input.3.type").String())
+	require.Contains(t, string(gotSame), `"minimum":9007199254740993`)
+
+	gotCross := runOfficialCount(202)
+	require.Equal(t, "message", gjson.GetBytes(gotCross, "input.2.type").String())
+	require.NotContains(t, string(gotCross), "gAAAA_aux_count_101")
+	require.NotContains(t, string(gotCross), "trc1:")
+
+	// Compatible non-OpenAI provider estimates Anthropic tokens locally without network calls.
+	recLocal := httptest.NewRecorder()
+	cLocal, _ := gin.CreateTestContext(recLocal)
+	cLocal.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+	upLocal := &auxiliaryHTTPRecorder{}
+	svcLocal := newAuxiliaryFixture(auxiliaryFixtureInputs{transport: upLocal})
+	compatProv := &gatewayprovider.ExecutionProvider{
+		Record: providercore.Record{
+			LoadLocation: time.LoadLocation,
+			ID:           309,
+			Platform:     capability.PlatformDeepseek,
+			Type:         capability.ProviderTypeAPIKey,
+			Credentials:  map[string]any{"api_key": "sk-ds"},
+		},
+	}
+	require.NoError(t, svcLocal.ForwardCountTokensAsAnthropic(context.Background(), cLocal, compatProv, body, ""))
+	require.Equal(t, http.StatusOK, recLocal.Code)
+	require.Positive(t, gjson.GetBytes(recLocal.Body.Bytes(), "input_tokens").Int())
+	require.Nil(t, upLocal.lastReq)
 }

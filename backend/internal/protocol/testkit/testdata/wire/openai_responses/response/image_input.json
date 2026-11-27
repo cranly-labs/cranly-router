@@ -1,0 +1,33 @@
+{
+  "id": "resp_image_input",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_image_input_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "The inline swatch is a 1x1 square pixel, whereas the linked architecture diagram uses a wide 16:9 canvas, so their aspect ratios do not match."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 312,
+    "output_tokens": 28,
+    "total_tokens": 340,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

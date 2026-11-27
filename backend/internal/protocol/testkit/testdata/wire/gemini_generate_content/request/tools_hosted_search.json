@@ -1,0 +1,36 @@
+{
+  "tools": [
+    {
+      "googleSearch": {}
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Check the Go 1.26 release date first."
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "text": "Go 1.26 was released in February 2026."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Now search for the Go 1.27 encoding/json/v2 release notes and summarize its status."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 512
+  }
+}

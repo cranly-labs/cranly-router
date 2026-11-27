@@ -13,30 +13,16 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// gemini_exchange.go binds retry policy and protocol-specific error
-// presentation for Gemini exchanges.
-// Gemini retry uses one exchange configuration for Messages, native Google, and
-// OpenAI output. The selected mode chooses request-building and terminal error
-// presentation, while provider policy, status retry checks, and default health
-// observation remain bound to the selected attempt.
-
-// These modes select the client protocol error envelope when Gemini request
-// construction or retry exhaustion produces a failure.
-const (
-	geminiExchangeMessages geminiExchangeMode = iota // Messages error output mode
-	geminiExchangeNative                             // native Google error mode
-	geminiExchangeOpenAI                             // OpenAI compatible error mode
-)
-
-// geminiExchangeMode selects the client error presenter used by Gemini exchange
-// callbacks.
-type geminiExchangeMode int
+// gemini_exchange.go binds retry policy and native Google error presentation
+// for native Gemini exchanges. Provider policy, status retry checks, and
+// default health observation stay bound to the selected attempt while external
+// relays delegate retry budgets to the outer gateway loop.
 
 // geminiExchangeOptions binds retry, policy, health, and diagnostic callbacks
-// for one provider. Messages and native modes recognize missing-project build
-// errors specially, while OpenAI uses its protocol-specific build-error
-// presentation.
-func (s *Gemini) geminiExchangeOptions(c *attempt, ctx context.Context, provider *gatewayprovider.ExecutionProvider, model string, mode geminiExchangeMode, protocol gemininative.OpenAICompatProtocol) gemininative.ExchangeOptions {
+// for one native Gemini provider attempt. Missing-project build errors present
+// HTTP 400 Google errors, while external relays return failover signals on
+// final transport exhaustion.
+func (s *Gemini) geminiExchangeOptions(c *attempt, provider *gatewayprovider.ExecutionProvider, model string) gemininative.ExchangeOptions {
 	options := gemininative.ExchangeOptions{
 		ProviderID:   provider.Record.ID,
 		ProviderName: provider.Record.Name,
@@ -69,23 +55,14 @@ func (s *Gemini) geminiExchangeOptions(c *attempt, ctx context.Context, provider
 	}
 	if !isGoogleAccount(provider) {
 		// The outer gateway owns a relay's ordinary attempts and retry budget.
-		// Gemini keeps its bounded signature repair stages within this one attempt.
 		options.ExternalRetry = true
 	}
 	options.BuildError = func(err error) error {
-		if mode == geminiExchangeOpenAI {
-			return c.GeminiOpenAICompatError(protocol, http.StatusBadGateway, "upstream_error", err.Error())
-		}
 		status := http.StatusBadGateway
-		kind := "upstream_error"
 		if strings.Contains(err.Error(), "missing project_id") {
 			status = http.StatusBadRequest
-			kind = "invalid_request_error"
 		}
-		if mode == geminiExchangeNative {
-			return c.GoogleError(status, err.Error())
-		}
-		return c.ClaudeError(status, kind, err.Error())
+		return c.GoogleError(status, err.Error())
 	}
 	options.FinalError = func(message string) error {
 		// A relay's final transport failure becomes a failover signal so the
@@ -97,13 +74,7 @@ func (s *Gemini) geminiExchangeOptions(c *attempt, ctx context.Context, provider
 				RetryableOnSameProvider: provider.View().IsPoolMode() && provider.View().IsPoolModeRetryableStatus(http.StatusBadGateway),
 			}
 		}
-		if mode == geminiExchangeNative {
-			return c.GoogleError(http.StatusBadGateway, message)
-		}
-		if mode == geminiExchangeOpenAI {
-			return c.GeminiOpenAICompatError(protocol, http.StatusBadGateway, "upstream_error", message)
-		}
-		return c.ClaudeError(http.StatusBadGateway, "upstream_error", message)
+		return c.GoogleError(http.StatusBadGateway, message)
 	}
 	return options
 }

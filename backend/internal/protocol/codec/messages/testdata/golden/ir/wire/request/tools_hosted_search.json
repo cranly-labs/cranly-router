@@ -1,0 +1,97 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Check the Go 1.26 release date first."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "opaque",
+          "opaque": {
+            "origin": "anthropic_messages",
+            "type": "server_tool_use",
+            "raw": {
+              "type": "server_tool_use",
+              "id": "srvtoolu_search_go126_1",
+              "name": "web_search",
+              "input": {
+                "query": "Go 1.26 release date"
+              }
+            }
+          }
+        },
+        {
+          "kind": "opaque",
+          "opaque": {
+            "origin": "anthropic_messages",
+            "type": "web_search_tool_result",
+            "raw": {
+              "type": "web_search_tool_result",
+              "tool_use_id": "srvtoolu_search_go126_1",
+              "content": [
+                {
+                  "type": "web_search_result",
+                  "url": "https://go.dev/doc/devel/release",
+                  "title": "Go Release History",
+                  "encrypted_content": "enc_ws_go126_snippet_1",
+                  "page_age": "30 days ago"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "text",
+          "text": "Go 1.26 was released in February 2026.",
+          "extra": {
+            "origin": "anthropic_messages",
+            "members": {
+              "citations": [
+                {
+                  "type": "web_search_result_location",
+                  "url": "https://go.dev/doc/devel/release",
+                  "title": "Go Release History",
+                  "encrypted_index": "enc_idx_go126_1",
+                  "cited_text": "Go 1.26 (released 2026-02)"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Now search for the Go 1.27 encoding/json/v2 release notes and summarize its status."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "hosted",
+      "name": "web_search",
+      "hosted": {
+        "origin": "anthropic_messages",
+        "type": "web_search_20250305",
+        "raw": {
+          "type": "web_search_20250305",
+          "name": "web_search",
+          "max_uses": 3
+        }
+      }
+    }
+  ],
+  "max_output_tokens": 512
+}

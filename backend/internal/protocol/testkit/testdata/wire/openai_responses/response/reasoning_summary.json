@@ -1,0 +1,48 @@
+{
+  "id": "resp_reasoning_summary",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "rs_sort_summary_1",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Merge sort preserves equal-key order during left-before-right merging."
+        },
+        {
+          "type": "summary_text",
+          "text": "In-place quicksort partitions swap non-adjacent elements and can invert equal keys."
+        }
+      ],
+      "encrypted_content": "gAAAAABnMergeQuicksortSummaryEnc01"
+    },
+    {
+      "id": "msg_sort_summary_1",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Merge sort is stable because equal elements keep their original order when sorted halves merge. Standard in-place quicksort is unstable because long-range partition swaps can reorder equal keys.",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 42,
+    "output_tokens": 68,
+    "total_tokens": 110,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 30
+    }
+  }
+}

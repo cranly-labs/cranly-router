@@ -1,0 +1,110 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_reasoning_token_foreign",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 104,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {}
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "us-east-1 has 52 GPUs available; "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "query eu-west-1 quota next."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "us-east-1 has 52 GPUs available; query eu-west-1 quota next."
+        ],
+        "token": {
+          "data": "EqQBCgIYAiJAZXVfd2VzdF8xX3F1b3RhX3NpZ18wMg"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_quota_euw2",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_region_quota"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"region\":"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "\"eu-west-1\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_quota_euw2",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_region_quota"
+        },
+        "arguments": "{\"region\":\"eu-west-1\"}"
+      }
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 104,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 50
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

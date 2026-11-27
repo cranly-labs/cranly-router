@@ -1,0 +1,45 @@
+{
+  "id": "chatcmpl_tools_namespace",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_ns_trace_2",
+            "type": "function",
+            "function": {
+              "name": "enterprise_observability_telemetry_connector__query_di__5375327d",
+              "arguments": "{\"service\":\"checkout\",\"limit\":20}"
+            }
+          },
+          {
+            "id": "call_ns_spawn_2",
+            "type": "function",
+            "function": {
+              "name": "collaboration__spawn_agent",
+              "arguments": "{\"task\":\"summarize slow spans\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 132,
+    "completion_tokens": 38,
+    "total_tokens": 170,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

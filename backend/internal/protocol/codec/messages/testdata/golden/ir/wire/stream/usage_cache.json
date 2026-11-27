@@ -1,0 +1,70 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_usage_cache",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 120,
+      "cache_read": 640,
+      "cache_write": 300,
+      "cache_write_5m": 180,
+      "cache_write_1h": 120,
+      "output": 1,
+      "speed": "fast"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Cached prefix tokens were reused "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "from the 1h system block while "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "new 5m context was written once."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 120,
+      "cache_read": 640,
+      "cache_write": 300,
+      "cache_write_5m": 180,
+      "cache_write_1h": 120,
+      "output": 28,
+      "speed": "fast"
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

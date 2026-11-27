@@ -4,7 +4,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
+	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
+	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
@@ -198,5 +206,125 @@ func TestResolveGeminiImageCount(t *testing.T) {
 		c := newGeminiImageTestContext(t)
 		require.Equal(t, 0, c.ImageCountForTest("nana-banana-2", "nana-banana-2"))
 		require.Equal(t, 0, c.ImageCountForTest("gemini-3-pro-image", "gemini-3-pro-image"))
+	})
+}
+
+// TestAntigravityCallMemoryScoping exercises Antigravity and Gemini CallMemory
+// across nil receivers, invalid scopes, shared GeminiToolCalls stores,
+// standalone zero-value fallbacks, and Exchange round trips. Valid scopes must
+// persist upstream call metadata per provider and model without cross-scope leaks.
+func TestAntigravityCallMemoryScoping(t *testing.T) {
+	validScope := session.GeminiToolScope{
+		APIKeyID:   41,
+		ProviderID: 3757,
+		Model:      "claude-sonnet-4-5-thinking",
+	}
+
+	t.Run("nil receivers and invalid scopes return nil CallMemory", func(t *testing.T) {
+		var nilAG *googleforward.Antigravity
+		var nilGem *googleforward.Gemini
+		require.Nil(t, nilAG.CallMemory(validScope))
+		require.Nil(t, nilGem.CallMemory(validScope))
+
+		var standalone googleforward.Antigravity
+		for _, badScope := range []session.GeminiToolScope{
+			{},
+			{APIKeyID: 0, ProviderID: 3757, Model: "claude-sonnet-4-5"},
+			{APIKeyID: -1, ProviderID: 3757, Model: "claude-sonnet-4-5"},
+			{APIKeyID: 41, ProviderID: 0, Model: "claude-sonnet-4-5"},
+			{APIKeyID: 41, ProviderID: 3757, Model: ""},
+		} {
+			require.Nil(t, standalone.CallMemory(badScope))
+		}
+	})
+
+	t.Run("shared ToolCalls isolates by API key provider and mapped model while zero-value runtime falls back cleanly", func(t *testing.T) {
+		sharedStore := &session.GeminiToolCalls{}
+		gemSvc := &googleforward.Gemini{
+			ToolCalls: sharedStore,
+		}
+		agSvc := &googleforward.Antigravity{
+			ToolCalls: sharedStore,
+		}
+
+		agClaudeMem := agSvc.CallMemory(validScope)
+		require.NotNil(t, agClaudeMem)
+		agClaudeMem.Remember("toolu_shared_1", convert.CallBinding{
+			UpstreamID: "toolu_up_1",
+			Token:      &ir.ReplayToken{Scheme: ir.SchemeAntigravityClaude, Data: "sig-claude-shared"},
+		})
+
+		// Same shared store recalled from Gemini or Antigravity under identical scope hits,
+		// whereas distinct key, provider, or thinking-suffix model scopes miss cleanly.
+		gotSame, ok := gemSvc.CallMemory(validScope).Recall("toolu_shared_1")
+		require.True(t, ok)
+		require.Equal(t, "toolu_up_1", gotSame.UpstreamID)
+		require.Equal(t, &ir.ReplayToken{Scheme: ir.SchemeAntigravityClaude, Data: "sig-claude-shared"}, gotSame.Token)
+
+		for _, otherScope := range []session.GeminiToolScope{
+			{APIKeyID: 42, ProviderID: 3757, Model: "claude-sonnet-4-5-thinking"},
+			{APIKeyID: 41, ProviderID: 3758, Model: "claude-sonnet-4-5-thinking"},
+			{APIKeyID: 41, ProviderID: 3757, Model: "claude-sonnet-4-5"},
+			{APIKeyID: 41, ProviderID: 3757, Model: "gemini-2.5-pro"},
+		} {
+			_, hit := agSvc.CallMemory(otherScope).Recall("toolu_shared_1")
+			require.False(t, hit, "unexpected scope leak for %+v", otherScope)
+		}
+
+		// Zero-value Antigravity without shared ToolCalls uses its embedded fallback store across Exchange turns.
+		var zeroAG googleforward.Antigravity
+		attrSvc := newExecutionReadersFixture(nil).Attributes
+		prov := newAntigravityCompatProvider(capability.ProviderTypeOAuth)
+
+		for _, family := range []struct {
+			model      string // mapped Antigravity model
+			wantScheme string // expected ReplayScheme
+		}{
+			{model: "claude-sonnet-4-5-thinking", wantScheme: ir.SchemeAntigravityClaude},
+			{model: "gemini-2.5-pro", wantScheme: ir.SchemeGemini},
+		} {
+			scope := session.GeminiToolScope{
+				APIKeyID:   77,
+				ProviderID: prov.Record.ID,
+				Model:      family.model,
+			}
+			res, err := gatewayprovider.ResolveModelAttributes(t.Context(), prov, family.model, attrSvc, "gemini_generate_content")
+			require.NoError(t, err)
+			dialect := gatewayprovider.ConversionDialect(t.Context(), prov, res, protocol.ProtocolGeminiGenerateContent)
+			require.Equal(t, family.wantScheme, dialect.ReplayScheme)
+			require.Equal(t, convert.SchemaAntigravity, dialect.SchemaDialect)
+
+			turn1Req := []byte(`{"model":"gpt-5","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"}}}}],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search"}]}]}`)
+			ex1, err := convert.NewExchange(turn1Req, convert.Options{
+				Route: convert.Route{
+					Client:   protocol.ProtocolOpenAIResponses,
+					Upstream: protocol.ProtocolGeminiGenerateContent,
+					Dialect:  dialect,
+				},
+				ClientModel: "gpt-5",
+				Calls:       zeroAG.CallMemory(scope),
+			})
+			require.NoError(t, err)
+			_, err = ex1.Response([]byte(`{"responseId":"ag_turn1","modelVersion":"` + family.model + `","candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":"call_ag_77","name":"lookup","args":{"q":"docs"}},"thoughtSignature":"sig_` + family.wantScheme + `"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":4,"totalTokenCount":13}}`))
+			require.NoError(t, err)
+
+			turn2Req := []byte(`{"model":"gpt-5","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"}}}}],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search"}]},{"type":"function_call","call_id":"call_ag_77","name":"lookup","arguments":"{\"q\":\"docs\"}"},{"type":"function_call_output","call_id":"call_ag_77","output":"ok"}]}`)
+			ex2, err := convert.NewExchange(turn2Req, convert.Options{
+				Route: convert.Route{
+					Client:   protocol.ProtocolOpenAIResponses,
+					Upstream: protocol.ProtocolGeminiGenerateContent,
+					Dialect:  dialect,
+				},
+				ClientModel: "gpt-5",
+				Calls:       zeroAG.CallMemory(scope),
+			})
+			require.NoError(t, err)
+			upBytes, err := ex2.UpstreamRequest()
+			require.NoError(t, err)
+			require.Equal(t, "call_ag_77", gjson.GetBytes(upBytes, "contents.1.parts.0.functionCall.id").String())
+			require.Equal(t, "sig_"+family.wantScheme, gjson.GetBytes(upBytes, "contents.1.parts.0.thoughtSignature").String())
+			require.Equal(t, "call_ag_77", gjson.GetBytes(upBytes, "contents.2.parts.0.functionResponse.id").String())
+			require.Equal(t, "ok", gjson.GetBytes(upBytes, "contents.2.parts.0.functionResponse.response.result").String())
+		}
 	})
 }

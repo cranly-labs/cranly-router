@@ -1,0 +1,23 @@
+{
+  "responseId": "gem_stop_sequence",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "<answer>42"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 26,
+    "candidatesTokenCount": 4,
+    "totalTokenCount": 30
+  }
+}

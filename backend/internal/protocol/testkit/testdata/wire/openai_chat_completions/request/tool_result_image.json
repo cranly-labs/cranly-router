@@ -1,0 +1,66 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "capture_chart",
+        "description": "Capture a PNG snapshot of a dashboard chart panel.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "panel": {
+              "type": "string",
+              "description": "Dashboard panel identifier"
+            }
+          },
+          "required": [
+            "panel"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Capture the latency_p99 chart and summarize what you see."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_chart_1",
+          "type": "function",
+          "function": {
+            "name": "capture_chart",
+            "arguments": "{\"panel\":\"latency_p99\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_chart_1",
+      "content": "Captured panel latency_p99 (1x1 preview).\n[Tool output media moved to the following user message]"
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "[Tool output media for call call_chart_1]"
+        },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        }
+      ]
+    }
+  ]
+}

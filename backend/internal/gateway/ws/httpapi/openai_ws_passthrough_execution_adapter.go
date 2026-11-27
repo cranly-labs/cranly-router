@@ -22,6 +22,7 @@ import (
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	openaicore "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -32,11 +33,11 @@ import (
 
 // openai_ws_passthrough_execution_adapter.go adapts dedicated WebSocket
 // requests and upstream failures to provider execution policy.
-// Dedicated Responses WS sessions prepare provider-scoped request frames
-// before forwarding them and inspect failure events before client delivery.
-// Authentication headers are refreshed for each dial attempt, while the
-// session core owns any single Agent Identity repair and decides whether an
-// initial failure can select another provider.
+// Dedicated Responses WS sessions prepare provider-scoped request frames,
+// resolve native continuity-carrier dialects, and inspect failure events before
+// client delivery. Authentication headers are refreshed for each dial attempt,
+// while the session core owns any single Agent Identity repair and decides
+// whether an initial failure can select another provider.
 //
 // Model and tool restoration share the HTTP request's captured state. Provider
 // policy runs before close or failover presentation; response.failed can
@@ -82,6 +83,41 @@ func (p *wsPassthroughAdapter) ModelAttributes(ctx context.Context, turn int, mo
 	}
 	p.attributeContext = ctx
 	return gatewayprovider.PrepareModelAttributeParameters(ctx, p.provider, model, body, service)
+}
+
+// ResolveNativeReplayDialect builds the target convert.Dialect for native
+// continuity-carrier replay on an outbound Responses WebSocket frame. It reuses
+// the turn's captured attribute context when present, resolves model catalog
+// rules under the openai_responses wire family so protocol-scoped rules do not
+// fall back to Chat Completions, and specializes conditional attributes against
+// body before constructing the dialect.
+func (p *wsPassthroughAdapter) ResolveNativeReplayDialect(ctx context.Context, model string, body []byte) (convert.Dialect, error) {
+	if p == nil || p.provider == nil {
+		return convert.Dialect{}, nil
+	}
+	resolvedCtx := p.attributeContext
+	if resolvedCtx == nil {
+		resolvedCtx = ctx
+	}
+	if resolvedCtx == nil && p.request != nil && p.request.Request != nil {
+		resolvedCtx = p.request.Request.Context()
+	}
+	if resolvedCtx == nil {
+		resolvedCtx = context.Background()
+	}
+	var service *routing.ModelAttributeService
+	if p.service != nil && p.service.Requests != nil && p.service.Requests.Readers != nil {
+		service = p.service.Requests.Readers.Attributes
+	}
+	if routing.ModelAttributesFromContext(resolvedCtx) == nil {
+		resolvedCtx = routing.WithModelAttributes(resolvedCtx, service)
+	}
+	result, err := gatewayprovider.ResolveModelAttributes(resolvedCtx, p.provider, model, service, string(protocol.ProtocolOpenAIResponses))
+	if err != nil {
+		return convert.Dialect{}, err
+	}
+	resolved := result.ForRequest(gatewayprovider.ModelRequestState(body))
+	return gatewayprovider.ConversionDialect(resolvedCtx, p.provider, resolved, protocol.ProtocolResponsesWebSocket), nil
 }
 
 // StripOutboundEffort removes wire reasoning effort fields from an outbound

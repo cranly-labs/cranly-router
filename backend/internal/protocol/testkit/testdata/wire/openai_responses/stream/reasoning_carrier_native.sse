@@ -1,0 +1,51 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_reasoning_carrier_native","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_reasoning_carrier_native","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"rs_nat_reply_3","type":"reasoning","summary":[]}}
+
+event: response.reasoning_summary_part.added
+data: {"type":"response.reasoning_summary_part.added","sequence_number":3,"item_id":"rs_nat_reply_3","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":4,"item_id":"rs_nat_reply_3","output_index":0,"summary_index":0,"delta":"Read timeout of 30s is below the 45s upstream SLA, "}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":5,"item_id":"rs_nat_reply_3","output_index":0,"summary_index":0,"delta":"while write timeout of 60s exceeds it."}
+
+event: response.reasoning_summary_text.done
+data: {"type":"response.reasoning_summary_text.done","sequence_number":6,"item_id":"rs_nat_reply_3","output_index":0,"summary_index":0,"text":"Read timeout of 30s is below the 45s upstream SLA, while write timeout of 60s exceeds it."}
+
+event: response.reasoning_summary_part.done
+data: {"type":"response.reasoning_summary_part.done","sequence_number":7,"item_id":"rs_nat_reply_3","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"Read timeout of 30s is below the 45s upstream SLA, while write timeout of 60s exceeds it."}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":8,"output_index":0,"item":{"id":"rs_nat_reply_3","type":"reasoning","summary":[{"type":"summary_text","text":"Read timeout of 30s is below the 45s upstream SLA, while write timeout of 60s exceeds it."}],"encrypted_content":"gAAAAABnNativeReplayReplyEnc03"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":9,"output_index":1,"item":{"id":"msg_nat_reply_3","type":"message","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":10,"item_id":"msg_nat_reply_3","output_index":1,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":11,"item_id":"msg_nat_reply_3","output_index":1,"content_index":0,"delta":"Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; "}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":12,"item_id":"msg_nat_reply_3","output_index":1,"content_index":0,"delta":"write_timeout_s at 60s already covers the SLA."}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":13,"item_id":"msg_nat_reply_3","output_index":1,"content_index":0,"text":"Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; write_timeout_s at 60s already covers the SLA."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":14,"item_id":"msg_nat_reply_3","output_index":1,"content_index":0,"part":{"type":"output_text","text":"Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; write_timeout_s at 60s already covers the SLA.","annotations":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":15,"output_index":1,"item":{"id":"msg_nat_reply_3","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; write_timeout_s at 60s already covers the SLA.","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":16,"response":{"id":"resp_reasoning_carrier_native","object":"response","created_at":1760000000,"status":"completed","model":"gpt-5","output":[{"id":"rs_nat_reply_3","type":"reasoning","summary":[{"type":"summary_text","text":"Read timeout of 30s is below the 45s upstream SLA, while write timeout of 60s exceeds it."}],"encrypted_content":"gAAAAABnNativeReplayReplyEnc03"},{"id":"msg_nat_reply_3","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Raise read_timeout_s from 30s to at least 45s so upstream calls do not time out early; write_timeout_s at 60s already covers the SLA.","annotations":[]}]}],"usage":{"input_tokens":118,"output_tokens":60,"total_tokens":178,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":26}}}}
+

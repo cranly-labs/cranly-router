@@ -1,0 +1,87 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "parallel_tool_calls": true,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "City name"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_time",
+        "description": "Get the local time for an IANA timezone.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string",
+              "description": "IANA timezone identifier"
+            }
+          },
+          "required": [
+            "timezone"
+          ]
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Check weather and local time for London first, then Tokyo."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_weather_lon_1",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\":\"London\"}"
+          }
+        },
+        {
+          "id": "call_time_lon_2",
+          "type": "function",
+          "function": {
+            "name": "get_time",
+            "arguments": "{\"timezone\":\"Europe/London\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_weather_lon_1",
+      "content": "{\"city\":\"London\",\"temp_c\":12,\"condition\":\"cloudy\"}"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_time_lon_2",
+      "content": "{\"timezone\":\"Europe/London\",\"local_time\":\"09:30\"}"
+    },
+    {
+      "role": "user",
+      "content": "Now check Tokyo weather and Asia/Tokyo time in parallel."
+    }
+  ]
+}

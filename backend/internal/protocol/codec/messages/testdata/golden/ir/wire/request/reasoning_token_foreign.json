@@ -1,0 +1,94 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Compare regional GPU quota headroom in us-east-1 and eu-west-1."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "segments": [
+              "Check us-east-1 quota usage before comparing eu-west-1."
+            ],
+            "token": {
+              "data": "trc1:xai:eyJkIjoiZW5jX3hhaV9mb3JlaWduX3F1b3RhXzAxIiwicCI6MjAyfQ"
+            }
+          }
+        },
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "redacted": true,
+            "token": {
+              "data": "trc1:antigravity_claude:eyJkIjoiYWdfY2xhdWRlX3JlZGFjdGVkX2ZvcmVpZ25fMDEiLCJyIjp0cnVlfQ"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "call": {
+            "call_id": "call_quota_use1",
+            "tool": {
+              "kind": "function",
+              "name": "lookup_region_quota"
+            },
+            "arguments": "{\"region\":\"us-east-1\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_quota_use1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"region\":\"us-east-1\",\"used\":12,\"limit\":64}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "lookup_region_quota",
+      "description": "Look up GPU quota usage in a cloud region.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "Region name"
+          }
+        },
+        "required": [
+          "region"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "mode": "enabled",
+    "budget_tokens": 2048
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "msg_reasoning_carrier_roundtrip",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Both replica lag (45ms) and 3-voter quorum on db-east-1 satisfy failover safety thresholds.",
+      "signature": "EqQBCgIYAiJAY2Fycmllcl9yb3VuZHRyaXBfZmluYWxfc2lnXzAz"
+    },
+    {
+      "type": "text",
+      "text": "Cluster db-east-1 is ready for planned failover: replication lag is 45ms and all 3 quorum voters are healthy."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 132,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 64
+  }
+}

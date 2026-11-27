@@ -1,0 +1,28 @@
+{
+  "id": "resp_tool_args_fragmented",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "fc_frag_1",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_frag_1",
+      "name": "write_note",
+      "arguments": "{\"path\":\"notes/a.txt\",\"text\":\"say \\\"hi\\\"\\n\\u65e5\\u672c\\\\end\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 46,
+    "output_tokens": 29,
+    "total_tokens": 75,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

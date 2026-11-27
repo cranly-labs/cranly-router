@@ -1,0 +1,72 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Check the weather in Tokyo, then check Osaka."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "tool_call",
+          "id": "fc_weather_tok_1",
+          "call": {
+            "call_id": "call_weather_tok_1",
+            "tool": {
+              "kind": "function",
+              "name": "get_weather"
+            },
+            "arguments": "{\"city\":\"Tokyo\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_weather_tok_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"city\":\"Tokyo\",\"temp_c\":18,\"condition\":\"clear\"}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 256
+}

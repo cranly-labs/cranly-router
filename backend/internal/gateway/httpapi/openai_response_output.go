@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"net/http"
 	"time"
 
@@ -74,10 +76,7 @@ type OpenAIResponseOptions struct {
 // selected protocol and retain the request context until all reading callbacks
 // finish.
 type OpenAIResponseOutput struct {
-	// Reasoning supplies shared optional lookup and caching. Its nil or missing
-	// cache path returns absent lookup text and skips history publication.
-	Reasoning *session.ReasoningHistory // shared reasoning history service
-	Options   OpenAIResponseOptions     // startup response reader settings
+	Options OpenAIResponseOptions // startup response reader settings
 	// OpenAI response health policy
 	Health     *provideradapter.OpenAIResponseHealth
 	GrokHealth *provideradapter.GrokHealth // Grok response health policy
@@ -147,4 +146,16 @@ func (p *OpenAIResponseOutput) streamSink(c *gin.Context, target *gatewayadapter
 	sink := NewResponseSink(c)
 	sink.headersApplied = func(headers http.Header) { p.Turns.Commit(c, target, headers) }
 	return sink
+}
+
+// Scanner creates a compatibility SSE scanner with the configured line-size
+// limit. A missing configuration or nonpositive MaxLineSize selects
+// OpenAIResponseDefaultMaxLineSize; callers supply and retain ownership of the
+// reader being scanned.
+func (p *OpenAIResponseOutput) Scanner(r io.Reader) *bufio.Scanner {
+	maxLineSize := OpenAIResponseDefaultMaxLineSize
+	if p.Options.Configured && p.Options.MaxLineSize > 0 {
+		maxLineSize = p.Options.MaxLineSize
+	}
+	return openai.NewCompatSSEScanner(r, maxLineSize)
 }

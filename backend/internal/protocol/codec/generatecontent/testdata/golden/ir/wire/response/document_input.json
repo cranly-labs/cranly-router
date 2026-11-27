@@ -1,0 +1,19 @@
+{
+  "id": "gem_document_input",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "The attached PDF contains 1 page and specifies a 99.95% monthly availability target for regional gateway endpoints."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 420,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 21
+  }
+}

@@ -1,0 +1,4 @@
+data: {"responseId":"gem_stream_truncated","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Inspecting edge-gateway "}]}}]}
+
+data: {"responseId":"gem_stream_truncated","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"health across active regions..."}]}}]}
+

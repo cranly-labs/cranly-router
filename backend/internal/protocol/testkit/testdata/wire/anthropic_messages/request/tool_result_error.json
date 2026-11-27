@@ -1,0 +1,55 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 256,
+  "tools": [
+    {
+      "name": "read_audit_log",
+      "description": "Read the trailing lines of an audit log file.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute audit log path"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Read /var/log/restricted-audit.log and report the last entry."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_audit_err_1",
+          "name": "read_audit_log",
+          "input": {
+            "path": "/var/log/restricted-audit.log"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_audit_err_1",
+          "is_error": true,
+          "content": "EACCES: permission denied opening /var/log/restricted-audit.log"
+        }
+      ]
+    }
+  ]
+}

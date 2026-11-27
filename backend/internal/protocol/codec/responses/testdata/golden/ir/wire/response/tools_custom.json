@@ -1,0 +1,28 @@
+{
+  "id": "resp_tools_custom",
+  "model": "gpt-5",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "tool_call",
+      "id": "ctc_patch_2",
+      "call": {
+        "call_id": "call_patch_2",
+        "tool": {
+          "kind": "custom",
+          "name": "apply_patch"
+        },
+        "arguments": "*** Begin Patch\n*** Update File: README.md\n@@\n-Default timeout: 5s\n+Default timeout: 15s\n*** End Patch\n"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 104,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 42
+  }
+}

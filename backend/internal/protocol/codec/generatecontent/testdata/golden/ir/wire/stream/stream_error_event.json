@@ -1,0 +1,37 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_stream_error_event",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Synthesizing regional failover plan: "
+    }
+  },
+  {
+    "kind": "error",
+    "error": {
+      "type": "api_error",
+      "code": "UNAVAILABLE",
+      "message": "Upstream model capacity exhausted during stream generation.",
+      "status": 503
+    }
+  }
+]

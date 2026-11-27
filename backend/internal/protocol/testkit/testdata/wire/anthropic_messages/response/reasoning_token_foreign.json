@@ -1,0 +1,29 @@
+{
+  "id": "msg_reasoning_token_foreign",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "us-east-1 has 52 GPUs available; query eu-west-1 quota next.",
+      "signature": "EqQBCgIYAiJAZXVfd2VzdF8xX3F1b3RhX3NpZ18wMg"
+    },
+    {
+      "type": "tool_use",
+      "id": "call_quota_euw2",
+      "name": "lookup_region_quota",
+      "input": {
+        "region": "eu-west-1"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 104,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 50
+  }
+}

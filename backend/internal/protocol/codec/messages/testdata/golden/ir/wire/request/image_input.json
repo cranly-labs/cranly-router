@@ -1,0 +1,32 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "media",
+          "media": {
+            "type": "image",
+            "mime": "image/png",
+            "source": "base64",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        },
+        {
+          "kind": "media",
+          "media": {
+            "type": "image",
+            "source": "url",
+            "data": "https://assets.example.com/diagrams/architecture-overview.png"
+          }
+        },
+        {
+          "kind": "text",
+          "text": "Compare the inline PNG calibration swatch with the remote architecture diagram and state whether their aspect ratios match."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256
+}

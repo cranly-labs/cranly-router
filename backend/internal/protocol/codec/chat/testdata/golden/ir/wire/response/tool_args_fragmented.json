@@ -1,0 +1,27 @@
+{
+  "id": "chatcmpl_tool_args_fragmented",
+  "model": "gpt-4o",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_frag_1",
+        "tool": {
+          "kind": "function",
+          "name": "write_note"
+        },
+        "arguments": "{\"path\":\"notes/a.txt\",\"text\":\"say \\\"hi\\\"\\n\\u65e5\\u672c\\\\end\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 46,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 29
+  }
+}

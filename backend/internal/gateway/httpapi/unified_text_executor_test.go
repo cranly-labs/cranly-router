@@ -25,6 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/searchtools"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
+	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -48,6 +49,15 @@ type unifiedRecordModels struct{}
 // unifiedSearchSource supplies an absent search backend during native protocol
 // dispatch.
 type unifiedSearchSource struct{}
+
+// openCodeGeminiSequenceTransport records dispatched HTTP requests and returns
+// queued responses in order for OpenCode Gemini IR conversion tests.
+type openCodeGeminiSequenceTransport struct {
+	httpclient.UpstreamTransport                  // embedded unused TLS transport method
+	requests                     []*http.Request  // cloned metadata and bodies per outbound call
+	bodies                       [][]byte         // captured outbound request JSON payloads
+	responses                    []*http.Response // queued upstream HTTP responses
+}
 
 // TestTextPricingCompactModel combines global and provider Compact mappings
 // with billing sources and passthrough mode. It requires forwarding the chosen
@@ -444,4 +454,189 @@ func TestUnifiedTextExecutorRestoresContextEffortAfterFailedAttempt(t *testing.T
 	cand, planned := routed.Route.Candidate()
 	require.True(t, planned)
 	require.Equal(t, "claude-opus-5-5-max", cand.Models.ProviderMappedModel)
+}
+
+// Do reads and records req's body bytes alongside cloned request headers, then
+// returns the queued HTTP response at the current zero-based call index. Nil
+// request bodies record an empty byte slice without failing.
+func (t *openCodeGeminiSequenceTransport) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	var raw []byte
+	if req.Body != nil {
+		raw, _ = io.ReadAll(req.Body)
+	}
+	cloned := req.Clone(req.Context())
+	cloned.Header = req.Header.Clone()
+	t.requests = append(t.requests, cloned)
+	t.bodies = append(t.bodies, raw)
+	idx := len(t.requests) - 1
+	return t.responses[idx], nil
+}
+
+// TestUnifiedTextDispatchOpenCodeGeminiIRConversionAndSignatureRetry routes
+// Anthropic Messages, OpenAI Responses, OpenAI Chat Completions, and Cursor
+// input-shaped Chat requests onto an OpenCode Gemini model.
+// Upstream HTTP 400 signature rejections must trigger one compatibility
+// retry under ExternalRetry while preserving Bearer auth and X-OpenCode-Session headers.
+func TestUnifiedTextDispatchOpenCodeGeminiIRConversionAndSignatureRetry(t *testing.T) {
+	const model = "gemini-3-pro"
+
+	for _, clientCase := range []struct {
+		name   string              // subtest name
+		proto  protocol.ProtocolID // inbound client protocol
+		path   string              // inbound HTTP path
+		cursor bool                // whether Chat body uses Cursor input shape
+	}{
+		{name: "messages", proto: protocol.ProtocolAnthropicMessages, path: "/v1/messages"},
+		{name: "responses", proto: protocol.ProtocolOpenAIResponses, path: "/v1/responses"},
+		{name: "chat", proto: protocol.ProtocolOpenAIChatCompletions, path: "/v1/chat/completions"},
+		{name: "cursor_chat_input", proto: protocol.ProtocolOpenAIChatCompletions, path: "/v1/chat/completions", cursor: true},
+	} {
+		t.Run(clientCase.name, func(t *testing.T) {
+			transport := &openCodeGeminiSequenceTransport{
+				responses: []*http.Response{
+					{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": {"application/json"}},
+						Body: io.NopCloser(strings.NewReader(
+							`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"oc-call-1","name":"lookup","args":{"q":"status"}},"thoughtSignature":"oc-sig-1"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":14,"candidatesTokenCount":5}}`,
+						)),
+					},
+					{
+						StatusCode: http.StatusBadRequest,
+						Header:     http.Header{"Content-Type": {"application/json"}},
+						Body: io.NopCloser(strings.NewReader(
+							`{"error":{"code":400,"message":"Invalid thought_signature on functionCall"}}`,
+						)),
+					},
+					{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": {"application/json"}},
+						Body: io.NopCloser(strings.NewReader(
+							`{"candidates":[{"content":{"role":"model","parts":[{"text":"opencode-ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":20,"cachedContentTokenCount":6,"candidatesTokenCount":4}}`,
+						)),
+					},
+				},
+			}
+
+			geminiRuntime := &googleforward.Gemini{
+				Attributes: newAuxiliaryFixture(auxiliaryFixtureInputs{}).Requests.Readers.Attributes,
+				Transport:  transport,
+				Options: googleforward.Options{
+					Configured:        true,
+					ResponseReadLimit: 1 << 20,
+				},
+			}
+			executor := &UnifiedTextExecutor{
+				Gemini: &GeminiExecutor{Runtime: geminiRuntime},
+			}
+
+			makeTarget := func() *gatewayadapter.ExecutionProvider {
+				return gatewayadapter.NewExecutionProvider(&provider.Record{
+					ID:          88,
+					Name:        "opencode-gemini",
+					Platform:    provider.PlatformOpenCode,
+					Type:        provider.ProviderTypeAPIKey,
+					Concurrency: 2,
+					Credentials: map[string]any{
+						"api_key": "oc-secret",
+						provider.OpenCodeModelProtocolsKey: map[string]any{
+							"payg": map[string]any{model: "gemini_generate_content"},
+						},
+					},
+				})
+			}
+
+			// Turn 1: obtain a tool call so CallMemory records (oc-call-1, oc-sig-1).
+			rec1 := httptest.NewRecorder()
+			c1, _ := gin.CreateTestContext(rec1)
+			c1.Set("api_key", &apikey.APIKey{ID: 77})
+			ctx1 := requeststate.WithClientProtocol(t.Context(), clientCase.proto)
+			ctx1 = requeststate.WithRoutePlan(ctx1, routing.Plan(routing.PlanInput{
+				RequestedModel: model,
+				ClientProtocol: clientCase.proto,
+			}))
+			c1.Request = httptest.NewRequest(http.MethodPost, clientCase.path, nil).WithContext(ctx1)
+			c1.Request.Header.Set("User-Agent", "opencode-test/1.0")
+			c1.Request.Header.Set("X-Session-Id", "sess-opencode-1")
+
+			turn1Body := fmt.Sprintf(`{"model":%q,"max_tokens":64,"tools":[{"name":"lookup","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"check status"}]}`, model)
+			switch {
+			case clientCase.proto == protocol.ProtocolOpenAIResponses || clientCase.cursor:
+				turn1Body = fmt.Sprintf(`{"model":%q,"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"input":"check status"}`, model)
+			case clientCase.proto == protocol.ProtocolOpenAIChatCompletions:
+				turn1Body = fmt.Sprintf(`{"model":%q,"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"check status"}]}`, model)
+			}
+
+			var err error
+			switch clientCase.proto {
+			case protocol.ProtocolAnthropicMessages:
+				_, err = executor.Messages(ctx1, c1, makeTarget(), []byte(turn1Body), "", model)
+			case protocol.ProtocolOpenAIResponses:
+				_, err = executor.Responses(ctx1, c1, makeTarget(), []byte(turn1Body))
+			default:
+				_, err = executor.Chat(ctx1, c1, makeTarget(), []byte(turn1Body), "", model)
+			}
+			require.NoError(t, err)
+			require.Len(t, transport.requests, 1)
+			require.Equal(t, "/inference/google/v1beta/models/"+model+":generateContent", transport.requests[0].URL.Path)
+			require.Equal(t, "Bearer oc-secret", transport.requests[0].Header.Get("Authorization"))
+			require.Empty(t, transport.requests[0].Header.Get("x-goog-api-key"))
+			require.Equal(t, "sess-opencode-1", transport.requests[0].Header.Get("X-OpenCode-Session"))
+
+			var clientCallID string
+			switch clientCase.proto {
+			case protocol.ProtocolAnthropicMessages:
+				clientCallID = gjson.Get(rec1.Body.String(), "content.0.id").String()
+			case protocol.ProtocolOpenAIResponses:
+				clientCallID = gjson.Get(rec1.Body.String(), "output.0.call_id").String()
+			default:
+				clientCallID = gjson.Get(rec1.Body.String(), "choices.0.message.tool_calls.0.id").String()
+			}
+			require.NotEmpty(t, clientCallID)
+
+			// Turn 2: OpenCode upstream rejects oc-sig-1 with HTTP 400, triggering one compatibility retry.
+			rec2 := httptest.NewRecorder()
+			c2, _ := gin.CreateTestContext(rec2)
+			c2.Set("api_key", &apikey.APIKey{ID: 77})
+			ctx2 := requeststate.WithClientProtocol(t.Context(), clientCase.proto)
+			ctx2 = requeststate.WithRoutePlan(ctx2, routing.Plan(routing.PlanInput{
+				RequestedModel: model,
+				ClientProtocol: clientCase.proto,
+			}))
+			c2.Request = httptest.NewRequest(http.MethodPost, clientCase.path, nil).WithContext(ctx2)
+			c2.Request.Header.Set("X-Session-Id", "sess-opencode-1")
+
+			turn2Body := fmt.Sprintf(`{"model":%q,"max_tokens":64,"messages":[{"role":"user","content":"check status"},{"role":"assistant","content":[{"type":"tool_use","id":%q,"name":"lookup","input":{"q":"status"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":"green"}]}]}`, model, clientCallID, clientCallID)
+			switch {
+			case clientCase.proto == protocol.ProtocolOpenAIResponses || clientCase.cursor:
+				turn2Body = fmt.Sprintf(`{"model":%q,"input":[{"role":"user","content":"check status"},{"type":"function_call","call_id":%q,"name":"lookup","arguments":"{\"q\":\"status\"}"},{"type":"function_call_output","call_id":%q,"output":"green"}]}`, model, clientCallID, clientCallID)
+			case clientCase.proto == protocol.ProtocolOpenAIChatCompletions:
+				turn2Body = fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"check status"},{"role":"assistant","tool_calls":[{"type":"function","id":%q,"function":{"name":"lookup","arguments":"{\"q\":\"status\"}"}}]},{"role":"tool","tool_call_id":%q,"content":"green"}]}`, model, clientCallID, clientCallID)
+			}
+
+			var res2 *forward.OpenAIResult
+			switch clientCase.proto {
+			case protocol.ProtocolAnthropicMessages:
+				res2, err = executor.Messages(ctx2, c2, makeTarget(), []byte(turn2Body), "", model)
+			case protocol.ProtocolOpenAIResponses:
+				res2, err = executor.Responses(ctx2, c2, makeTarget(), []byte(turn2Body))
+			default:
+				res2, err = executor.Chat(ctx2, c2, makeTarget(), []byte(turn2Body), "", model)
+			}
+			require.NoError(t, err)
+			require.NotNil(t, res2)
+			require.Len(t, transport.requests, 3)
+
+			// Attempt 1 on turn 2 restored oc-call-1 and oc-sig-1; attempt 2 stripped IDs and wrote placeholder.
+			require.Equal(t, "oc-call-1", gjson.GetBytes(transport.bodies[1], "contents.1.parts.0.functionCall.id").String())
+			require.Equal(t, "oc-sig-1", gjson.GetBytes(transport.bodies[1], "contents.1.parts.0.thoughtSignature").String())
+			require.False(t, gjson.GetBytes(transport.bodies[2], "contents.1.parts.0.functionCall.id").Exists())
+			require.Equal(t, "skip_thought_signature_validator", gjson.GetBytes(transport.bodies[2], "contents.1.parts.0.thoughtSignature").String())
+			require.Contains(t, rec2.Body.String(), "opencode-ok")
+			require.NotNil(t, res2.NativeUsage)
+			require.Equal(t, 14, res2.NativeUsage.InputTokens)
+			require.Equal(t, 6, res2.NativeUsage.CacheReadInputTokens)
+			require.Equal(t, 4, res2.NativeUsage.OutputTokens)
+		})
+	}
 }

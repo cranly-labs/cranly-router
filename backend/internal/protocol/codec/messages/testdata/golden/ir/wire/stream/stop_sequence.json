@@ -1,0 +1,59 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_stop_sequence",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 26,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "<answer>"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "42"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "<answer>42"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 26,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 4
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop_sequence",
+      "stop_sequence": "</answer>"
+    }
+  }
+]

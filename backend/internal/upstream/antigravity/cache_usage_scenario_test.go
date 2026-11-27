@@ -2,24 +2,24 @@ package antigravity
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// cache_usage_scenario_test.go covers response_stream.go,
-// response_compat_stream.go, and response_compat_nonstream.go. A terminal
-// candidate precedes sparse cache metadata, requiring every client protocol
-// to postpone final usage until the shared reader finishes.
+// cache_usage_scenario_test.go covers response_stream.go and
+// response_converted.go across Anthropic Messages, OpenAI Chat, and OpenAI
+// Responses clients. When a terminal candidate arrives before sparse cache
+// metadata, every client protocol must postpone final usage emission until the
+// shared stream reader finishes collecting trailing counters.
 
 // cacheClientSink retains serialized protocol output without network effects.
 type cacheClientSink struct {
@@ -35,45 +35,67 @@ func (s *cacheClientSink) Emit(event upstream.OutputEvent) error {
 	return err
 }
 
+// newAntigravityCacheExchangeForTest builds a convert.Exchange for clientKind
+// and includeUsage so ReadConvertedStreaming and ReadConvertedBuffered can
+// format client-facing usage alongside internal billing observations.
+func newAntigravityCacheExchangeForTest(t *testing.T, clientKind string, includeUsage bool) *convert.Exchange {
+	t.Helper()
+	var proto protocol.ProtocolID
+	var reqBody []byte
+	switch clientKind {
+	case "messages":
+		proto = protocol.ProtocolAnthropicMessages
+		reqBody = []byte(`{"model":"model","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	case "chat":
+		proto = protocol.ProtocolOpenAIChatCompletions
+		if includeUsage {
+			reqBody = []byte(`{"model":"model","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`)
+		} else {
+			reqBody = []byte(`{"model":"model","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+		}
+	default:
+		proto = protocol.ProtocolOpenAIResponses
+		reqBody = []byte(`{"model":"model","input":"hi"}`)
+	}
+	ex, err := convert.NewExchange(reqBody, convert.Options{
+		Route: convert.Route{
+			Client:   proto,
+			Upstream: protocol.ProtocolGeminiGenerateContent,
+			Dialect: convert.Dialect{
+				Name:          "antigravity",
+				SchemaDialect: convert.SchemaAntigravity,
+			},
+		},
+		ClientModel: "model",
+	})
+	require.NoError(t, err)
+	return ex
+}
+
 // TestAntigravityCacheTailAcrossClientProtocols supplies cache metadata after
 // candidate completion. All six output paths must agree with internal usage
 // and emit only one successful terminal event after the tail is consumed.
 func TestAntigravityCacheTailAcrossClientProtocols(t *testing.T) {
 	body := "data: " + `{"responseId":"outer_cache","response":{"candidates":[{"content":{"parts":[{"text":"OK"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100}}}` + "\n\n" +
 		"data: " + `{"response":{"usageMetadata":{"cachedContentTokenCount":60,"candidatesTokenCount":10}}}` + "\n\ndata: [DONE]\n\n"
-	for _, protocol := range []string{"messages", "chat", "responses"} {
+	for _, clientKind := range []string{"messages", "chat", "responses"} {
 		for _, stream := range []bool{false, true} {
-			t.Run(protocol+map[bool]string{false: "/json", true: "/sse"}[stream], func(t *testing.T) {
+			t.Run(clientKind+map[bool]string{false: "/json", true: "/sse"}[stream], func(t *testing.T) {
 				response := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 				sink := &cacheClientSink{}
-				output := upstream.NewOutputContext(sink)
+				output := upstream.NewDeferredOutputContext(sink)
 				adapter := ResponseAdapter{Options: ResponseOptions{
-					ReverseTools:       func(data []byte) []byte { return data },
-					Failover:           func([]byte) error { return errors.New("unexpected failover") },
-					MapCollectionError: func(err error) error { return err },
-					IsFailover:         func(error) bool { return false }, MarkCommitted: func() {},
+					ReverseTools: func(data []byte) []byte { return data },
 				}}
+				convOpts := ConvertedOptions{
+					Exchange: newAntigravityCacheExchangeForTest(t, clientKind, true),
+				}
 				var result *StreamResult
 				var err error
-				switch protocol {
-				case "messages":
-					if stream {
-						result, err = adapter.HandleClaudeStreamingResponse(output, response, time.Now(), "model")
-					} else {
-						result, err = adapter.HandleClaudeStreamToNonStreaming(output, response, time.Now(), "model")
-					}
-				case "chat":
-					if stream {
-						result, err = adapter.HandleChatCompletionsStreamingFromAntigravity(output, response, time.Now(), "model", true)
-					} else {
-						result, err = adapter.HandleChatCompletionsNonStreamingFromAntigravity(output, response, time.Now(), "model")
-					}
-				case "responses":
-					if stream {
-						result, err = adapter.HandleResponsesStreamingFromAntigravity(output, response, time.Now(), "model", bridge.ResponsesClientToolMapping{})
-					} else {
-						result, err = adapter.HandleResponsesNonStreamingFromAntigravity(output, response, time.Now(), "model", bridge.ResponsesClientToolMapping{})
-					}
+				if stream {
+					result, err = adapter.ReadConvertedStreaming(output, response, convOpts)
+				} else {
+					result, err = adapter.ReadConvertedBuffered(output, response, convOpts)
 				}
 				require.NoError(t, err)
 				require.Equal(t, 40, result.Usage.InputTokens)
@@ -95,7 +117,7 @@ func TestAntigravityCacheTailAcrossClientProtocols(t *testing.T) {
 					}
 				}
 				require.True(t, visible.IsObject(), sink.String())
-				switch protocol {
+				switch clientKind {
 				case "messages":
 					require.Contains(t, sink.String(), `"id":"outer_cache"`)
 					require.Equal(t, int64(40), visible.Get("input_tokens").Int())
@@ -124,7 +146,11 @@ func TestAntigravityCacheTailFailureCannotEmitSuccess(t *testing.T) {
 	sink := &cacheClientSink{}
 	adapter := ResponseAdapter{}
 	response := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
-	result, err := adapter.HandleClaudeStreamingResponse(upstream.NewOutputContext(sink), response, time.Now(), "model")
+	result, err := adapter.ReadConvertedStreaming(
+		upstream.NewDeferredOutputContext(sink),
+		response,
+		ConvertedOptions{Exchange: newAntigravityCacheExchangeForTest(t, "messages", true)},
+	)
 	require.Error(t, err)
 	require.Equal(t, 60, result.Usage.CacheReadInputTokens)
 	require.Contains(t, sink.String(), "event: error")
@@ -139,7 +165,11 @@ func TestAntigravityChatUsageOptOutRetainsAccounting(t *testing.T) {
 	sink := &cacheClientSink{}
 	adapter := ResponseAdapter{Options: ResponseOptions{ReverseTools: func(data []byte) []byte { return data }}}
 	response := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
-	result, err := adapter.HandleChatCompletionsStreamingFromAntigravity(upstream.NewOutputContext(sink), response, time.Now(), "model", false)
+	result, err := adapter.ReadConvertedStreaming(
+		upstream.NewDeferredOutputContext(sink),
+		response,
+		ConvertedOptions{Exchange: newAntigravityCacheExchangeForTest(t, "chat", false)},
+	)
 	require.NoError(t, err)
 	require.Equal(t, 60, result.Usage.CacheReadInputTokens)
 	require.NotContains(t, sink.String(), `"usage"`)

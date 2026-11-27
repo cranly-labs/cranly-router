@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -41,8 +42,9 @@ type GeminiSessionOption func(*GeminiSession)
 // source. Identity injection, optional schema cleanup, model parameters, and
 // wrapping feed the platform executor, whose hooks run retry/recovery before
 // error handling. Unusable unwrapping retains source bytes. A successful result
-// retains the selected mapped billing model and input model separately, while
-// output observations and resource closure belong to the executor.
+// retains the selected mapped billing model, input model, and pre-strip Gemini
+// reasoning effort separately, while output observations and resource closure
+// belong to the executor.
 func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error) {
 	startTime := in.StartedAt
 	originalModel, action, stream, body, isStickySession := in.Model, in.Action, in.Stream, in.Body, in.Sticky
@@ -80,6 +82,10 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 	default:
 		return nil, p.GoogleError(404, "Unsupported action: "+action)
 	}
+
+	// Capture native Gemini thinkingLevel before ModelParameters can strip the
+	// wire field after effort-scoped model mapping, preserving usage attribution.
+	reasoningEffort := requeststate.ExtractGeminiReasoningEffortFromBody(body)
 
 	mappedModel := p.MappedModel(originalModel)
 	if mappedModel == "" {
@@ -288,6 +294,7 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 		Stream:                stream,
 		Duration:              result.Duration,
 		Timings:               result.Timings,
+		ReasoningEffort:       reasoningEffort,
 		ClientDisconnect:      result.ClientDisconnect,
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,

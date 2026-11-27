@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
@@ -25,13 +28,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -42,10 +49,11 @@ import (
 
 // openai_ws_http_bridge.go executes Responses WebSocket turns over HTTP and
 // converts upstream SSE data into client events. HTTP conversion removes the
-// continuation anchor after ingress rebuilds input, and function-tool
-// adaptation retains declarations and name mappings for later turns that omit
-// tools. Local generate=false warmups publish matching created and completed
-// IDs while saving that tool state for real execution.
+// continuation anchor after ingress rebuilds input, prepares native continuity
+// carriers, and retains adapted function-tool declarations and name mappings
+// for later turns that omit tools. Local generate=false warmups publish
+// matching created and completed IDs while saving that tool state for real
+// execution.
 //
 // First-turn OpenAI progress is staged until client output or a terminal
 // commits the attempt. Provider policy executes before capacity-code
@@ -97,23 +105,6 @@ type wsHTTPBridgeTurnInput struct {
 	Turn              int                                      // 1-based WebSocket turn ordinal
 	WriteClient       func([]byte) error                       // synchronous client WebSocket frame writer
 	RouterMatch       []egress.TLSFingerprintRouterMatchResult // matched TLS router overrides
-}
-
-// decodeOpenAIWSHTTPBridgeLoweredTools decodes saved lowered declarations into
-// an optional tool list. Empty or malformed bytes return nil, so tool
-// adaptation continues without inherited declarations when saved data cannot
-// be decoded.
-func decodeOpenAIWSHTTPBridgeLoweredTools(raw json.RawMessage) []any {
-	if len(raw) == 0 {
-		return nil
-	}
-	var tools []any
-	// Unusable saved declarations become an absent inherited list, leaving current
-	// tool adaptation to validate any declarations actually supplied by this frame.
-	if err := json.Unmarshal(raw, &tools); err != nil {
-		return nil
-	}
-	return tools
 }
 
 // openAIWSHTTPBridgeRawField returns copied bytes and presence for a top-level
@@ -622,44 +613,66 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	grokIntentSourceBody := append([]byte(nil), body...)
 	_, grokExplicitToolsField := openAIWSHTTPBridgeRawField(grokIntentSourceBody, "tools")
 	grokExplicitToolIntent := provider.Record.Platform == capability.PlatformGrok && grok.HasGrokResponsesToolIntent(grokIntentSourceBody)
-	var clientToolMapping bridge.ResponsesClientToolMapping
+	var (
+		clientToolMap           *convert.ToolMap
+		sessionToolMap          *convert.ToolMap
+		commitSessionToolMap    bool
+		sessionToolMapCommitted bool
+	)
+	publishSessionToolMap := func() {
+		if commitSessionToolMap && !sessionToolMapCommitted {
+			sessionToolMapCommitted = true
+			gatewayhttp.SetOpenAIWSHTTPBridgeToolMap(c, sessionToolMap)
+		}
+	}
 	functionToolUpstream := (provider.Record.Platform == capability.PlatformOpenAI && provider.Record.Type == capability.ProviderTypeAPIKey) || provider.Record.Platform == capability.PlatformGrok
 	if functionToolUpstream {
-		if provider.Record.Platform == capability.PlatformGrok {
-			body, err = gatewayprovider.GrokBodyCodec().SanitizeGrokResponsesInput(body)
+		// IR adaptation lifts additional_tools after checking whether top-level
+		// tools[] was omitted so replayed warmup carriers cannot shadow inherited session tools.
+		inheritedMap, _ := gatewayhttp.OpenAIWSHTTPBridgeToolMapFromContext(c)
+		dialect := s.resolveWSHTTPBridgeDialect(ctx, provider, body, routingModel, originalModel)
+		if convert.NeedsResponsesToolAdaptation(dialect, body, inheritedMap) {
+			var losses []ir.Loss
+			body, clientToolMap, losses, err = convert.AdaptResponsesTools(body, dialect, inheritedMap)
 			if err != nil {
-				return nil, fmt.Errorf("sanitize Grok WS HTTP bridge input: %w", err)
+				wrapped := fmt.Errorf("adapt %s client tools: %w", openAIWSHTTPBridgeToolUpstreamName(provider), err)
+				return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", wrapped.Error()).WithCause(wrapped)
+			}
+			if len(losses) > 0 {
+				logging.FromContext(ctx).Debug(
+					"gateway.ws_http_bridge_tool_adaptation_losses",
+					zap.Int64("provider_id", provider.Record.ID),
+					zap.Int("turn", turn),
+					zap.Int("loss_count", len(losses)),
+				)
 			}
 		}
-		inheritedState, _ := gatewayhttp.OpenAIWSHTTPBridgeToolStateFromContext(c)
-		inheritedLoweredTools := decodeOpenAIWSHTTPBridgeLoweredTools(inheritedState.LoweredTools)
-		body, clientToolMapping, err = bridge.AdaptResponsesClientToolsJSONWithMapping(
-			body,
-			openAIWSHTTPBridgeToolUpstreamName(provider),
-			inheritedState.ClientMapping,
-			inheritedLoweredTools,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("adapt %s client tools: %w", openAIWSHTTPBridgeToolUpstreamName(provider), err)
-		}
-		if provider.Record.Platform == capability.PlatformGrok && !grokExplicitToolsField && !grokExplicitToolIntent && len(inheritedLoweredTools) > 0 && grok.HasGrokResponsesToolIntent(body) {
-			// Omitted declarations can inherit real client functions; include the adapted
-			// declaration body when deriving Grok tool-cache routing for that continuation.
+		if provider.Record.Platform == capability.PlatformGrok &&
+			!grokExplicitToolsField &&
+			!grokExplicitToolIntent &&
+			inheritedMap != nil &&
+			len(inheritedMap.LoweredTools) > 0 &&
+			grok.HasGrokResponsesToolIntent(body) {
+			// Omitted declarations can inherit session client functions; refresh
+			// grokIntentSourceBody so Grok tool-cache routing observes that intent.
 			grokIntentSourceBody = append(grokIntentSourceBody[:0], body...)
 		}
-		loweredTools := inheritedState.LoweredTools
-		if currentTools, present := openAIWSHTTPBridgeRawField(body, "tools"); present {
-			loweredTools = currentTools
-		}
-		gatewayhttp.SetOpenAIWSHTTPBridgeToolState(c, requeststate.WSBridgeTools{
-			ClientMapping: clientToolMapping,
-			LoweredTools:  loweredTools,
-		})
+		// Snapshot this turn's session ToolMap before Grok companion-tool
+		// injection, deferring context publication until warmup or output commits
+		// so pre-output provider failover keeps the prior turn's session state.
+		sessionToolMap = buildWSHTTPBridgeSessionToolMap(body, clientToolMap)
+		commitSessionToolMap = true
 	}
 	// Retain warmup declarations and reverse mapping before returning local events,
 	// so the next anchored turn can omit tools without losing its client functions.
 	if openai.IsWSWarmupPayload(payload) {
-		return completeHTTPBridgeWarmup(originalModel, writeClientMessage)
+		warmupResult, warmupErr := completeHTTPBridgeWarmup(originalModel, writeClientMessage)
+		if warmupErr == nil {
+			// Commit warmup tool declarations only after local events deliver cleanly
+			// so failed warmup writes never pollute subsequent connection state.
+			publishSessionToolMap()
+		}
+		return warmupResult, warmupErr
 	}
 	if s.Requests == nil || s.Requests.Transport == nil {
 		return nil, errors.New("openai http upstream is nil")
@@ -693,6 +706,23 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	var mappedModelBytes []byte
 	if needModelReplace {
 		mappedModelBytes = []byte(mappedModel)
+	}
+
+	// Unpack matching trc1 continuity envelopes or strip foreign envelopes before
+	// Grok cache identity hashing and upstream HTTP request construction.
+	replayModel := mappedModel
+	if provider.Record.Platform == capability.PlatformGrok {
+		replayModel = resolveGrokWSUpstreamModel(provider, body, originalModel)
+	}
+	if replayModel == "" {
+		replayModel = strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	}
+	if replayModel == "" {
+		replayModel = strings.TrimSpace(originalModel)
+	}
+	body, err = s.prepareHTTPBridgeNativeReplay(ctx, provider, replayModel, body)
+	if err != nil {
+		return nil, fmt.Errorf("prepare http bridge native replay: %w", err)
 	}
 
 	if provider.Record.Platform == capability.PlatformGrok {
@@ -888,6 +918,9 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	bareErrorMessage := ""
 	failureProviderSideEffectsApplied := false
 	resultWithUsage := func() *forward.OpenAIResult {
+		// Commit this turn's session ToolMap once non-failover settlement begins so
+		// disconnected drains and completed turns publish declarations atomically.
+		publishSessionToolMap()
 		performance.FinishAt(time.Now())
 		imageCount := imageCounter.Count()
 		result := &forward.OpenAIResult{
@@ -929,10 +962,10 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	if s.Options != nil && s.Output.Options.MaxLineSize > 0 {
 		maxLineSize = s.Output.Options.MaxLineSize
 	}
-	if gatewayhttp.HasOpenAIResponsesClientToolMapping(clientToolMapping) {
-		// Restore client tool representation before replay and WS delivery, using the
-		// mapping captured for this turn rather than later session tool declarations.
-		resp.Body = upstream.NewResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
+	if clientToolMap.HasRestorations() {
+		// Restore lowered client tool items via convert.NewResponsesToolStream
+		// before replay collection and WebSocket delivery using this turn's ToolMap.
+		resp.Body = upstream.NewResponsesToolStreamBody(resp.Body, clientToolMap, maxLineSize)
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	scanBuf := httpclient.GetSSEScannerBuf64K()
@@ -970,6 +1003,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 				return fmt.Errorf("write synthesized websocket response.failed: %w", err)
 			}
 			wroteDownstream = true
+			publishSessionToolMap()
 		}
 		markOpenAIWSClientVisibleFailure(c, "response.failed", clientMessage)
 		return nil
@@ -995,6 +1029,11 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		if trimmedData == "[DONE]" {
 			sawDone = true
+			continue
+		}
+		// Drop non-error SSE ping or keepalive frames so unwrapped streams without
+		// tool restorations never emit liveness frames on WS.
+		if pendingSSEEventType != "error" && upstream.IsSSEHeartbeatEvent(pendingSSEEventType, trimmedData) {
 			continue
 		}
 
@@ -1261,6 +1300,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 						)
 					}
 					wroteDownstream = true
+					publishSessionToolMap()
 				}
 			}
 		}
@@ -1327,6 +1367,12 @@ func (s *OpenAIWebSocketExecutor) resolveGrokWSCacheIdentity(ctx context.Context
 		return "", err
 	}
 	upstreamModel := resolveGrokWSUpstreamModel(provider, body, routingModel)
+	// Keep Grok WS cache identity aligned with the post-replay HTTP body forwarded
+	// by proxyOpenAIWSHTTPBridgeTurn.
+	body, err = s.prepareHTTPBridgeNativeReplay(ctx, provider, upstreamModel, body)
+	if err != nil {
+		return "", err
+	}
 	body, err = s.prepareGrokResponses(ctx, provider, upstreamModel, body)
 	if err != nil {
 		return "", err
@@ -1403,6 +1449,29 @@ func completeHTTPBridgeWarmup(model string, write func([]byte) error) (*forward.
 	}, nil
 }
 
+// prepareHTTPBridgeNativeReplay unpacks matching trc1 continuity envelopes or
+// strips foreign envelopes on an HTTP-bridged Responses WebSocket turn. Nil
+// executors leave body untouched.
+func (s *OpenAIWebSocketExecutor) prepareHTTPBridgeNativeReplay(ctx context.Context, provider *gatewayprovider.ExecutionProvider, model string, body []byte) ([]byte, error) {
+	if s == nil {
+		return body, nil
+	}
+	var service *routing.ModelAttributeService
+	if s.Requests != nil && s.Requests.Readers != nil {
+		service = s.Requests.Readers.Attributes
+	}
+	rewritten, _, err := gatewayprovider.PrepareNativeReplay(
+		ctx,
+		provider,
+		model,
+		body,
+		service,
+		protocolcore.ProtocolResponsesWebSocket,
+		protocolcore.ProtocolOpenAIResponses,
+	)
+	return rewritten, err
+}
+
 // prepareGrokResponses applies shared Grok preparation using the supplied
 // upstream model and optional attribute reader. Missing Requests or Readers
 // leaves the attribute service nil; the provider helper supplies its protocol
@@ -1413,4 +1482,99 @@ func (s *OpenAIWebSocketExecutor) prepareGrokResponses(ctx context.Context, prov
 		service = s.Requests.Readers.Attributes
 	}
 	return gatewayprovider.PrepareGrokResponses(ctx, provider, model, body, service)
+}
+
+// resolveWSHTTPBridgeDialect resolves the target convert.Dialect for IR
+// client-tool lowering on an HTTP-bridged WebSocket turn. Omitted continuation
+// models or catalog misses fall back to zero resolution so provider tool capabilities still apply.
+func (s *OpenAIWebSocketExecutor) resolveWSHTTPBridgeDialect(
+	ctx context.Context,
+	provider *gatewayprovider.ExecutionProvider,
+	body []byte,
+	routingModel string,
+	originalModel string,
+) convert.Dialect {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	if provider != nil && provider.Record.Platform == capability.PlatformGrok {
+		model = resolveGrokWSUpstreamModel(provider, body, originalModel)
+	} else if model == "" {
+		model = strings.TrimSpace(routingModel)
+		if model == "" {
+			model = strings.TrimSpace(originalModel)
+		}
+	}
+	var service *routing.ModelAttributeService
+	if s != nil && s.Requests != nil && s.Requests.Readers != nil {
+		service = s.Requests.Readers.Attributes
+	}
+	var res modelrules.Resolution
+	if model != "" {
+		// Ignore catalog lookup failures on continuation turns with custom or unmapped
+		// models so provider-level tool capability flags still lower client tools.
+		if resolved, err := gatewayprovider.ResolveModelAttributes(ctx, provider, model, service, "openai_responses"); err == nil {
+			res = resolved.ForRequest(gatewayprovider.ModelRequestState(body))
+		}
+	}
+	return gatewayprovider.ConversionDialect(ctx, provider, res, protocolcore.ProtocolOpenAIResponses)
+}
+
+// buildWSHTTPBridgeSessionToolMap derives the session ToolMap stored for
+// subsequent WebSocket bridge turns. Non-nil clientToolMap values carry their
+// own LoweredTools; when all active tools are plain functions, raw tools[]
+// elements are captured losslessly via jsontext, and empty or null tools reset to nil.
+func buildWSHTTPBridgeSessionToolMap(body []byte, clientToolMap *convert.ToolMap) *convert.ToolMap {
+	if clientToolMap != nil {
+		return clientToolMap
+	}
+	elems := extractWSHTTPBridgeToolElements(body)
+	if len(elems) == 0 {
+		return nil
+	}
+	return &convert.ToolMap{LoweredTools: elems}
+}
+
+// extractWSHTTPBridgeToolElements extracts top-level tools array elements from
+// body via jsontext without decoding unrelated fields through float64. Missing,
+// null, empty, or syntactically invalid tools fields return nil so callers omit
+// session LoweredTools cleanly.
+func extractWSHTTPBridgeToolElements(body []byte) []jsontext.Value {
+	// Convert malformed JSON or non-array tools values to nil because upstream
+	// request decoding already validated syntax and non-array tools carry no
+	// inheritable session declarations.
+	dec := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '{' {
+		return nil
+	}
+	for dec.PeekKind() != '}' {
+		kTok, kErr := dec.ReadToken()
+		if kErr != nil {
+			return nil
+		}
+		if kTok.String() != "tools" {
+			if dec.SkipValue() != nil {
+				return nil
+			}
+			continue
+		}
+		if dec.PeekKind() != '[' {
+			return nil
+		}
+		if _, aErr := dec.ReadToken(); aErr != nil {
+			return nil
+		}
+		var elems []jsontext.Value
+		for dec.PeekKind() != ']' {
+			val, vErr := dec.ReadValue()
+			if vErr != nil {
+				return nil
+			}
+			elems = append(elems, bytes.Clone(val))
+		}
+		return elems
+	}
+	return nil
 }

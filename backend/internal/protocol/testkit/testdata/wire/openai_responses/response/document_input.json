@@ -1,0 +1,33 @@
+{
+  "id": "resp_document_input",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_document_input_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "The attached PDF contains 1 page and specifies a 99.95% monthly availability target for regional gateway endpoints."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 420,
+    "output_tokens": 21,
+    "total_tokens": 441,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

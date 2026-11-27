@@ -61,6 +61,20 @@ func (r *Runtime) bedrock(
 	if attributesErr != nil {
 		return nil, attributesErr
 	}
+	// Unpack matching Anthropic trc1 signatures or delete incompatible blocks
+	// ahead of parameter normalization and beta token inference so downgraded
+	// active tool loops do not retain orphan thinking beta requirements.
+	body, _, err = gatewayprovider.PrepareNativeReplayWithResolution(
+		ctx,
+		provider,
+		attributes,
+		body,
+		protocol.ProtocolAnthropicMessages,
+		protocol.ProtocolAnthropicMessages,
+	)
+	if err != nil {
+		return nil, err
+	}
 	body, err = gatewayprovider.ApplyModelAttributeParameters(body, attributes)
 	if err != nil {
 		return nil, err

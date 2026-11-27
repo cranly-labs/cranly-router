@@ -14,28 +14,25 @@ import (
 
 // reasoning_effort.go extracts requested and recorded reasoning effort from
 // request bytes and decoded objects. Capturing the client choice before policy
-// preserves a recognized none value, while effective reporting keeps the
-// supported nonempty effort labels after transformations.
+// preserves recognized none and minimal values, while effective reporting keeps
+// the supported nonempty effort labels after transformations.
 //
 // Byte readers and decoded-object readers select their own field evidence. The
-// byte reporting path falls through a blank nested value to the flat spelling;
-// the decoded reporting dependency treats any nested string as supplied, even
-// when its reporting label becomes empty. Canonical readers additionally
-// consider Anthropic output_config.effort. These helpers do not infer effort
-// from model names, and the ultra validator checks selected request fields
-// separately from general JSON or provider-capability validation.
+// OpenAI byte reporting path falls through a blank nested value to the flat
+// spelling, and the Gemini byte reporting path falls through a blank camelCase
+// thinkingLevel to snake_case thinking_level; the decoded reporting dependency
+// treats any nested string as supplied, even when its reporting label becomes
+// empty. Canonical readers additionally consider Anthropic output_config.effort
+// and Gemini thinkingLevel spellings. These helpers do not infer effort from
+// model names, and the ultra validator checks selected request fields separately
+// from general JSON or provider-capability validation.
 
 // ExtractOpenAIReasoningEffortFromBody returns the canonical reporting effort
 // from nested reasoning.effort or the flat compatibility spelling. A blank
 // nested value permits the flat field; missing, none, minimal or unrecognized
 // reporting values return nil after normalization.
 func ExtractOpenAIReasoningEffortFromBody(body []byte) *string {
-	reasoningEffort := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
-	// A blank nested choice leaves the Chat-compatible flat spelling available.
-	// Reporting still normalizes that supplied spelling before deciding whether to retain it.
-	if reasoningEffort == "" {
-		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
-	}
+	reasoningEffort := firstNonBlankStringField(body, "reasoning.effort", "reasoning_effort")
 	if reasoningEffort != "" {
 		normalized := openai.NormalizeRecordedReasoningEffort(reasoningEffort)
 		if normalized == "" {
@@ -47,22 +44,42 @@ func ExtractOpenAIReasoningEffortFromBody(body []byte) *string {
 	return nil
 }
 
+// ExtractGeminiReasoningEffortFromBody returns the canonical reporting effort
+// from camelCase or snake_case Gemini thinkingLevel fields. A blank camelCase
+// value permits the snake_case spelling; missing, none, minimal, or
+// unrecognized reporting values return nil after normalization.
+func ExtractGeminiReasoningEffortFromBody(body []byte) *string {
+	if len(body) == 0 {
+		return nil
+	}
+	raw := firstNonBlankStringField(
+		body,
+		"generationConfig.thinkingConfig.thinkingLevel",
+		"generation_config.thinking_config.thinking_level",
+	)
+	if raw == "" {
+		return nil
+	}
+	normalized := openai.NormalizeRecordedReasoningEffort(raw)
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
+}
+
 // CanonicalRequestedReasoningEffort captures a recognized pre-policy client
-// choice, including none, from request bytes. It prefers the first nonblank
-// nested, flat, or output_config effort; missing or unrecognized values return
-// nil, and model suffixes supply no value.
+// choice, including none and minimal, from request bytes. It prefers the first
+// nonblank OpenAI, Anthropic output_config, or Gemini thinkingLevel effort;
+// missing or unrecognized values return nil, and model suffixes supply no value.
 func CanonicalRequestedReasoningEffort(body []byte) *string {
-	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
-	// The flat Chat spelling can provide a pre-policy choice when nested
-	// Responses evidence is blank, retaining one ordered client value for capture.
-	if raw == "" {
-		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
-	}
-	if raw == "" {
-		// Anthropic clients express the same pre-policy choice in output_config.
-		// Read it after both OpenAI spellings so existing precedence stays visible.
-		raw = strings.TrimSpace(gjson.GetBytes(body, "output_config.effort").String())
-	}
+	raw := firstNonBlankStringField(
+		body,
+		"reasoning.effort",
+		"reasoning_effort",
+		"output_config.effort",
+		"generationConfig.thinkingConfig.thinkingLevel",
+		"generation_config.thinking_config.thinking_level",
+	)
 	if raw != "" {
 		canonical := routing.NormalizeRequestedOpenAIReasoningEffort(raw)
 		if canonical == "" {
@@ -117,34 +134,30 @@ func ExtractOpenAIReasoningEffort(reqBody map[string]any) *string {
 }
 
 // CanonicalRequestedReasoningEffortFromReqBody captures a recognized pre-policy
-// choice from a decoded request, including none. The first nonblank string
-// among nested, flat and output_config effort wins; missing and unrecognized
-// choices return nil, and request-model spelling does not supply a choice.
+// choice from a decoded request, including none and minimal. The first nonblank
+// string among OpenAI, Anthropic output_config, and Gemini thinkingLevel fields
+// wins; missing and unrecognized choices return nil, and request-model spelling
+// does not supply a choice.
 func CanonicalRequestedReasoningEffortFromReqBody(reqBody map[string]any) *string {
 	if reqBody == nil {
 		return nil
 	}
-	raw := ""
-	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
-		if effort, ok := reasoning["effort"].(string); ok {
-			raw = strings.TrimSpace(effort)
-		}
-	}
+	raw := nestedMapString(reqBody, "reasoning", "effort")
 	// A missing or blank nested string leaves the flat client spelling available
 	// for requested-choice capture, whose precedence differs from effective map reporting.
 	if raw == "" {
-		if effort, ok := reqBody["reasoning_effort"].(string); ok {
-			raw = strings.TrimSpace(effort)
-		}
+		raw = nestedMapString(reqBody, "reasoning_effort")
 	}
-	// Anthropic output effort supplies the requested choice after both OpenAI
-	// spellings are empty, allowing the same capture path across entry protocols.
+	// Anthropic output effort and Gemini thinkingLevel spellings follow OpenAI
+	// fields so every inbound protocol shares one pre-policy capture path.
 	if raw == "" {
-		if outputConfig, ok := reqBody["output_config"].(map[string]any); ok {
-			if effort, ok := outputConfig["effort"].(string); ok {
-				raw = strings.TrimSpace(effort)
-			}
-		}
+		raw = nestedMapString(reqBody, "output_config", "effort")
+	}
+	if raw == "" {
+		raw = nestedMapString(reqBody, "generationConfig", "thinkingConfig", "thinkingLevel")
+	}
+	if raw == "" {
+		raw = nestedMapString(reqBody, "generation_config", "thinking_config", "thinking_level")
 	}
 	if raw != "" {
 		canonical := routing.NormalizeRequestedOpenAIReasoningEffort(raw)
@@ -286,4 +299,44 @@ func StripWireReasoningEffort(body []byte, wireProtocol protocol.ProtocolID) []b
 		}
 	}
 	return out
+}
+
+// firstNonBlankStringField returns the trimmed value of the first existing
+// nonblank JSON string across paths in caller order. Missing paths, nonstring
+// JSON nodes, and blank strings are skipped without error, returning empty when
+// no path yields usable text.
+func firstNonBlankStringField(body []byte, paths ...string) string {
+	for _, path := range paths {
+		value := gjson.GetBytes(body, path)
+		if !value.Exists() || value.Type != gjson.String {
+			continue
+		}
+		if trimmed := strings.TrimSpace(value.String()); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// nestedMapString traverses nested JSON-object maps along keys and returns the
+// trimmed leaf string value. Nil maps, empty key lists, missing entries,
+// non-map intermediate values, or non-string leaves return empty without
+// mutating root.
+func nestedMapString(root map[string]any, keys ...string) string {
+	if root == nil || len(keys) == 0 {
+		return ""
+	}
+	current := root
+	for _, key := range keys[:len(keys)-1] {
+		next, ok := current[key].(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = next
+	}
+	leaf, ok := current[keys[len(keys)-1]].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(leaf)
 }

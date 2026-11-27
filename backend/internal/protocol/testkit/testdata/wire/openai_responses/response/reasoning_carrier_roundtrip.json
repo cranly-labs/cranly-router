@@ -1,0 +1,44 @@
+{
+  "id": "resp_reasoning_carrier_roundtrip",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "rs_rt_final_3",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Both replica lag (45ms) and 3-voter quorum on db-east-1 satisfy failover safety thresholds."
+        }
+      ],
+      "encrypted_content": "gAAAAABnRoundtripFinalEnc03"
+    },
+    {
+      "id": "msg_rt_final_3",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Cluster db-east-1 is ready for planned failover: replication lag is 45ms and all 3 quorum voters are healthy.",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 132,
+    "output_tokens": 64,
+    "total_tokens": 196,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 28
+    }
+  }
+}

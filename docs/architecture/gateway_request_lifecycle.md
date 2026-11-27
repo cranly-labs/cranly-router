@@ -93,7 +93,7 @@
 | `gateway/httpapi`、`gateway/ws`、`gateway/live` | HTTP/WS/Live 协议适配、同步写入与 Flush、连接与 turn 生命周期 |
 | `gateway/text`、`gateway/forward` | 文本提供商切换循环、计数预检、通用请求准备与转换策略 |
 | `gateway/requeststate`、`gateway/modeltrace` | 报文副本、规范化结果、执行提示、路由状态与响应模型恢复链 |
-| `gateway/provider`、`upstream`、`protocol/bridge` | 平台凭据与出站策略、上游单次交换、纯协议转换算法 |
+| `gateway/provider`、`upstream`、`protocol/{ir,codec,convert}` | 平台凭据与出站策略、上游单次交换、纯协议转换管线 |
 | `gateway/completion`、`gateway/searchtools`、`gateway/moderationflow` | 幂等完成结算、工具模拟与审核完成编排 |
 | `gateway/session`、`errorpolicy`、`scheduler` | 会话摘要与归属、不可变错误策略快照、无凭据候选调度 |
 
@@ -222,20 +222,21 @@ client_model
 
 ### 平台转发
 
-每次 attempt 用原始或规范化请求结合本次提供商重建供应商请求，注入凭据、代理、TLS 指纹、客户端标识、Thinking/工具配置与上游模型。
+每个上游协议族（Responses、Chat、Messages、Gemini、Antigravity 与 Qoder）只保留原生路径与一条合并转换路径。Messages 与 Responses 原生路径出站前处理 `trc1:` 信封，跨协议路径统一由 `protocol/convert` 驱动一对读取函数（见[协议转换与中间表示](protocol_conversion.md#gateway_integration)）。
 
-通用报文与转换算法在 `protocol/{anthropic,openai,gemini,google,bridge}`，采样与 Max effort 策略在 `gateway/forward`，每次请求或 attempt 创建独立转换状态。HTTP 层负责同步写入与 Flush，upstream 负责首次输出判定、取消、失败排水和提供商内重试，外层网关决定换号。
+每次 attempt 用原始或规范化请求结合本次提供商重建供应商请求，注入凭据、代理、TLS 指纹、客户端标识、Thinking/工具配置与上游模型。采样与 Max effort 策略在 `gateway/forward`，HTTP 层负责同步写入与 Flush，upstream 负责首次输出判定、取消、失败排水与提供商内重试，外层网关决定换号。
 
-- Anthropic / Claude（普通、API Key 透传、Vertex、Bedrock）：每次 attempt 单独保存 Beta 过滤、工具名映射和错误诊断；重试用尽后的兼容冷却按最新池模式判定；调试追踪句柄待请求和后台工作全部结束后关闭。
-- Anthropic 跨协议模型采集：承接 Chat Completions 或 Responses 时，转换读取器先在改写模型前采集原始 `message_start` 声明的模型（流式与缓冲一致，未声明留空）。
-- Gemini / Antigravity：按 attempt 创建图片计数和工具名恢复状态；图片数取单个响应片段内联图片最大值，未观测到图片才回退原模型名；HTTP 层负责三种客户端协议错误格式、规则覆盖和 Ops 写入顺序。
+- Anthropic / Claude（普通、API Key 透传、Vertex、Bedrock）：每次 attempt 独立保存 Beta 过滤、工具名映射与错误诊断（含 Bedrock EventStream 转 SSE 桥）；跨 Claude 模型遇签名 `400` 时无损剥离历史签名同号重试一次，调试句柄待后台工作结束后关闭。
+- 转换读取器原始模型采集：各上游族合并转换读取器在改写客户端模型前，直接从原始上游事件或响应体采集 `UpstreamResponseModel`（正常返回与中途读错部分结果均保留，未声明留空）。
+- Gemini / Antigravity：按 attempt 创建图片计数、作用域隔离的 `CallMemory` 和工具身份恢复状态；图片数取单帧内联图片最大值，未观测到图片才回退原模型名；HTTP 层负责三种客户端协议错误格式、规则覆盖和 Ops 写入顺序。
 - OpenAI / Grok 回合状态头：首次输出暂存时不登记来源，实际提交后写入按 API Key 与客户端原始会话区分的来源表；请求带回的值仅在确认来自另一提供商时移除（来源未知、同提供商或过期继续透传）；配额头和回合状态强制透传时机由流读取器触发。
 - 非流式有界读取：`infra/httpclient` 默认上限 128 MiB（多读 1 字节判超限并保留原错误链），超限时记录 Ops 并输出对应协议 502；读取函数不关响应体，重试和取消由执行链决定。
 
 ### 流式输出与重试窗口
 
 - 不可逆点：调用上游前通过 `HeartbeatAdjustedWrittenSize` 记录扣除全部心跳后的写出字节数；一旦写出实际业务内容，不可换提供商（防止拼出损坏流），已记录的心跳不算业务输出。
-- 暂存窗口：Responses 前导事件（`response.created`、`response.in_progress`）与等待终态判定的可重试 `error` 帧可留在 attempt 缓冲以保留 failover 窗口；不可重试错误及时转发。实际输出开始后只能追加协议允许的流错误事件或断开连接；非流式仅在未写响应前可 failover。
+- 前导帧暂存与延迟提交：流式转换读取器延迟至首个实际输出帧写出时提交响应头，并在首个 `Semantic == true` 帧或不可重试终态到达前暂存非语义前导帧与待判 `error` 帧，为空完成、静默拒答和紧随其后的可重试错误保留切号窗口。
+- 已提交 SSE 终态错误：保活心跳提前提交 `200 text/event-stream`（`CommittedSSE` 为真）或实际输出开始后，超时与上游失败统一发送无计时的客户端协议终态 SSE 错误帧；非流式仅在未写响应前可 failover。
 - 错误分类与协议拒绝：错误分为本地准入、业务能力不足、调度容量不足、可切换上游错误、不可切换转发错误五类。协议准入拒绝（选号前）错误码：Anthropic 返回 `permission_error`，OpenAI 返回 `protocol_not_allowed`，Google 返回 `PERMISSION_DENIED`。
 - 观测与脱敏：Ops 记录归属、endpoint、实际平台（未选号记 `unknown`）、模型与提供商；对外错误隐去凭据、内部代理和数据库细节。
 - 特殊释放与独立租约：Qoder 流式请求进入上游后采用完成后释放（客户端断开停写下游，在预算内收完尾部 usage 后释放槽位）；等待中和非流式按各自取消策略释放。WS 入站连接与 Live 租约各自续租、失租自取消，与请求 Lease 独立。
@@ -287,7 +288,7 @@ client_model
 
 - 计费桶与价卡继承：统一文本保留上游 usage 的 5 分钟和 1 小时缓存创建分桶及 Speed，缓存读取只扣一次；用户售价与提供商成本分算，价卡按"分组价 -> 共享价 -> 内置价"继承；记录平台取实际执行提供商。
 - 中断部分用量：Anthropic 网关与 OpenAI 兼容 Messages、Responses、Chat 在终止事件前中断时，只要随错返回部分结果，仍提交已观测 usage（无结果不记）；`UpstreamFailoverError` 不带部分结果，重试成功只计费一次。
-- 国产供应商转换流中断：原生 Anthropic 转 Responses 流在客户端写失败后停止下游输出，继续读完上游并推进状态机，直到末尾 `message_delta` 最终 token 或达有界读超时。
+- 转换流客户端断开排空：各上游族合并流式转换读取器在客户端写失败后停止下游输出，在有界读超时内继续消费上游流以采集末尾终态 token 用量。
 - OpenAI OAuth 图片中断：HTTP 成功后若上游 body 传输中断，仅在未写出实际图片内容前（JSON keepalive 空白不算）按 502 进入提供商策略和 failover；客户端取消、deadline、响应体超限及首字节后中断不换号。
 
 ### 完成器与任务边界

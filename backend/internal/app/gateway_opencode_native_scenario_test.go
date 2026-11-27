@@ -180,7 +180,7 @@ func TestOpenCodePublicNativeHTTP(t *testing.T) {
 					}, selection.DefaultOptions())
 					shared := provideMessageHTTPBindings(planner, nil, nil, funding, nil, nil, nil, nil, concurrency, cfg, choices, keys, nil)
 					digest := session.NewDigestSessionStore()
-					gemini := provideGeminiExecutor(provideGeminiForward(providers, nil, nil, nil, transport, nil, cfg, activity, nil))
+					gemini := provideGeminiExecutor(provideGeminiForward(providers, nil, nil, nil, transport, nil, cfg, activity, nil, provideGeminiToolCalls()))
 					runtime := provideMessageAttemptRuntime(nil, digest, nil, nil, gemini, funding, keys, recorders, shared, nil, nil, nil, cfg, nil, choices, nil, nil, prices)
 					handler := provideGeminiNativeHTTP(shared, digest, runtime, activity, choices)
 					router.POST("/v1beta/models/*modelAction",

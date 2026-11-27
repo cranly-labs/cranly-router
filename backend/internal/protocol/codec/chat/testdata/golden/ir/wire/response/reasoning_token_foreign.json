@@ -1,0 +1,36 @@
+{
+  "id": "chatcmpl_reasoning_token_foreign",
+  "model": "deepseek-reasoner",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "us-east-1 has 52 GPUs available; query eu-west-1 quota next."
+        ]
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_quota_euw2",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_region_quota"
+        },
+        "arguments": "{\"region\":\"eu-west-1\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 104,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 50,
+    "reasoning": 26
+  }
+}

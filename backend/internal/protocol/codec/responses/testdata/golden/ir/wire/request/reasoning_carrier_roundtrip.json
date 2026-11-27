@@ -1,0 +1,155 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Inspect replica lag on db-east-1 and check failover readiness."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_rt_anth_1",
+          "reasoning": {
+            "segments": [
+              "Query replication lag metrics on db-east-1."
+            ],
+            "summary": true,
+            "token": {
+              "data": "trc1:anthropic:eyJkIjoiRXFRQkNnSVlBaUpBY25kZllXNTBhRjl5YjNWdVpIUnlhWEJmYzJsblh6QXgiLCJ0IjoiRmlyc3QgcXVlcnkgcmVwbGljYXRpb24gbGFnIG1ldHJpY3Mgb24gZGItZWFzdC0xOyB2ZXJpZnkgbGFnIHN0YXlzIGJlbG93IDEwMG1zLiJ9"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "id": "fc_lag_east_1",
+          "call": {
+            "call_id": "call_lag_east_1",
+            "tool": {
+              "kind": "function",
+              "name": "check_replica_lag"
+            },
+            "arguments": "{\"cluster\":\"db-east-1\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_lag_east_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"cluster\":\"db-east-1\",\"lag_ms\":45}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_rt_gem_2",
+          "reasoning": {
+            "segments": [
+              "Replica lag is 45ms; now verify quorum status."
+            ],
+            "summary": true,
+            "token": {
+              "data": "trc1:gemini:eyJkIjoiQ3BFQkNvY0JfZ2VtX3JvdW5kdHJpcF9zaWdfMDIifQ"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "id": "fc_quorum_east_2",
+          "call": {
+            "call_id": "call_quorum_east_2",
+            "tool": {
+              "kind": "function",
+              "name": "check_quorum"
+            },
+            "arguments": "{\"cluster\":\"db-east-1\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_quorum_east_2",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"cluster\":\"db-east-1\",\"quorum_healthy\":true,\"voters\":3}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "check_replica_lag",
+      "description": "Read replication lag metrics for a database cluster.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "Cluster ID"
+          }
+        },
+        "required": [
+          "cluster"
+        ]
+      },
+      "strict": false
+    },
+    {
+      "kind": "function",
+      "name": "check_quorum",
+      "description": "Check voter quorum health for a database cluster.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "Cluster ID"
+          }
+        },
+        "required": [
+          "cluster"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto",
+    "include_encrypted": true
+  }
+}

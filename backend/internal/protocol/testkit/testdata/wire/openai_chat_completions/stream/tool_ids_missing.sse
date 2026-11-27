@@ -1,0 +1,13 @@
+data: {"id":"chatcmpl_tool_ids_missing","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_lookup_primary_1","type":"function","function":{"name":"lookup_host","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_ids_missing","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"hostname\":"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_ids_missing","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"","arguments":"\"db-primary.internal\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_ids_missing","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"","type":"function","function":{"name":"lookup_host","arguments":"{\"hostname\":\"db-replica.internal\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_tool_ids_missing","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl_tool_ids_missing","object":"chat.completion.chunk","created":1760000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":58,"completion_tokens":30,"total_tokens":88,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]

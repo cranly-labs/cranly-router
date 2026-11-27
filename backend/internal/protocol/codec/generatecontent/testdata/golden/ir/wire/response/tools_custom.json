@@ -1,0 +1,29 @@
+{
+  "id": "gem_tools_custom",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_patch_2",
+        "tool": {
+          "kind": "function",
+          "name": "apply_patch"
+        },
+        "arguments": "{\"input\":\"*** Begin Patch\\n*** Update File: README.md\\n@@\\n-Default timeout: 5s\\n+Default timeout: 15s\\n*** End Patch\\n\"}",
+        "token": {
+          "data": "sig_fc_patch_2"
+        }
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 104,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 42
+  }
+}

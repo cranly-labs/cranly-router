@@ -1,0 +1,119 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Note: literal marker trc1:openai:demo in docs is plain text. Inspect gateway.yaml."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_nat_same_1",
+          "reasoning": {
+            "segments": [
+              "Read gateway.yaml to check read and write timeouts."
+            ],
+            "summary": true,
+            "token": {
+              "data": "trc1:openai:eyJkIjoiZ0FBQUFBQm5OYXRpdmVPcGVuQUlTYW1lQWNjdDAxIiwicCI6MTAxfQ"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "id": "fc_nat_cfg_1",
+          "call": {
+            "call_id": "call_cfg_1",
+            "tool": {
+              "kind": "function",
+              "name": "read_config"
+            },
+            "arguments": "{\"path\":\"gateway.yaml\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_cfg_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"read_timeout_s\":30,\"write_timeout_s\":60}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_nat_empty_2",
+          "reasoning": {
+            "token": {
+              "data": "trc1:xai:eyJkIjoiZW5jX3hhaV9uYXRpdmVfZm9yZWlnbl8wMiIsInAiOjIwMn0"
+            }
+          }
+        },
+        {
+          "kind": "text",
+          "id": "msg_nat_2",
+          "text": "Read timeout is 30s and write timeout is 60s."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Do those timeouts satisfy our 45s upstream SLA?"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "read_config",
+      "description": "Read a YAML configuration file.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Config path"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto",
+    "include_encrypted": true
+  },
+  "store": false
+}

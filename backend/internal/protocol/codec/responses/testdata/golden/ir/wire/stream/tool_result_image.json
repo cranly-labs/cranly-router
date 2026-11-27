@@ -1,0 +1,52 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_tool_result_image",
+      "model": "gpt-5",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text",
+      "id": "msg_tool_result_image_out"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "The latency_p99 panel shows a flat 12 ms baseline "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "with no spike."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "id": "msg_tool_result_image_out",
+      "text": "The latency_p99 panel shows a flat 12 ms baseline with no spike."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 96,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 16
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

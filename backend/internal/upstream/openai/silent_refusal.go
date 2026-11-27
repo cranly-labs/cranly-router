@@ -140,6 +140,16 @@ func (d *ChatSilentRefusalDetector) ObserveChatChunk(chunk wire.ChatCompletionsC
 	}
 }
 
+// MarkSemanticOutput records converted semantic output evidence on an enabled
+// detector when non-standard upstream event shapes bypass raw payload pattern
+// checks. Nil or disabled detectors ignore the call without side effects.
+func (d *ChatSilentRefusalDetector) MarkSemanticOutput() {
+	if d == nil || !d.enabled {
+		return
+	}
+	d.sawContent = true
+}
+
 // ShouldReleaseClientOutput reports whether the attempt has enough evidence to
 // release buffered downstream bytes. Nil or disabled detectors return true.
 // Enabled detectors wait while no content, tool, reasoning, usage, error, or

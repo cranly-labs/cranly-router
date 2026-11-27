@@ -1,0 +1,106 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_reasoning_summary",
+      "model": "gpt-5",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "id": "rs_sort_summary_1",
+      "reasoning": {}
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Merge sort preserves equal-key order "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "during left-before-right merging."
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "In-place quicksort partitions swap non-adjacent elements "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "and can invert equal keys."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "id": "rs_sort_summary_1",
+      "reasoning": {
+        "segments": [
+          "Merge sort preserves equal-key order during left-before-right merging.",
+          "In-place quicksort partitions swap non-adjacent elements and can invert equal keys."
+        ],
+        "summary": true,
+        "token": {
+          "data": "gAAAAABnMergeQuicksortSummaryEnc01"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "text",
+      "id": "msg_sort_summary_1"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "Merge sort is stable because equal elements keep their original order when sorted halves merge. "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "text": "Standard in-place quicksort is unstable because long-range partition swaps can reorder equal keys."
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "text",
+      "id": "msg_sort_summary_1",
+      "text": "Merge sort is stable because equal elements keep their original order when sorted halves merge. Standard in-place quicksort is unstable because long-range partition swaps can reorder equal keys."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 42,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 68,
+      "reasoning": 30
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

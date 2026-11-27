@@ -8,6 +8,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
@@ -15,9 +16,12 @@ import (
 // encrypted_content.go finds rejected encrypted-history values by digest and
 // sanitizes matching request or replay items.
 // Invalid encrypted reasoning state is identified by a SHA-256 digest of the
-// ciphertext returned in request history. The collector accepts reasoning and
-// compaction types handled by the protocol sanitizer, so lineage tracking does
-// not repeatedly decode unsupported items that it cannot remove.
+// issuer ciphertext returned in request history; gateway trc1 continuity
+// envelopes unwrap their issuer token before hashing so client envelopes and
+// bare upstream ciphertexts share one invalidation key across HTTP and
+// WebSocket sessions. The collector accepts reasoning and compaction types
+// handled by the protocol sanitizer, avoiding repeated decodes of unsupported
+// items that it cannot remove.
 //
 // Decoded requests compact their input slices in place and can share item maps
 // with callers. Replay-byte requests instead decode candidate items into
@@ -27,9 +31,22 @@ import (
 // report how many items changed, while compaction removal and reasoning-shell
 // retention follow the shared protocol sanitizer.
 
-// OpenAIEncryptedContentDigest returns the lowercase SHA-256 hex digest of
-// ciphertext bytes.
+// OpenAIEncryptedContentDigest returns the lowercase SHA-256 hex digest of the
+// issuer ciphertext represented by encrypted.
+//
+// When encrypted is a valid trc1 continuity envelope carrying a non-empty
+// issuer token d, OpenAIEncryptedContentDigest hashes d instead of the outer
+// envelope text so client-held envelopes and bare upstream ciphertexts resolve
+// to the same lineage digest in HTTP and WebSocket session invalidation tables.
+// Bare ciphertexts, malformed trc1 prefixes, and tokenless plain envelopes
+// hash their supplied string bytes directly.
 func OpenAIEncryptedContentDigest(encrypted string) string {
+	// Unwrap valid continuity envelopes carrying an issuer token d so cross-protocol
+	// client history and native upstream retries share one invalidation digest without
+	// collapsing tokenless trc1:plain envelopes onto the empty-string hash.
+	if carrier, ok := ir.ParseCarrier(encrypted); ok && carrier.Data != "" {
+		encrypted = carrier.Data
+	}
 	sum := sha256.Sum256([]byte(encrypted))
 	return hex.EncodeToString(sum[:])
 }

@@ -2368,3 +2368,29 @@ func TestApplyCodexClientMetadata(t *testing.T) {
 	require.Equal(t, "t", cm3["x-codex-turn-metadata"])
 	require.Equal(t, "dev-xyz", cm3["x-codex-installation-id"])
 }
+
+// TestAppendOpenAICompatClaudeCodeTodoGuardBytes_LosslessAndIdempotent injects
+// the Claude Code todo guard into raw Responses JSON bytes carrying unknown
+// fields and 64-bit integer values. Injection places the guard after leading
+// developer messages without losing extensions and skips duplicate insertion.
+func TestAppendOpenAICompatClaudeCodeTodoGuardBytes_LosslessAndIdempotent(t *testing.T) {
+	raw := []byte(`{` +
+		`"model":"gpt-5.4",` +
+		`"custom_ext":{"seq":9007199254740993},` +
+		`"input":[` +
+		`{"type":"message","role":"developer","content":"initial instructions","item_ext":9007199254740993},` +
+		`{"type":"message","role":"user","content":"track tasks"}` +
+		`]` +
+		`}`)
+
+	injected, changed := AppendOpenAICompatClaudeCodeTodoGuardBytes(raw)
+	require.True(t, changed)
+	require.Contains(t, string(injected), OpenAICompatClaudeCodeTodoGuardMarker)
+	require.Contains(t, string(injected), `"custom_ext":{"seq":9007199254740993}`)
+	require.Contains(t, string(injected), `"item_ext":9007199254740993`)
+	require.True(t, IsOpenAICompatMessagesBridgeBody(injected))
+
+	second, secondChanged := AppendOpenAICompatClaudeCodeTodoGuardBytes(injected)
+	require.False(t, secondChanged)
+	require.Equal(t, injected, second)
+}

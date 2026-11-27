@@ -1,0 +1,79 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_stream_truncated",
+      "model": "gpt-5",
+      "created_at": 1760002050
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text",
+      "id": "msg_stream_truncated_out"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Inspecting edge-gateway health now."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "id": "msg_stream_truncated_out",
+      "text": "Inspecting edge-gateway health now."
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "id": "fc_stream_truncated_1",
+      "call": {
+        "call_id": "call_stream_truncated_1",
+        "tool": {
+          "kind": "function",
+          "name": "check_gateway_health"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"service\":\"edge-"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "id": "fc_stream_truncated_1",
+      "call": {
+        "call_id": "call_stream_truncated_1",
+        "tool": {
+          "kind": "function",
+          "name": "check_gateway_health"
+        },
+        "arguments": "{\"service\":\"edge-",
+        "incomplete": true
+      }
+    }
+  },
+  {
+    "kind": "error",
+    "error": {
+      "type": "stream_error",
+      "code": "stream_truncated",
+      "message": "upstream responses stream ended before terminal event"
+    }
+  }
+]

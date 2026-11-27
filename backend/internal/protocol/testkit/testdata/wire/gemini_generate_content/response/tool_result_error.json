@@ -1,0 +1,23 @@
+{
+  "responseId": "gem_tool_result_error",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Reading /var/log/restricted-audit.log failed with EACCES permission denied."
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 78,
+    "candidatesTokenCount": 15,
+    "totalTokenCount": 93
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "model": "deepseek-reasoner",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Inspect failed CI build job-8841 and identify the failing step."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_enconly_plain_1",
+          "reasoning": {
+            "token": {
+              "data": "trc1:plain:eyJ0IjoiRmV0Y2ggYnVpbGQgbG9nIGZvciBqb2ItODg0MSBmaXJzdCBzbyB3ZSBjYW4gaW5zcGVjdCB0aGUgbm9uLXplcm8gZXhpdCBjb2RlLiJ9"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "id": "fc_build_8841_1",
+          "call": {
+            "call_id": "call_build_8841_1",
+            "tool": {
+              "kind": "function",
+              "name": "fetch_build_log"
+            },
+            "arguments": "{\"job_id\":\"job-8841\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_build_8841_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"job_id\":\"job-8841\",\"step\":\"go-test\",\"exit_code\":1,\"error\":\"TestPoolTimeout\"}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "fetch_build_log",
+      "description": "Fetch logs and exit metadata for a CI build job.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "CI job ID"
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto",
+    "include_encrypted": true
+  },
+  "store": false
+}

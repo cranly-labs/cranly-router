@@ -1,0 +1,15 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Write a detailed architectural comparison of token bucket and sliding window rate limiters."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 32
+  }
+}

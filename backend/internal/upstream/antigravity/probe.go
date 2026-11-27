@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
-	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
+	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 )
 
 // probe.go builds Claude and Gemini probes and executes them through
@@ -67,29 +74,115 @@ func BuildGeminiTestRequest(projectID, model string, prompts ...string) ([]byte,
 	return WrapV1InternalRequest(projectID, model, payloadBytes)
 }
 
-// BuildClaudeTestRequest converts a one-token Claude probe using default
-// transform options and mappedModel. It trims the first prompt or uses a dot;
-// later prompt values do not participate.
+// BuildClaudeTestRequest converts a one-token Anthropic Messages probe into a
+// v1internal Antigravity Gemini request through protocol/convert,
+// InjectIdentityPatchToGeminiRequestWithPrompt, CleanGeminiRequest, and
+// WrapV1InternalRequest. Blank or absent first prompts default to a dot while
+// later prompts are ignored.
 func BuildClaudeTestRequest(projectID, mappedModel string, prompts ...string) ([]byte, error) {
 	prompt := "."
 	if len(prompts) > 0 && strings.TrimSpace(prompts[0]) != "" {
 		prompt = strings.TrimSpace(prompts[0])
 	}
-	// The prompt is one string, so JSON encoding supplies escaping for the
-	// Messages content without an unsupported-value or reference-cycle error.
-	promptJSON, _ := json.Marshal(prompt)
-	claudeReq := &protocolanthropic.ClaudeRequest{
-		Model: mappedModel,
-		Messages: []protocolanthropic.ClaudeMessage{
-			{
-				Role:    "user",
-				Content: json.RawMessage(promptJSON),
-			},
-		},
+
+	// claudeProbeMessage encodes the single user turn inside BuildClaudeTestRequest.
+	type claudeProbeMessage struct {
+		Role    string `json:"role"`    // probe message role ("user")
+		Content string `json:"content"` // trimmed probe prompt string
+	}
+	// claudeProbeRequest encodes a minimal buffered Anthropic Messages probe payload.
+	type claudeProbeRequest struct {
+		Model     string               `json:"model"`      // mapped probe model identifier
+		MaxTokens int                  `json:"max_tokens"` // one-token probe output cap
+		Stream    bool                 `json:"stream"`     // buffered probe transport flag
+		Messages  []claudeProbeMessage `json:"messages"`   // single-turn user probe history
+	}
+
+	clientBytes, err := jsonv2.Marshal(claudeProbeRequest{
+		Model:     mappedModel,
 		MaxTokens: 1,
 		Stream:    false,
+		Messages: []claudeProbeMessage{{
+			Role:    "user",
+			Content: prompt,
+		}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal claude probe request: %w", err)
 	}
-	return TransformClaudeToGemini(claudeReq, projectID, mappedModel)
+
+	thinking := false
+	resolved := (modelrules.View{}).Resolve(
+		modelrules.Target{Platform: "antigravity", Model: mappedModel},
+		modelcatalog.Attributes{},
+	).ForRequest(modelrules.RequestState{Thinking: &thinking})
+
+	lowerModel := strings.ToLower(strings.TrimSpace(mappedModel))
+	isClaude := strings.HasPrefix(lowerModel, "claude-")
+	replayScheme := ""
+	placeholderToken := ""
+	switch {
+	case isClaude:
+		replayScheme = ir.SchemeAntigravityClaude
+	case strings.HasPrefix(lowerModel, "gemini-"):
+		replayScheme = ir.SchemeGemini
+		placeholderToken = gemini.DummyThoughtSignature
+	}
+
+	outputLimit := modelrules.AntigravityDefaultOutputLimit
+	if resolved.Attributes.OutputLimit != nil && *resolved.Attributes.OutputLimit > 0 {
+		outputLimit = min(outputLimit, *resolved.Attributes.OutputLimit)
+	}
+	var budgetMax int
+	if _, budget := resolved.Attributes.ReasoningBudget(); budget != nil && *budget > 0 {
+		budgetMax = *budget
+	}
+
+	dialect := convert.Dialect{
+		Name:              "antigravity",
+		ReplayScheme:      replayScheme,
+		SchemaDialect:     convert.SchemaAntigravity,
+		PlaceholderToken:  placeholderToken,
+		OmitStopSequences: resolved.Rules.OmitStopSequences,
+		DropTemperature:   resolved.Attributes.Temperature != nil && !*resolved.Attributes.Temperature,
+		DropTopP:          resolved.Attributes.TopP != nil && !*resolved.Attributes.TopP,
+		DropTopK:          slices.Contains(resolved.Rules.DropFields, "top_k"),
+		Reasoning: convert.ReasoningCapabilities{
+			ForceBudget:    isClaude,
+			BudgetMax:      budgetMax,
+			AdaptiveBudget: resolved.Rules.AdaptiveThinkingBudget,
+			OutputLimit:    &outputLimit,
+			BudgetPadding:  resolved.Rules.BudgetPadding,
+		},
+	}
+
+	exchange, err := convert.NewExchange(clientBytes, convert.Options{
+		Route: convert.Route{
+			Client:   protocol.ProtocolAnthropicMessages,
+			Upstream: protocol.ProtocolGeminiGenerateContent,
+			Dialect:  dialect,
+		},
+		ClientModel: mappedModel,
+		Runtime:     convert.DefaultRuntime(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("convert claude probe request: %w", err)
+	}
+	rawGeminiBody, err := exchange.UpstreamRequest()
+	if err != nil {
+		return nil, fmt.Errorf("encode claude probe request: %w", err)
+	}
+	patched, err := InjectIdentityPatchToGeminiRequestWithPrompt(rawGeminiBody, "")
+	if err != nil {
+		return nil, fmt.Errorf("inject claude probe identity patch: %w", err)
+	}
+	// Keep the identity-patched Gemini bytes emitted by codec/generatecontent when
+	// CleanGeminiRequest fails so probe envelope wrapping still succeeds without
+	// aborting connection diagnostics.
+	if cleaned, cleanErr := CleanGeminiRequest(patched); cleanErr == nil {
+		patched = cleaned
+	}
+	return WrapV1InternalRequest(projectID, mappedModel, patched)
 }
 
 // ExtractTextFromSSEResponse joins first-candidate text from independently

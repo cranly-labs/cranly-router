@@ -1,0 +1,133 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_tool_args_fragmented",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 46,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_frag_1",
+        "tool": {
+          "kind": "function",
+          "name": "write_note"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"pa"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "th\":\"no"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "tes/a.t"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "xt\",\"te"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "xt\":\"say \\"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\"hi\\\"\\"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "n\\u65"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "e5\\u"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "672"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "c\\"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\\end\""
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_frag_1",
+        "tool": {
+          "kind": "function",
+          "name": "write_note"
+        },
+        "arguments": "{\"path\":\"notes/a.txt\",\"text\":\"say \\\"hi\\\"\\n日本\\\\end\"}"
+      }
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 46,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 29
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

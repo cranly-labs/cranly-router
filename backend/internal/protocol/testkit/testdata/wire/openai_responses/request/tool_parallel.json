@@ -1,0 +1,89 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "parallel_tool_calls": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "get_time",
+      "description": "Get the local time for an IANA timezone.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone identifier"
+          }
+        },
+        "required": [
+          "timezone"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Check weather and local time for London first, then Tokyo."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_weather_lon_1",
+      "call_id": "call_weather_lon_1",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"London\"}"
+    },
+    {
+      "type": "function_call",
+      "id": "fc_time_lon_2",
+      "call_id": "call_time_lon_2",
+      "name": "get_time",
+      "arguments": "{\"timezone\":\"Europe/London\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_weather_lon_1",
+      "output": "{\"city\":\"London\",\"temp_c\":12,\"condition\":\"cloudy\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_time_lon_2",
+      "output": "{\"timezone\":\"Europe/London\",\"local_time\":\"09:30\"}"
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Now check Tokyo weather and Asia/Tokyo time in parallel."
+        }
+      ]
+    }
+  ]
+}

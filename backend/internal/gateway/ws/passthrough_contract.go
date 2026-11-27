@@ -1,11 +1,15 @@
 package ws
 
 import (
+	"bytes"
 	"context"
 	"time"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 )
 
 // passthrough_contract.go defines provider operations and session inputs for
@@ -83,6 +87,15 @@ type outboundEffortStripper interface {
 	// fields removed when the provider enabled effort_model_mapping_strip_effort
 	// and an effort-scoped model override matched routingModel.
 	StripOutboundEffort(ctx context.Context, routingModel string, body []byte) []byte
+}
+
+// nativeReplayDialectResolver optionally resolves the target convert.Dialect
+// for outbound Responses WebSocket native continuity-carrier replay.
+type nativeReplayDialectResolver interface {
+	// ResolveNativeReplayDialect builds the target convert.Dialect for model and
+	// body on the selected WebSocket provider attempt. Catalog lookup failures
+	// return an error before the frame is admitted or forwarded upstream.
+	ResolveNativeReplayDialect(ctx context.Context, model string, body []byte) (convert.Dialect, error)
 }
 
 // PassthroughPort provides selected-provider protocol and transport operations
@@ -276,6 +289,34 @@ func stripOutboundEffort(ctx context.Context, port any, routingModel string, bod
 		return body
 	}
 	return stripper.StripOutboundEffort(ctx, routingModel, body)
+}
+
+// prepareOutboundNativeReplay unpacks matching trc1 continuity envelopes or
+// strips incompatible items on an outbound Responses WebSocket frame. Frames
+// without the "trc1:" prefix or without a valid carrier on response.create
+// token paths (including session.update frames and literal user text) return
+// body byte-for-byte unchanged.
+func prepareOutboundNativeReplay(ctx context.Context, port any, providerID int64, model string, body []byte) ([]byte, error) {
+	if !bytes.Contains(body, []byte(ir.CarrierPrefix)) {
+		return body, nil
+	}
+	dialect := convert.Dialect{
+		ReplayScheme: ir.SchemeOpenAI,
+		ProviderID:   providerID,
+	}
+	if resolver, ok := port.(nativeReplayDialectResolver); ok && resolver != nil {
+		resolved, err := resolver.ResolveNativeReplayDialect(ctx, model, body)
+		if err != nil {
+			return nil, err
+		}
+		dialect = resolved
+	}
+	rewritten, _, err := convert.PrepareNativeReplay(convert.Route{
+		Client:   protocol.ProtocolResponsesWebSocket,
+		Upstream: protocol.ProtocolResponsesWebSocket,
+		Dialect:  dialect,
+	}, body)
+	return rewritten, err
 }
 
 // Error returns the client-facing policy rejection reason retained in the

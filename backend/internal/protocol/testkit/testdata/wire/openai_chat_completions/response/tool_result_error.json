@@ -1,0 +1,27 @@
+{
+  "id": "chatcmpl_tool_result_error",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Reading /var/log/restricted-audit.log failed with EACCES permission denied."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 78,
+    "completion_tokens": 15,
+    "total_tokens": 93,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

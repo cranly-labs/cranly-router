@@ -1,0 +1,19 @@
+{
+  "responseId": "gem_empty_response",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": []
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 18,
+    "candidatesTokenCount": 0,
+    "totalTokenCount": 18
+  }
+}

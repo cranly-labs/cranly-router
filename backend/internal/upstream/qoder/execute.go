@@ -2,7 +2,6 @@ package qoder
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -67,6 +67,27 @@ type Target struct {
 	// streamClientWithDoer. Other clients use StreamRequestContext and the
 	// transport retained by their client implementation.
 	Doer RequestDoer // provider request transport
+
+	// IngressError carries any pre-conversion legacy ingress normalization failure
+	// recorded before Execute so IR conversion reports it as a local RequestError.
+	IngressError error
+	// Dialect resolves the protocol/convert Dialect for a validated request model
+	// and client wire protocol. Nil uses default ProtocolQoderChat dialect
+	// capabilities.
+	Dialect func(context.Context, string, protocol.ProtocolID) (convert.Dialect, error)
+	// CommittedSSE reports whether HTTP 200 text/event-stream headers were already
+	// committed before semantic output began, such as by a waiting keepalive beat.
+	CommittedSSE func() bool
+	// DeferRetryableCommittedError suppresses immediate terminal SSE emission inside
+	// ReadConvertedStreaming on pre-semantic refreshable or switchable errors when
+	// outer gateway orchestration owns same-target refresh and provider failover.
+	DeferRetryableCommittedError bool
+	// WriteLocalTerminalError writes an untimed terminal SSE error frame in the
+	// inbound client protocol when pre-semantic failure occurs on a committed SSE stream.
+	WriteLocalTerminalError func(status int, errType, code, message string)
+	// WriteRawTerminalSSE delivers pre-encoded terminal SSE error bytes produced by
+	// convert.Stream.Close through the gateway's untimed terminal SSE barrier.
+	WriteRawTerminalSSE func(data []byte) bool
 }
 
 // ExecuteOptions supplies shared conversation storage, timeout, and attempt
@@ -208,160 +229,5 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 	}
 	executionCtx, cancel := context.WithTimeout(executionCtx, e.timeout)
 	defer cancel()
-	var request QoderPayloadRequest
-	var err error
-	switch input.Protocol {
-	case protocol.ProtocolOpenAIChatCompletions:
-		request, err = ParseQoderChatCompletionsPayload(input.Body)
-	case protocol.ProtocolOpenAIResponses:
-		request, err = ParseQoderResponsesPayload(input.Body)
-	case protocol.ProtocolAnthropicMessages:
-		request, err = ParseQoderAnthropicMessagesPayload(input.Body)
-	default:
-		return upstream.AttemptResult{}, errors.New("unsupported qoder client protocol")
-	}
-	if err != nil {
-		// Parser failures precede session acquisition and network dispatch. Preserve
-		// specific validation reasons and classify malformed client input the same way.
-		if !IsRequestError(err) {
-			err = &RequestError{Code: "invalid_request", Message: err.Error()}
-		}
-		return upstream.AttemptResult{}, err
-	}
-	responseModel := input.ResponseModel
-	if responseModel == "" {
-		responseModel = request.Model
-	}
-	if target.Attributes != nil {
-		attributes, resolveErr := target.Attributes(ctx, request.Model, input.Protocol)
-		if resolveErr != nil {
-			return upstream.AttemptResult{}, resolveErr
-		}
-		request.Capabilities = &attributes
-		if attributes.Target.Model != "" {
-			request.Model = attributes.Target.Model
-		}
-	}
-	payload, model, plan, err := e.PrepareConversation(target, input.Protocol, request)
-	if err != nil {
-		return upstream.AttemptResult{}, err
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return upstream.AttemptResult{}, fmt.Errorf("marshal qoder payload: %w", err)
-	}
-	// The original context controls credential waits and pre-dispatch checks.
-	// Recheck it before starting inference so detached stream collection cannot
-	// launch work for a request already cancelled during preparation.
-	if err := ctx.Err(); err != nil {
-		return upstream.AttemptResult{}, err
-	}
-	session, err := target.Session(ctx)
-	if err != nil {
-		return upstream.AttemptResult{}, fmt.Errorf("get qoder session: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return upstream.AttemptResult{}, err
-	}
-	client, err := target.Client()
-	if err != nil {
-		return upstream.AttemptResult{}, err
-	}
-	headers := map[string]string{"x-model-key": model, "x-model-source": "system"}
-	if err := ctx.Err(); err != nil {
-		return upstream.AttemptResult{}, err
-	}
-	var response *http.Response
-	if doerClient, ok := client.(streamClientWithDoer); ok && target.Doer != nil {
-		response, err = doerClient.StreamRequestContextWithDoer(executionCtx, session, "", body, headers, target.Doer)
-	} else {
-		response, err = client.StreamRequestContext(executionCtx, session, "", body, headers)
-	}
-	if err != nil {
-		return upstream.AttemptResult{}, err
-	}
-	// Transport acceptance can later fail during SSE decoding or protocol output.
-	// Publish a versioned accepted state now so those paths can roll back this
-	// attempt.
-	plan.CommitAccepted()
-	result = upstream.AttemptResult{Model: responseModel, UpstreamModel: model, Stream: input.Stream, UpstreamHeaders: response.Header.Clone()}
-	if input.Protocol == protocol.ProtocolOpenAIResponses {
-		result.RequestID = request.ResponseID
-	}
-	output := upstream.NewOutputContext(sink)
-	mapper := QoderDeclaredToolNameMapper(QoderAnySlice(payload["tools"]))
-	var nativeUsage upstream.TokenUsage
-	commitComplete := true
-	if input.Stream {
-		var stream *QoderStreamResult
-		switch input.Protocol {
-		case protocol.ProtocolOpenAIChatCompletions:
-			stream, err = WriteQoderOpenAIStreamResponse(executionCtx, output, responseModel, response, QoderOpenAIStreamUsageMapper(plan.RecordUsage), QoderOpenAIStreamToolNameMapper(mapper), QoderOpenAIStreamIncludeUsage(GjsonBool(input.Body, "stream_options.include_usage")))
-		case protocol.ProtocolOpenAIResponses:
-			stream, err = WriteQoderResponsesStreamResponse(executionCtx, output, responseModel, response, QoderResponsesStreamUsageMapper(plan.RecordUsage), QoderResponsesStreamToolNameMapper(mapper), QoderResponsesStreamResponseID(request.ResponseID))
-		case protocol.ProtocolAnthropicMessages:
-			stream, err = WriteQoderAnthropicStreamResponse(executionCtx, output, responseModel, response, QoderAnthropicStreamUsageMapper(plan.RecordUsage), QoderAnthropicStreamToolNameMapper(mapper))
-		}
-		if stream != nil {
-			nativeUsage = stream.Usage
-			result.Usage = plan.RecordUsage(nativeUsage)
-			result.HasUsage = stream.HasUsage
-			result.Served = stream.HasOutput
-			commitComplete = stream.HasOutput
-		}
-		if err != nil {
-			// Failed stream conversion makes this attempt unsuitable for continuation.
-			// Revert its accepted history while returning the already observed evidence
-			// to the completion owner.
-			plan.RollbackAccepted()
-			result.Duration = time.Since(start)
-			return result, err
-		}
-	} else {
-		events, readErr := ReadQoderSSEEventsContext(executionCtx, response)
-		if readErr != nil {
-			// SSE reading failed before a complete protocol response was built. Revert
-			// this accepted attempt before returning the read failure to the request owner.
-			plan.RollbackAccepted()
-			return upstream.AttemptResult{}, readErr
-		}
-		nativeUsage = QoderUsageFromEvents(events)
-		result.Usage = plan.RecordUsage(nativeUsage)
-		for _, event := range events {
-			result.HasUsage = result.HasUsage || event.HasUsage
-		}
-		var responseBody []byte
-		switch input.Protocol {
-		case protocol.ProtocolOpenAIChatCompletions:
-			responseBody, err = BuildQoderOpenAICompletion(responseModel, QoderEventsWithUsage(events, nativeUsage), mapper)
-		case protocol.ProtocolOpenAIResponses:
-			responseBody, err = BuildQoderResponsesResponseWithID(responseModel, request.ResponseID, QoderEventsWithUsage(events, result.Usage), mapper)
-		case protocol.ProtocolAnthropicMessages:
-			responseBody, err = BuildQoderAnthropicMessage(responseModel, QoderEventsWithUsage(events, nativeUsage), mapper)
-		}
-		if err != nil {
-			// Client response construction failed after upstream collection. Roll back
-			// this acceptance so a subsequent continuation cannot treat the failed
-			// conversion as completed history.
-			plan.RollbackAccepted()
-			return upstream.AttemptResult{}, err
-		}
-		result.Served = true
-		// Upstream generation and usage collection have completed before client
-		// output. Keep Served and Usage when the sink fails so completion can account
-		// for that work.
-		if writeErr := sink.Begin(upstream.OutputHead{Status: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json; charset=utf-8"}}}); writeErr != nil {
-			result.ClientDisconnect = true
-		} else if writeErr = sink.Emit(upstream.OutputEvent{Data: responseBody, Semantic: true, CommitForRetry: true, Terminal: true}); writeErr != nil {
-			result.ClientDisconnect = true
-		}
-	}
-	plan.LogUsage(target.Metadata, target.ProviderID, nativeUsage, result.Usage)
-	// Commit completed history after generation and output handling. The store
-	// records native usage with that history for later session diagnostics.
-	if commitComplete {
-		plan.Commit(nativeUsage)
-	}
-	result.Duration = time.Since(start)
-	return result, nil
+	return e.executeConverted(ctx, executionCtx, start, target, input, sink)
 }

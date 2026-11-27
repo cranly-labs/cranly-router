@@ -1,0 +1,36 @@
+{
+  "id": "chatcmpl_reasoning_tool_replay",
+  "model": "deepseek-reasoner",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "SKU-42 has 4 units against a reorder point of 20; now query SKU-99 stock."
+        ]
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inv_sku99_2",
+        "tool": {
+          "kind": "function",
+          "name": "query_inventory"
+        },
+        "arguments": "{\"sku\":\"SKU-99\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 96,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 52,
+    "reasoning": 28
+  }
+}

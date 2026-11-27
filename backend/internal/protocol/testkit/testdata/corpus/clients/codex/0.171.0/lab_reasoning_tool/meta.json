@@ -1,0 +1,12 @@
+{
+  "protocol": "openai_responses",
+  "client": "codex",
+  "version": "0.171.0",
+  "model": "gpt-5.5",
+  "captured_at": "2026-11-26",
+  "stream": true,
+  "scenario": "lab_reasoning_tool",
+  "headers": {
+    "user-agent": "codex_exec/0.171.0 (Debian 12.0.0; aarch64) unknown (codex_exec; 0.171.0)"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "id": "chatcmpl_tool_ids_missing",
+  "model": "gpt-4o",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_lookup_primary_1",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-primary.internal\"}"
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-replica.internal\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 58,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 30
+  }
+}

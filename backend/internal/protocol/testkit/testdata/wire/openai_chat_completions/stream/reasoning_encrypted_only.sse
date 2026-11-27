@@ -1,0 +1,14 @@
+data: {"id":"chatcmpl_reasoning_encrypted_only","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"Step go-test exited with code 1 in TestPoolTimeout; "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_encrypted_only","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"summarize the root cause."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_encrypted_only","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"Build job-8841 failed during the go-test step with exit code 1 "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_encrypted_only","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"because TestPoolTimeout timed out."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_reasoning_encrypted_only","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_reasoning_encrypted_only","object":"chat.completion.chunk","created":1760000000,"model":"deepseek-reasoner","choices":[],"usage":{"prompt_tokens":88,"completion_tokens":54,"total_tokens":142,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":24}}}
+
+data: [DONE]
+

@@ -1,0 +1,98 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "gem_tool_ids_missing",
+      "model": "gemini-2.5-pro"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"hostname\":\"db-primary.internal\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-primary.internal\"}",
+        "token": {
+          "data": "sig_fc_lookup_1"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"hostname\":\"db-replica.internal\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 58,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 30
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-replica.internal\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

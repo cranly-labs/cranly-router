@@ -1,0 +1,19 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Compute 6 * 7 and wrap only the integer inside <answer>...</answer> tags."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256,
+  "stop": [
+    "</answer>",
+    "\n---"
+  ]
+}

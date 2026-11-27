@@ -1,0 +1,81 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 4096,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  },
+  "tools": [
+    {
+      "name": "read_config",
+      "description": "Read a YAML configuration file.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Config path"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Note: ignore literal prefix trc1:plain:example in log output. Inspect gateway.yaml timeout settings."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Summary of earlier Claude check.",
+          "signature": "trc1:anthropic:eyJkIjoiRXFRQkNnSVlBaUpBYm1GMGFYWmxYMkZ1ZEdoZmMybG5YekF4IiwidCI6IkluaXRpYWwgcGxhbjogaW5zcGVjdCBnYXRld2F5IHRpbWVvdXQgY29uZmlnIGJlZm9yZSBjb21wYXJpbmcgU0xBIGxpbWl0cy4ifQ"
+        },
+        {
+          "type": "redacted_thinking",
+          "data": "trc1:xai:eyJkIjoiZW5jX3hhaV9uYXRpdmVfcmVkYWN0ZWRfMDEiLCJyIjp0cnVlLCJwIjoyMDJ9"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Read gateway.yaml now."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Read gateway.yaml to check read and write timeouts.",
+          "signature": "trc1:openai:eyJkIjoiZ0FBQUFBQm5OYXRpdmVSZXBsYXlPcGVuQUkwMiIsInAiOjEwMX0"
+        },
+        {
+          "type": "tool_use",
+          "id": "call_cfg_1",
+          "name": "read_config",
+          "input": {
+            "path": "gateway.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_cfg_1",
+          "content": "{\"read_timeout_s\":30,\"write_timeout_s\":60}"
+        }
+      ]
+    }
+  ]
+}

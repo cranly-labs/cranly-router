@@ -103,16 +103,6 @@
         />
       </div>
 
-      <!-- Token statistics remain visible and share the group selection with the dashboard toolbar. -->
-      <div v-if="opsEnabled && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-4">
-        <OpsTokenStatsCard
-          :platform-filter="platform"
-          :group-id-filter="groupId"
-          :groups="groups"
-          @update:group="onGroupChange"
-        />
-      </div>
-
       <!-- Alert Events -->
       <OpsAlertEventsCard v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)" />
 
@@ -206,7 +196,6 @@ import OpsLatencyChart from './components/OpsLatencyChart.vue'
 import OpsThroughputTrendChart from './components/OpsThroughputTrendChart.vue'
 import OpsSwitchRateTrendChart from './components/OpsSwitchRateTrendChart.vue'
 import OpsAlertEventsCard from './components/OpsAlertEventsCard.vue'
-import OpsTokenStatsCard from './components/OpsTokenStatsCard.vue'
 import OpsSystemLogTable from './components/OpsSystemLogTable.vue'
 import OpsRequestDetailsModal, {
   type OpsRequestDetailsPreset,

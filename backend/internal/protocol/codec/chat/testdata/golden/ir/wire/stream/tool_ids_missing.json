@@ -1,0 +1,102 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "chatcmpl_tool_ids_missing",
+      "model": "gpt-4o",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_lookup_primary_1",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"hostname\":"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\"db-primary.internal\"}"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 58,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 30
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_lookup_primary_1",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-primary.internal\"}"
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"hostname\":\"db-replica.internal\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_host"
+        },
+        "arguments": "{\"hostname\":\"db-replica.internal\"}"
+      }
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

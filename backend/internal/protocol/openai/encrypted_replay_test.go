@@ -175,3 +175,59 @@ func TestTrimOpenAIEncryptedReasoningItems_ContentNullDropsBareSkeleton(t *testi
 	_, hasInput := reqBody["input"]
 	assert.False(t, hasInput, "bare reasoning skeleton should be dropped, emptying input")
 }
+
+// TestStripResponsesEncryptedReasoningBytes_LosslessCleanup exercises raw-byte
+// encrypted reasoning and compaction cleanup across summary-less skeletons,
+// visible summaries, and unencrypted transcripts. It verifies that 64-bit
+// integer literals survive verbatim, invalid UTF-8 strings do not fail decoding,
+// and unencrypted payloads return their original slice unchanged.
+func TestStripResponsesEncryptedReasoningBytes_LosslessCleanup(t *testing.T) {
+	t.Run("drops summary-less reasoning skeleton while preserving 64-bit integers and accepting invalid UTF-8", func(t *testing.T) {
+		raw := []byte("{\"model\":\"grok-4.5\",\"stream\":true,\"custom_int\":9007199254740993,\"input\":[" +
+			"{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi \xff\"}," +
+			"{\"type\":\"reasoning\",\"id\":\"rs_empty\",\"summary\":[],\"encrypted_content\":\"xai_cipher_1\"}," +
+			"{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"lookup\",\"arguments\":\"{\\\"id\\\":9007199254740993}\"}," +
+			"{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"ok\"}" +
+			"]}")
+
+		stripped, changed := StripResponsesEncryptedReasoningBytes(raw)
+		require.True(t, changed)
+		assert.NotContains(t, string(stripped), "xai_cipher_1")
+		assert.NotContains(t, string(stripped), "rs_empty")
+		assert.Contains(t, string(stripped), `"custom_int":9007199254740993`)
+		assert.Contains(t, string(stripped), `\"id\":9007199254740993`)
+		assert.Contains(t, string(stripped), "hi \ufffd")
+	})
+
+	t.Run("retains reasoning item with visible summary and strips id when store is false", func(t *testing.T) {
+		raw := []byte(`{` +
+			`"model":"grok-4.5",` +
+			`"store":false,` +
+			`"input":[` +
+			`{"type":"reasoning","id":"rs_vis","summary":[{"type":"summary_text","text":"kept summary"}],"content":null,"encrypted_content":"xai_cipher_2"},` +
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}` +
+			`]` +
+			`}`)
+
+		stripped, changed := StripResponsesEncryptedReasoningBytes(raw)
+		require.True(t, changed)
+		assert.NotContains(t, string(stripped), "xai_cipher_2")
+		assert.NotContains(t, string(stripped), `"rs_vis"`)
+		assert.NotContains(t, string(stripped), `"content":null`)
+		assert.Contains(t, string(stripped), `"kept summary"`)
+	})
+
+	t.Run("drops encrypted compaction and keeps empty input array when only skeleton existed", func(t *testing.T) {
+		raw := []byte(`{"model":"grok-4.5","input":[{"type":"compaction","id":"cmp_1","encrypted_content":"enc_cmp"},{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"enc_r"}]}`)
+		stripped, changed := StripResponsesEncryptedReasoningBytes(raw)
+		require.True(t, changed)
+		assert.Equal(t, `{"model":"grok-4.5","input":[]}`, string(stripped))
+	})
+
+	t.Run("returns original slice unchanged when no encrypted reasoning exists", func(t *testing.T) {
+		raw := []byte(`{"model":"grok-4.5","input":[{"type":"message","role":"user","content":"literal encrypted_content mention"}]}`)
+		stripped, changed := StripResponsesEncryptedReasoningBytes(raw)
+		assert.False(t, changed)
+		assert.Equal(t, string(raw), string(stripped))
+	})
+}

@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -29,24 +28,49 @@ import (
 // carry observed tokens, duration and disconnect state into completion, with
 // no synthesized first-token timing.
 
-// ForwardQoderAttempt executes one selected Qoder target and writes through
-// the current Gin response. The first nonblank explicit response model wins,
-// otherwise the trimmed body model is used; callers own provider failover and
-// completion.
+// forwardQoderAttempt executes one selected Qoder target, binds gateway
+// terminal SSE error callbacks onto Target, and writes through the current Gin
+// response. Setting deferRetryableCommitted leaves pre-semantic refreshable or
+// switchable errors unwritten on keepalive-committed SSE streams so
+// UnifiedTextExecutor can run same-target credential refresh and outer provider
+// failover first.
 //
-// Errors are observed, and retain a partial result only when
-// execution reports both Served and HasUsage. Returned usage, duration and
-// client-disconnect state come from execution without synthesized first-token
-// timing.
+// The first nonblank explicit response model wins, falling back to the trimmed
+// body model; errors are observed and retain a partial result only when
+// execution reports both Served and HasUsage.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#qoder_gateway_execution
-func ForwardQoderAttempt(ctx context.Context, c *gin.Context, runtime *gatewayadapter.QoderRuntime, value *provider.Record, body []byte, wire protocol.ProtocolID, responseModels ...string) (*forward.MessagesResult, error) {
+func forwardQoderAttempt(
+	ctx context.Context,
+	c *gin.Context,
+	runtime *gatewayadapter.QoderRuntime,
+	value *provider.Record,
+	body []byte,
+	wire protocol.ProtocolID,
+	deferRetryableCommitted bool,
+	responseModels ...string,
+) (*forward.MessagesResult, error) {
 	responseModel := qoder.FirstNonEmptyQoder(responseModels...)
 	// Preserve an explicit response-model override when supplied; body identity is
 	// the fallback so converted output can still name the requested client model.
 	if responseModel == "" {
-		responseModel = strings.TrimSpace(qoder.GjsonString(body, "model"))
+		responseModel, _ = qoder.ExtractTopLevelModelJSON(body)
 	}
 	executor, input := runtime.PrepareQoderTarget(QoderRequestMetadata(c), value, body, wire, responseModel)
+	if target, ok := input.Target.(*qoder.Target); ok && target != nil {
+		target.CommittedSSE = func() bool {
+			return CommittedSSE(c)
+		}
+		target.DeferRetryableCommittedError = deferRetryableCommitted
+		target.WriteLocalTerminalError = func(status int, errType, code, message string) {
+			writeQoderCommittedTerminalError(c, wire, status, errType, code, message, responseModel)
+		}
+		target.WriteRawTerminalSSE = func(data []byte) bool {
+			if c == nil {
+				return false
+			}
+			return emitLocalTerminalSSE(c, data)
+		}
+	}
 	result, err := executor.Execute(ctx, input, NewResponseSink(c))
 	if err != nil {
 		runtime.ObserveQoderFailure(ctx, value, err)
@@ -56,7 +80,51 @@ func ForwardQoderAttempt(ctx context.Context, c *gin.Context, runtime *gatewayad
 			return nil, err
 		}
 	}
-	return &forward.MessagesResult{RequestID: result.RequestID, Model: result.Model, UpstreamModel: result.UpstreamModel, Usage: result.Usage, Stream: result.Stream, Duration: result.Duration, ClientDisconnect: result.ClientDisconnect}, err
+	return &forward.MessagesResult{
+		RequestID:             result.RequestID,
+		UpstreamHeaders:       result.UpstreamHeaders,
+		Model:                 result.Model,
+		UpstreamModel:         result.UpstreamModel,
+		UpstreamResponseModel: result.UpstreamResponseModel,
+		Usage:                 result.Usage,
+		Stream:                result.Stream,
+		Duration:              result.Duration,
+		ClientDisconnect:      result.ClientDisconnect,
+	}, err
+}
+
+// writeQoderCommittedTerminalError emits an untimed terminal SSE error frame in
+// the inbound client wire protocol when HTTP 200 text/event-stream headers were
+// already committed before Qoder produced semantic output. Nil contexts or
+// streams that already delivered a terminal SSE frame return immediately, and
+// every emitted frame marks the Gin response committed so outer attempt loops
+// skip duplicate error fallbacks and local-capability health penalties.
+func writeQoderCommittedTerminalError(
+	c *gin.Context,
+	wire protocol.ProtocolID,
+	status int,
+	errType string,
+	code string,
+	message string,
+	fallbackModel string,
+) {
+	if c == nil || TerminalSSEDelivered(c) {
+		return
+	}
+	switch wire {
+	case protocol.ProtocolAnthropicMessages:
+		DefaultOpenAIErrorOutput().WriteAnthropicStreamingError(c, status, errType, message, true)
+	case protocol.ProtocolOpenAIResponses:
+		status, message = modelAttributeError(c, status, message)
+		MarkOpsStreamError(c, errType, message, status)
+		model := qoder.FirstNonEmptyQoder(ErrorRequestModel(c), fallbackModel)
+		if !WriteResponsesFailedSSE(c, errType, code, message, ErrorRequestID(c), model) {
+			writeOpenAIGenericErrorSSE(c, errType, code, message)
+		}
+	default:
+		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, status, errType, code, message, true, false)
+	}
+	MarkResponseCommitted(c)
 }
 
 // QoderRequestMetadata snapshots request headers and detected client identity

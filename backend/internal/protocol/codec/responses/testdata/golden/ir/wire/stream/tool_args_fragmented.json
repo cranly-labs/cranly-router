@@ -1,0 +1,127 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_tool_args_fragmented",
+      "model": "gpt-5",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "tool_call",
+      "id": "fc_frag_1",
+      "call": {
+        "call_id": "call_frag_1",
+        "tool": {
+          "kind": "function",
+          "name": "write_note"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "{\"pa"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "th\":\"no"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "tes/a.t"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "xt\",\"te"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "xt\":\"say \\"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\"hi\\\"\\"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "n\\u65"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "e5\\u"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "672"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "c\\"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "\\end\""
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "arguments": "}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "tool_call",
+      "id": "fc_frag_1",
+      "call": {
+        "call_id": "call_frag_1",
+        "tool": {
+          "kind": "function",
+          "name": "write_note"
+        },
+        "arguments": "{\"path\":\"notes/a.txt\",\"text\":\"say \\\"hi\\\"\\n\\u65e5\\u672c\\\\end\"}"
+      }
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 46,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 29
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

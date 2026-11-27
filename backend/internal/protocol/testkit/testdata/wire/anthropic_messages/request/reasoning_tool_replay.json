@@ -1,0 +1,67 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 4096,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  },
+  "tools": [
+    {
+      "name": "query_inventory",
+      "description": "Query warehouse stock counts for an SKU.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Catalog SKU code"
+          }
+        },
+        "required": [
+          "sku"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Check warehouse stock for SKU-42 and SKU-99, then recommend reorder quantities."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "First inspect SKU-42 stock levels before querying SKU-99.",
+          "signature": "EqQBCgIYAiJAc2t1XzQyX3RoaW5raW5nX3NpZ190dXJuXzAx"
+        },
+        {
+          "type": "redacted_thinking",
+          "data": "EmwKAhgCIkByZWRhY3RlZF9pbnZlbnRvcnlfZGF0YV90dXJuXzAx"
+        },
+        {
+          "type": "tool_use",
+          "id": "call_inv_sku42_1",
+          "name": "query_inventory",
+          "input": {
+            "sku": "SKU-42"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_inv_sku42_1",
+          "content": "{\"sku\":\"SKU-42\",\"on_hand\":4,\"reorder_point\":20}"
+        }
+      ]
+    }
+  ]
+}

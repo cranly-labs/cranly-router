@@ -1,0 +1,19 @@
+{
+  "id": "gem_tool_result_error",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "Reading /var/log/restricted-audit.log failed with EACCES permission denied."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 78,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 15
+  }
+}

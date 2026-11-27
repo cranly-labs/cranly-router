@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
@@ -69,27 +70,36 @@ func (s *AntigravityOutput) MappedClaudeError(provider *gatewayprovider.Executio
 	c := s.Context
 
 	MarkResponseCommitted(c)
+	statusCode, errType, errMsg, retErr := s.resolveMappedClaudeError(provider, upstreamStatus, upstreamRequestID, body)
+	WriteAnthropicStreamError(c, statusCode, errType, "", errMsg, CommittedSSE(c), MarkOpsStreamError)
+	return retErr
+}
+
+// resolveMappedClaudeError records sanitized Antigravity Ops diagnostics and
+// optional error-body logs, evaluates administrator passthrough rules, and
+// resolves client status, type, message, and diagnostic error without writing
+// HTTP output. Callers supply the active provider and response metadata.
+func (s *AntigravityOutput) resolveMappedClaudeError(
+	provider *gatewayprovider.ExecutionProvider,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+) (int, string, string, error) {
+	c := s.Context
 	upstreamMsg := strings.TrimSpace(upstream.ExtractErrorMessage(body))
 	upstreamMsg = logredact.SanitizeUpstreamQueries(upstreamMsg)
 	logBody, maxBytes := s.Options.LogConfig()
 	upstreamDetail := s.Options.ErrorDetail(body)
 	SetOpsUpstreamError(c, upstreamStatus, upstreamMsg, upstreamDetail)
 	AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
-		Platform: provider.Record.Platform,
-
-		ProviderID: provider.Record.ID,
-
-		ProviderName: provider.Record.Name,
-
+		Platform:           provider.Record.Platform,
+		ProviderID:         provider.Record.ID,
+		ProviderName:       provider.Record.Name,
 		UpstreamStatusCode: upstreamStatus,
-
-		UpstreamRequestID: upstreamRequestID,
-
-		Kind: "http_error",
-
-		Message: upstreamMsg,
-
-		Detail: upstreamDetail,
+		UpstreamRequestID:  upstreamRequestID,
+		Kind:               "http_error",
+		Message:            upstreamMsg,
+		Detail:             upstreamDetail,
 	})
 
 	// Enabled diagnostic logging keeps the bounded upstream body separate from
@@ -98,15 +108,18 @@ func (s *AntigravityOutput) MappedClaudeError(provider *gatewayprovider.Executio
 		logging.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] upstream_error status=%d body=%s", upstreamStatus, logredact.TruncateLine(body, maxBytes))
 	}
 
+	var retErr error
+	if upstreamMsg == "" {
+		retErr = fmt.Errorf("upstream error: %d", upstreamStatus)
+	} else {
+		retErr = fmt.Errorf("upstream error: %d message=%s", upstreamStatus, upstreamMsg)
+	}
+
 	if ptStatus, ptErrType, ptErrMsg, matched := ApplyErrorPassthroughRule(
 		c, provider.Record.Platform, upstreamStatus, body,
 		0, "", "",
 	); matched {
-		WriteAnthropicStreamError(c, ptStatus, ptErrType, "", ptErrMsg, CommittedSSE(c), MarkOpsStreamError)
-		if upstreamMsg == "" {
-			return fmt.Errorf("upstream error: %d", upstreamStatus)
-		}
-		return fmt.Errorf("upstream error: %d message=%s", upstreamStatus, upstreamMsg)
+		return ptStatus, ptErrType, ptErrMsg, retErr
 	}
 
 	var statusCode int
@@ -139,11 +152,7 @@ func (s *AntigravityOutput) MappedClaudeError(provider *gatewayprovider.Executio
 		errMsg = "Upstream request failed"
 	}
 
-	WriteAnthropicStreamError(c, statusCode, errType, "", errMsg, CommittedSSE(c), MarkOpsStreamError)
-	if upstreamMsg == "" {
-		return fmt.Errorf("upstream error: %d", upstreamStatus)
-	}
-	return fmt.Errorf("upstream error: %d message=%s", upstreamStatus, upstreamMsg)
+	return statusCode, errType, errMsg, retErr
 }
 
 // GoogleError commits and writes Antigravity's native Google error envelope.
@@ -220,41 +229,71 @@ func (s *AntigravityOutput) MappedAntigravityCompatError(
 	c := s.Context
 
 	MarkResponseCommitted(c)
-	message := logredact.SanitizeUpstreamQueries(strings.TrimSpace(google.ExtractPlatformMessage(body)))
-	SetOpsUpstreamError(c, upstreamStatus, message, s.Options.ErrorDetail(body))
-	AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
-		Platform: provider.Record.Platform,
-
-		ProviderID: provider.Record.ID,
-
-		ProviderName: provider.Record.Name,
-
-		UpstreamStatusCode: upstreamStatus,
-
-		UpstreamRequestID: upstreamRequestID,
-
-		Kind: "http_error",
-
-		Message: message,
-	})
-	mappedStatus := protocolforward.MapStatus(upstreamStatus)
-	clientMessage := antigravity.GetPassthroughOrDefault(message, "Upstream request failed")
+	mappedStatus, errType, clientMessage, retErr := s.resolveMappedCompatError(provider, upstreamStatus, upstreamRequestID, body)
 	if CommittedSSE(c) {
-		DefaultOpenAIErrorOutput().StreamError(c, mappedStatus, "upstream_error", clientMessage, true)
-		return fmt.Errorf("upstream error: %d %s", upstreamStatus, message)
+		DefaultOpenAIErrorOutput().StreamError(c, mappedStatus, errType, clientMessage, true)
+		return retErr
 	}
 	c.JSON(mappedStatus, gin.H{
 		"error": gin.H{
 			"message": clientMessage,
-
-			"type": "upstream_error",
-
-			"param": nil,
-
-			"code": nil,
+			"type":    errType,
+			"param":   nil,
+			"code":    nil,
 		},
 	})
-	return fmt.Errorf("upstream error: %d %s", upstreamStatus, message)
+	return retErr
+}
+
+// resolveMappedCompatError records sanitized Google-platform diagnostics on
+// s.Context and resolves the OpenAI-compatible HTTP status, error type, safe
+// client message, and returned diagnostic error without writing HTTP output.
+// Callers supply the active provider and upstream response metadata.
+func (s *AntigravityOutput) resolveMappedCompatError(
+	provider *gatewayprovider.ExecutionProvider,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+) (int, string, string, error) {
+	c := s.Context
+	message := logredact.SanitizeUpstreamQueries(strings.TrimSpace(google.ExtractPlatformMessage(body)))
+	SetOpsUpstreamError(c, upstreamStatus, message, s.Options.ErrorDetail(body))
+	AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
+		Platform:           provider.Record.Platform,
+		ProviderID:         provider.Record.ID,
+		ProviderName:       provider.Record.Name,
+		UpstreamStatusCode: upstreamStatus,
+		UpstreamRequestID:  upstreamRequestID,
+		Kind:               "http_error",
+		Message:            message,
+	})
+	mappedStatus := protocolforward.MapStatus(upstreamStatus)
+	clientMessage := antigravity.GetPassthroughOrDefault(message, "Upstream request failed")
+	return mappedStatus, "upstream_error", clientMessage, fmt.Errorf("upstream error: %d %s", upstreamStatus, message)
+}
+
+// MapAntigravityFailure records Antigravity upstream diagnostics and optional
+// error-body logs once on s.Context, evaluates administrator passthrough rules
+// on Messages routes, and resolves client status, type, code, message, and
+// diagnostic error without writing HTTP output. Callers deliver the resolved
+// fields through WriteLocalTerminalError or uncommitted JSON writers.
+func (s *AntigravityOutput) MapAntigravityFailure(
+	provider *gatewayprovider.ExecutionProvider,
+	source protocol.ProtocolID,
+	upstreamStatus int,
+	upstreamRequestID string,
+	body []byte,
+) (int, string, string, string, error) {
+	if source == protocol.ProtocolAnthropicMessages {
+		st, tp, msg, retErr := s.resolveMappedClaudeError(provider, upstreamStatus, upstreamRequestID, body)
+		return st, tp, "", msg, retErr
+	}
+	st, tp, msg, retErr := s.resolveMappedCompatError(provider, upstreamStatus, upstreamRequestID, body)
+	code := ""
+	if source == protocol.ProtocolOpenAIResponses {
+		code = tp
+	}
+	return st, tp, code, msg, retErr
 }
 
 // MapAntigravityCollectionError maps a nonnil collected-stream failure to

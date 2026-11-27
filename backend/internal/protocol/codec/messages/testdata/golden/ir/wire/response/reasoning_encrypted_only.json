@@ -1,0 +1,30 @@
+{
+  "id": "msg_reasoning_encrypted_only",
+  "model": "claude-sonnet-4-5",
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Step go-test exited with code 1 in TestPoolTimeout; summarize the root cause."
+        ],
+        "token": {
+          "data": "EqQBCgIYAiJAZW5jcnlwdGVkX29ubHlfcGxhaW5fc2lnXzAy"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Build job-8841 failed during the go-test step with exit code 1 because TestPoolTimeout timed out."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 88,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 54
+  }
+}

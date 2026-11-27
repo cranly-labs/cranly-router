@@ -1,0 +1,32 @@
+{
+  "id": "gem_legacy_history",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Migration checks for the requested tenants are ready to finalize."
+        ],
+        "summary": true,
+        "token": {
+          "data": "CpEBCocB_gem_legacy_history_sig_03"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 112,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 48,
+    "reasoning": 22
+  }
+}

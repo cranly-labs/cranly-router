@@ -109,6 +109,7 @@ OpenAI API Key 图片流模式：
 3. 找不到可行路线的候选在评分前排除，换号时重新解析；转换后模型、额度、媒体资格、WebSocket 模式和会话约束照常生效。
 
 - 单步文本转换：支持转换及自动顺序以目录 `fallback_targets` 为准，管理员可缩小集合、调序或关闭，但仅支持一步转换。同分组不同候选可解析出不同目标协议（如 Chat 请求在 OpenAI 原生处理、Anthropic 转 Messages、Gemini 转 GenerateContent）。
+- 同协议客户端工具轻量适配：Responses HTTP 与 WS HTTP 桥命中仅支持普通函数的上游时，经 `AdaptResponsesTools` 与 `NewResponsesToolStream` 就地降级和还原 `custom`、`namespace`、`tool_search` 条目，其余字段与原生流事件原样透传（见[工具适配](../architecture/protocol_conversion.md#tool_adaptation)）。
 - 专项转换路线：OpenAI OAuth Images 转 Responses、Grok WebSocket 转 HTTP Responses、Grok 搜索和 Compact 转 Responses、PAT Alpha Search 转 hosted web search；批量图片由已有 provider 绑定选 Gemini Batch 或 Vertex Batch。
 - 跨提供商切换约束：选中后按解析路线执行，换号后重验模型和路线。`previous_response_id`、WebSocket 和 Live 会话、签名及已开始的流会限制跨提供商切换。
 
@@ -145,9 +146,9 @@ OpenAI API Key 图片流模式：
 - OpenAI Responses 提示缓存：原生路由保留 `prompt_cache_options` 和内容块上的 `prompt_cache_breakpoint`，显式缓存 TTL 被上游拒绝时兼容重试保留该语义。
 - Responses 缓存写入观测与结算：读取 `input_tokens_details.cache_write_tokens_details` 的 `30m` 和 `12h` 原始计数交给[缓存写入分档](../domains/routing_and_billing.md#cache_write_pricing)统一归档计费。外层写入总数为 0 时由正数分档之和回填有效总数，合成客户端响应报文时仅在双键非负且相加等于外层总数时输出明细。流式读取器合并稀疏用量并保留已观测分档，终态明确报告完整零用量时按既有规则清空或保留整份快照。
 - Gemini 与 OpenAI 兼容别名：Gemini 的 `cachedContentTokenCount` 映射到目标协议缓存读取字段（流式与非流式一致）。OpenAI 兼容响应支持标准嵌套明细和顶层别名（含 DeepSeek `prompt_cache_hit_tokens`、`prompt_cache_miss_tokens`）；标准嵌套优先，显式零不被替换，未报告数不估算。
-- 转换读取器合并规则：按字段合并不完整用量帧，再将同一份快照交给客户端转换和计费。仅有输出数的尾帧保留先前输入与缓存数；OpenAI 完整显式零用量可清空旧快照；Messages 保留累计字段与 TTL 分档更新规则。Responses 转换中，终态内嵌 `response.usage` 已报告字段优先于同帧顶层 `usage`，未报告字段从本次请求已有观察补齐。
-- 图片桶与容错：OpenAI 转换计费快照保留图片输入、输出桶，文本客户端类型未声明也不丢弃。图片明细缺失沿用已有观察，显式零更新对应桶；hosted image 明细仅补同一 envelope 中 usage 的零图片计数。Chat 帧因字段类型不兼容无法转换时，原始用量解析器可读计数仍参与累计；无法解析为有效 JSON 对象的 usage 不更新快照。
-- 输出与透传策略：Messages 缓存写入分档保留在标准 `cache_creation` 明细中；转 Chat 或 Responses 时保留写入总数，不增加私有 TTL 字段。Chat usage 输出遵循所属适配器原有策略，关闭可选 usage 不代表缓存未命中。原生透传保留上游字段；SSE 汇总为 JSON 时，仅在已有观察能补齐终态用量时修补计数，保留其他字段与原始数值表示。
+- 转换读取器合并规则：各上游族合并读取器由原生累加器提取计费用量，由上游 `protocol/codec/*` 解码出互不相交的 `ir.Usage` 供客户端编码输出，两路均经 `protocol/wirejson` 校验并共用同一组归一化函数。仅含输出数的尾帧保留先前输入与缓存数，OpenAI 全零快照清空旧值，Responses 终态优先取内嵌 `response.usage` 并补齐未报字段。
+- 图片桶与容错：OpenAI 结算快照与 `ir.Usage` 均保留图片输入和输出桶，文本客户端类型未声明也不丢弃。图片明细缺失沿用已有观察，显式零更新对应桶；hosted image 明细仅补同一 envelope 中 usage 的零图片计数。无法解析为有效且无重名键 JSON 对象的 usage 不更新正常快照。
+- 输出与透传策略：Messages 缓存写入分档保留在 `cache_creation` 明细；转 Chat 保留写入总数，转 Responses 仅在 `30m` 与 `12h` 非负且相加等于总数时输出 `cache_write_tokens_details`。Chat 流式转换按客户端 `stream_options.include_usage` 控制尾帧输出；SSE 汇总为 JSON 时仅在已有观察能补齐终态用量时修补计数。
 
 ## 上游响应模型观测
 

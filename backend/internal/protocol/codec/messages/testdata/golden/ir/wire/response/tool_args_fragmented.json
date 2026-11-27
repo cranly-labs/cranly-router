@@ -1,0 +1,26 @@
+{
+  "id": "msg_tool_args_fragmented",
+  "model": "claude-sonnet-4-5",
+  "parts": [
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_frag_1",
+        "tool": {
+          "kind": "function",
+          "name": "write_note"
+        },
+        "arguments": "{\"path\":\"notes/a.txt\",\"text\":\"say \\\"hi\\\"\\n日本\\\\end\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 46,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 29
+  }
+}

@@ -55,11 +55,29 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 	turnStart := time.Now()
 	performance := timing.BeginPerformance(ctx, o.ProviderID, turnStart)
 	wroteDownstream := false
-	// Send the normalized request before observing events; strip wire effort only
-	// on the outbound copy so payload retains effective effort for usage recording
-	// and failover replay. A write failure records the pre-output stage so ingress
-	// can consider its bounded connection retry.
+	needModelReplace := false
+	mappedModel := ""
+	var mappedModelBytes []byte
+	if routingModel != "" {
+		mappedModel = p.MappedModel(routingModel)
+		needModelReplace = mappedModel != "" && mappedModel != originalModel
+		if needModelReplace {
+			mappedModelBytes = []byte(mappedModel)
+		}
+	}
+	// Send the normalized request before observing events; strip wire effort and
+	// prepare native trc1 continuity-carrier replay only on the outbound copy so
+	// payload retains effective effort and carriers for usage recording and failover.
 	outboundPayload := stripOutboundEffort(ctx, p, routingModel, payload)
+	replayModel := mappedModel
+	if replayModel == "" {
+		replayModel = originalModel
+	}
+	var replayErr error
+	outboundPayload, replayErr = prepareOutboundNativeReplay(ctx, p, o.ProviderID, replayModel, outboundPayload)
+	if replayErr != nil {
+		return nil, replayErr
+	}
 	if err := lease.WriteRequest(ctx, outboundPayload, o.WriteTimeout); err != nil {
 		return nil, WrapIngressTurnError(
 			"write_upstream",
@@ -93,17 +111,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 	replayCollector := p.ReplayCollector()
 	firstEventType := ""
 	lastEventType := ""
-	needModelReplace := false
 	clientDisconnected := false
-	mappedModel := ""
-	var mappedModelBytes []byte
-	if routingModel != "" {
-		mappedModel = p.MappedModel(routingModel)
-		needModelReplace = mappedModel != "" && mappedModel != originalModel
-		if needModelReplace {
-			mappedModelBytes = []byte(mappedModel)
-		}
-	}
 	// Build both successful and invalid-result observations from the same turn
 	// state so stopping GIF delivery cannot discard already reported token usage.
 	resultWithUsage := func(terminalEvent string) *ForwardResult {
@@ -190,10 +198,10 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 			errorStatus := p.ErrorStatus(upstreamMessage)
 			fallbackReason, _ := p.ClassifyError(errCodeRaw, errTypeRaw, errMsgRaw)
 			if fallbackReason == "invalid_encrypted_content" {
-				// Remember ciphertext rejected in this request under the scoped session
-				// before error output, allowing later turns to strip that lineage from
-				// payload and replay history.
-				if digests := p.EncryptedDigests(payload); len(digests) > 0 {
+				// Remember ciphertext rejected in the outbound payload under the scoped
+				// session before error output, allowing later turns to strip that lineage
+				// without marking cross-account carriers already removed before dispatch.
+				if digests := p.EncryptedDigests(outboundPayload); len(digests) > 0 {
 					p.MarkEncrypted(digests)
 					p.Log(fmt.Sprintf(
 						"ingress_ws_invalid_encrypted_lineage_mark provider_id=%d turn=%d digests=%d",

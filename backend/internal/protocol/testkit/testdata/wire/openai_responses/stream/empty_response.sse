@@ -1,0 +1,9 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_empty_response","object":"response","created_at":1760002300,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_empty_response","object":"response","created_at":1760002300,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_empty_response","object":"response","created_at":1760002300,"status":"completed","model":"gpt-5","output":[],"usage":{"input_tokens":18,"output_tokens":0,"total_tokens":18,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}
+

@@ -1,0 +1,52 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_system_roles",
+      "model": "gpt-5",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text",
+      "id": "msg_system_roles_out"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "The default keepalive timeout is "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "30 seconds (30000 milliseconds)."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "id": "msg_system_roles_out",
+      "text": "The default keepalive timeout is 30 seconds (30000 milliseconds)."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 48,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 14
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

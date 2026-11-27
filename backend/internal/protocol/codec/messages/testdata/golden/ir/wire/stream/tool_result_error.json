@@ -1,0 +1,58 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "msg_tool_result_error",
+      "model": "claude-sonnet-4-5"
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 78,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 1
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Reading /var/log/restricted-audit.log failed with "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "EACCES permission denied."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "text": "Reading /var/log/restricted-audit.log failed with EACCES permission denied."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 78,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 15
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    }
+  }
+]

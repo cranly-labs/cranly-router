@@ -1,0 +1,16 @@
+model = "{{MODEL}}"
+model_provider = "lab"
+check_for_update_on_startup = false
+model_reasoning_effort = "{{REASONING_EFFORT}}"
+
+[analytics]
+enabled = false
+
+[model_providers.lab]
+name = "TokenRouter Lab"
+base_url = "{{BASE_URL}}/v1"
+env_key = "{{API_KEY_ENV}}"
+wire_api = "responses"
+supports_websockets = false
+request_max_retries = 0
+stream_max_retries = 0

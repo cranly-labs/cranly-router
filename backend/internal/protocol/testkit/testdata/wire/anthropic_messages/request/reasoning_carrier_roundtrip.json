@@ -1,0 +1,107 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 4096,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  },
+  "tools": [
+    {
+      "name": "check_replica_lag",
+      "description": "Read replication lag metrics for a database cluster.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "Cluster ID"
+          }
+        },
+        "required": [
+          "cluster"
+        ]
+      }
+    },
+    {
+      "name": "check_quorum",
+      "description": "Check voter quorum health for a database cluster.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "Cluster ID"
+          }
+        },
+        "required": [
+          "cluster"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Inspect replica lag on db-east-1 and check failover readiness."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "First query replication lag metrics on db-east-1.",
+          "signature": "trc1:plain:eyJ0IjoiRmlyc3QgcXVlcnkgcmVwbGljYXRpb24gbGFnIG1ldHJpY3Mgb24gZGItZWFzdC0xLiJ9"
+        },
+        {
+          "type": "tool_use",
+          "id": "call_lag_east_1",
+          "name": "check_replica_lag",
+          "input": {
+            "cluster": "db-east-1"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_lag_east_1",
+          "content": "{\"cluster\":\"db-east-1\",\"lag_ms\":45}"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Replica lag is 45ms, within threshold; now verify quorum status.",
+          "signature": "trc1:openai:eyJkIjoiZ0FBQUFBQm5Sb3VuZHRyaXBPcGVuQUkwMiIsInAiOjEwMX0"
+        },
+        {
+          "type": "tool_use",
+          "id": "call_quorum_east_2",
+          "name": "check_quorum",
+          "input": {
+            "cluster": "db-east-1"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_quorum_east_2",
+          "content": "{\"cluster\":\"db-east-1\",\"quorum_healthy\":true,\"voters\":3}"
+        }
+      ]
+    }
+  ]
+}

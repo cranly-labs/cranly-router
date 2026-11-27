@@ -1,0 +1,33 @@
+{
+  "id": "resp_upstream_sse_quirks",
+  "object": "response",
+  "created_at": 1760002200,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_upstream_sse_quirks_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "Normalized quirky upstream SSE frames cleanly."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 26,
+    "output_tokens": 10,
+    "total_tokens": 36,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

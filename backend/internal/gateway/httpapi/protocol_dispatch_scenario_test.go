@@ -32,19 +32,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Fixed provider protocols can conflict with retained route/probe metadata, and
-// configured dispatch must still choose the matching upstream URL and payload.
-// Fixture transports stop after capture or return known output, allowing
-// protocol conversion, client model identity and returned billing attribution
-// to be checked across inbound forms. Token adapters additionally expose their
-// funding, planning, failover and release order through serial targets.
+// protocol_dispatch_scenario_test.go covers openai_responses_execution.go,
+// openai_protocol_execution.go, openai_auxiliary_count.go, and
+// openai_auxiliary_input_tokens.go. Fixed provider protocols can conflict with
+// retained route/probe metadata, and configured dispatch must still choose the
+// matching upstream URL and payload. Fixture transports stop after capture or
+// return known output, allowing protocol conversion, client model identity, and
+// returned billing attribution to be checked across inbound forms.
 //
-// Dispatch scenarios cross openai_responses_execution.go,
-// openai_protocol_execution_chat.go and openai_protocol_execution_messages.go.
-// Token ordering uses openai_count_tokens.go and input_tokens.go; error-language
-// cases connect anthropic_failover_error.go with text_errors.go. These paths
-// share the selected provider while retaining their distinct inbound preparation
-// and returned result fields.
+// Token adapters additionally expose their funding, planning, failover, and
+// release order through serial targets, while error-language cases connect
+// anthropic_failover_error.go with text_errors.go. These paths share the
+// selected provider while retaining their distinct inbound preparation and
+// returned result fields.
 
 // textAPIKeyProtocolIngressCase pairs one inbound representation with its matching
 // fixture forward call.
@@ -768,7 +768,7 @@ func TestProtocolForwardConvertedResponsesRetainsWireContract(t *testing.T) {
 				require.Equal(t, tc.stream, result.Stream)
 				if tc.stream {
 					require.Contains(t, recorder.Body.String(), "response.completed")
-					require.Contains(t, recorder.Body.String(), "data: [DONE]")
+					require.NotContains(t, recorder.Body.String(), "data: [DONE]")
 				} else if tc.name == "tool" {
 					require.Contains(t, recorder.Body.String(), "function_call")
 					require.Contains(t, recorder.Body.String(), "lookup")

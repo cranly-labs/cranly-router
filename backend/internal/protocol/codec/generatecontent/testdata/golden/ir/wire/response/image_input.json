@@ -1,0 +1,19 @@
+{
+  "id": "gem_image_input",
+  "model": "gemini-2.5-pro",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "The inline swatch is a 1x1 square pixel, whereas the linked architecture diagram uses a wide 16:9 canvas, so their aspect ratios do not match."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 312,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 28
+  }
+}

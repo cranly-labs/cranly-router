@@ -1,7 +1,6 @@
 package googleforward
 
 import (
-	"context"
 	"io"
 	"net/http"
 
@@ -12,11 +11,10 @@ import (
 )
 
 // antigravity_options.go supplies bounded error inspection and Antigravity
-// model, project, and identity options.
-// Antigravity error inspection uses a bounded response prefix separately from
-// optional diagnostic logging. The read cap starts at 512 KiB and can grow to
-// the requested logging cap, while model mapping, project selection, and
-// identity options are delegated to their owning services.
+// project resolution options. Antigravity error inspection uses a bounded
+// response prefix separately from optional diagnostic logging; the read cap
+// starts at 512 KiB and can grow to the requested logging cap, while project
+// selection delegates to the shared provider resolver.
 
 // upstreamErrorBodyReadLimit returns the error inspection cap, starting at 512
 // KiB. Configured enabled body logging can enlarge that cap; a nil receiver
@@ -75,18 +73,4 @@ func (s *Antigravity) getUpstreamErrorDetail(body []byte) string {
 // transport.
 func resolveAntigravityProjectID(provider *gatewayprovider.ExecutionProvider) (string, error) {
 	return providercore.ResolveAntigravityProjectID(gatewayprovider.ExecutionRecord(provider), antigravity.ErrProjectIDRequired)
-}
-
-// getClaudeTransformOptions returns platform transform defaults or current
-// gateway identity settings. A missing gateway reader returns the defaults, and
-// forwarding callers can enforce identity injection after this option
-// selection.
-func (s *Antigravity) getClaudeTransformOptions(ctx context.Context) antigravity.TransformOptions {
-	opts := antigravity.DefaultTransformOptions()
-	if s.Gateway == nil {
-		return opts
-	}
-	opts.EnableIdentityPatch = s.Gateway.IsIdentityPatchEnabled(ctx)
-	opts.IdentityPatch = s.Gateway.GetIdentityPatchPrompt(ctx)
-	return opts
 }

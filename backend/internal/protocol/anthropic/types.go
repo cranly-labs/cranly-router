@@ -4,21 +4,28 @@ import (
 	"encoding/json"
 )
 
-// types.go defines Messages wire types and serializes required empty content
-// fields.
-// Messages conversions need to distinguish an unfinished response from a
-// stopped response and an empty initial content block from an absent field.
-// Response stop reasons use pointers so message_start can encode JSON null,
-// while text and thinking block serialization keeps their empty initial strings
-// available for clients that expect subsequent deltas.
+// types.go defines Anthropic Messages wire types and Claude Code system-prompt
+// markers used by prompt-cache hashing, client attribution, and compatible
+// usage normalization.
+// Request fields whose wire representation can be either strings or structured
+// JSON objects retain json.RawMessage so digest chaining, ephemeral anchor
+// scanning, and metadata.user_id rewriting can inspect selected fields without
+// reserializing polymorphic values.
 //
-// Request content, metadata, and tool arguments retain raw JSON where their
-// shape can vary or include fields the converters do not interpret. Usage
-// counters include both canonical Messages buckets and compatible-provider
-// aliases; MergeAnthropicUsage and NormalizeAnthropicCompatiblePromptUsage
-// resolve those overlapping quantities before billing. Stream events attach
-// message, block, or delta payloads according to their event type, retaining
-// explicit index zero through an optional integer pointer.
+// AnthropicUsage, AnthropicCacheCreation, and AnthropicPromptTokensDetails
+// capture canonical Messages token counters alongside compatible-provider
+// prompt and cache aliases resolved by MergeAnthropicUsage and
+// NormalizeStreamUsage before billing. AnthropicStreamEvent and
+// AnthropicResponse use optional pointers so stream usage observers distinguish
+// message_start envelopes, message_delta updates, and unfinished null stop
+// reasons.
+
+// These markers identify Claude Code billing attribution and entrypoint text
+// when request fingerprints and client-validation policies inspect system prompts.
+const (
+	ClaudeCodeBillingHeaderPrefix = "x-anthropic-billing-header" // billing-attribution system prompt prefix
+	ClaudeCodeEntrypointMarker    = "cc_entrypoint="             // Claude Code entrypoint field marker
+)
 
 // AnthropicRequest is the request body sent to the Messages endpoint.
 type AnthropicRequest struct {
@@ -71,16 +78,11 @@ type AnthropicContentBlock struct {
 
 	CacheControl *AnthropicCacheControl `json:"cache_control,omitempty"` // optional cache directive
 
-	// Text supplies readable content for text blocks. MarshalJSON keeps an
-	// explicit empty string when such a block opens a streamed response.
-	Text string `json:"text,omitempty"`
-
-	// Thinking supplies readable reasoning for thinking blocks. MarshalJSON
-	// retains an explicit empty string so later deltas can fill the opened block.
-	Thinking string `json:"thinking,omitempty"`
-	// Signature carries opaque reasoning replay data, including xAI
-	// encrypted_content. Clients retain it alongside thinking blocks for later
-	// conversation requests; its meaning depends on the producing upstream.
+	Text     string `json:"text,omitempty"`     // readable text block content
+	Thinking string `json:"thinking,omitempty"` // readable reasoning block text
+	// Signature carries opaque reasoning replay data or a trc1 continuity
+	// envelope alongside thinking blocks; callers inspect or strip it according
+	// to target replay rules.
 	Signature string `json:"signature,omitempty"`
 
 	// Source supplies encoded image data when Type is image. A nil source is
@@ -118,8 +120,8 @@ type AnthropicTool struct {
 	CacheControl *AnthropicCacheControl `json:"cache_control,omitempty"` // optional cache directive
 }
 
-// AnthropicCacheControl represents the API's cache_control field.
-// The caller chooses a TTL; see claude.DefaultCacheControlTTL for the project default.
+// AnthropicCacheControl represents the Messages API cache_control directive
+// attached to tools, system blocks, or message content blocks.
 type AnthropicCacheControl struct {
 	Type string `json:"type"` // ephemeral cache directive
 	// TTL selects "5m" or "1h" when supplied. Omission leaves lifetime selection
@@ -240,60 +242,4 @@ type AnthropicDelta struct {
 	// while a supplied pointer retains even an empty matched sequence.
 	StopReason   string  `json:"stop_reason,omitempty"`   // generation stop reason
 	StopSequence *string `json:"stop_sequence,omitempty"` // matched stopping sequence
-}
-
-// MarshalJSON encodes a content block while keeping required empty text or
-// thinking strings for their respective block types. Clients can receive the
-// block's initial shape before a later content_block_delta supplies its text.
-//
-// The method uses an alias to apply ordinary JSON rules to the remaining
-// fields without invoking this method recursively. For text and thinking
-// blocks, a wrapper adds the required string field without omitempty; other
-// block types use the alias directly. Encoding errors are returned to the
-// caller before any usable serialized block is available.
-func (b AnthropicContentBlock) MarshalJSON() ([]byte, error) {
-	// anthropicContentBlock retains the block's fields while disabling its custom marshaler.
-	type anthropicContentBlock AnthropicContentBlock
-
-	switch b.Type {
-	case "text":
-		// A stream can open a text block before its first fragment arrives.
-		// Override omitempty so strict clients still receive the required empty text field.
-		return json.Marshal(struct {
-			Text                  string `json:"text"` // required initial text
-			anthropicContentBlock        // remaining block fields
-		}{
-			Text:                  b.Text,
-			anthropicContentBlock: anthropicContentBlock(b),
-		})
-	case "thinking":
-		// Reasoning streams likewise open their block before a thinking delta.
-		// Keep the empty thinking field present so the opening event supplies its expected shape.
-		return json.Marshal(struct {
-			Thinking              string `json:"thinking"` // required initial reasoning
-			anthropicContentBlock        // remaining block fields
-		}{
-			Thinking:              b.Thinking,
-			anthropicContentBlock: anthropicContentBlock(b),
-		})
-	default:
-		return json.Marshal(anthropicContentBlock(b))
-	}
-}
-
-// AnthropicStopReasonPtr returns a fresh pointer containing s, including an
-// empty string. A nonnil result serializes its value; callers pass nil separately
-// when a Messages response needs an unfinished null stop reason.
-func AnthropicStopReasonPtr(s string) *string {
-	return &s
-}
-
-// AnthropicStopReasonString reads a pointed-to stop reason or returns an empty
-// string for nil. Callers needing to distinguish an unfinished response from an
-// explicitly empty reason inspect the pointer before using this string value.
-func AnthropicStopReasonString(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }

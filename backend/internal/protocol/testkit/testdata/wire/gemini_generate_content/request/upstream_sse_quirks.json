@@ -1,0 +1,37 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "get_region_health",
+          "description": "Reads regional gateway health metrics.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "region": {
+                "type": "STRING",
+                "description": "Cloud region identifier"
+              }
+            },
+            "required": [
+              "region"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Confirm that quirky SSE framing normalizes without dropping tokens."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

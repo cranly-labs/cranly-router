@@ -34,13 +34,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
-	sessiontestkit "github.com/TokenFlux/TokenRouter/internal/gateway/session/testkit"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -102,17 +100,6 @@ type blockingOpenAIResponseHeaderUpstream struct {
 	// call returns.
 	canceled chan struct{} // upstream cancellation signal
 	once     sync.Once     // cancellation signal close guard
-}
-
-// reasoningCacheStub supplies preloaded reasoning reads and captures reasoning
-// writes for Chat history conversion.
-type reasoningCacheStub struct {
-	sessiontestkit.StickyCache // inherited session binding fixture
-	// sets captures written item text and getResp supplies preloaded item text;
-	// writes leave the read fixture unchanged. Tests serialize these maps and the
-	// fixture ignores expiration.
-	sets    map[string]string // captured item reasoning text
-	getResp map[string]string // preloaded item reasoning text
 }
 
 // passthroughErrReadCloser injects body read failure after a successful
@@ -1392,9 +1379,9 @@ func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs(t *tes
 	require.Equal(t, "msg_valid", gjson.GetBytes(forwarded, "input.2.id").String())
 	require.Equal(t, "fc_valid", gjson.GetBytes(forwarded, "input.3.id").String())
 	require.False(t, gjson.GetBytes(forwarded, "input.4.id").Exists())
-	require.Equal(t, "ctc_valid", gjson.GetBytes(forwarded, "input.5.id").String())
+	require.Equal(t, "fc_valid", gjson.GetBytes(forwarded, "input.5.id").String())
 	require.False(t, gjson.GetBytes(forwarded, "input.6.id").Exists())
-	require.Equal(t, "tsc_valid", gjson.GetBytes(forwarded, "input.7.id").String())
+	require.Equal(t, "fc_valid", gjson.GetBytes(forwarded, "input.7.id").String())
 	require.Equal(t, "item_output", gjson.GetBytes(forwarded, "input.8.id").String())
 	require.Equal(t, "call_123", gjson.GetBytes(forwarded, "input.8.call_id").String())
 	require.False(t, gjson.GetBytes(forwarded, "input.9.id").Exists())
@@ -1872,7 +1859,7 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.Contains(t, rec.Body.String(), `"delta":"he"`)
 	require.Contains(t, rec.Body.String(), "event: response.completed")
 	require.Contains(t, rec.Body.String(), `"input_tokens":4`)
-	require.Contains(t, rec.Body.String(), "data: [DONE]")
+	require.NotContains(t, rec.Body.String(), "data: [DONE]")
 	require.Equal(t, 4, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.True(t, result.Stream)
@@ -1906,19 +1893,19 @@ func TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit(t
 	svc := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: upstream})
 
 	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackProvider(), body)
-	require.ErrorContains(t, err, "invalid JSON")
+	require.ErrorContains(t, err, "invalid tool_call function.arguments JSON")
 	require.NotNil(t, result)
 	require.Equal(t, 4, result.Usage.InputTokens)
 	require.Equal(t, 6492, result.Usage.OutputTokens)
-	require.NotContains(t, rec.Body.String(), "response.function_call_arguments.done")
-	require.NotContains(t, rec.Body.String(), "response.output_item.done")
+	require.Contains(t, rec.Body.String(), `"type":"response.failed"`)
+	require.NotContains(t, rec.Body.String(), "response.completed")
 	require.NotContains(t, rec.Body.String(), "data: [DONE]")
 }
 
 // TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText receives
 // DeepSeek reasoning followed by an empty content field at the length limit.
-// It checks visible Responses text, incomplete status and a client done
-// marker.
+// It checks structured Responses reasoning summary streaming, trc1:plain
+// continuity sealing, and incomplete terminal status.
 func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *testing.T) {
 	body := []byte(`{"model":"deepseek-reasoner","input":"hello","stream":true}`)
 	rec := httptest.NewRecorder()
@@ -1947,10 +1934,11 @@ func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *test
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
-	require.Contains(t, rec.Body.String(), "event: response.output_text.delta")
+	require.Contains(t, rec.Body.String(), "event: response.reasoning_summary_text.delta")
 	require.Contains(t, rec.Body.String(), `"delta":"visible fallback"`)
+	require.Contains(t, rec.Body.String(), `"encrypted_content":"trc1:plain:`)
 	require.Contains(t, rec.Body.String(), `"status":"incomplete"`)
-	require.Contains(t, rec.Body.String(), "data: [DONE]")
+	require.NotContains(t, rec.Body.String(), "data: [DONE]")
 }
 
 // TestForwardResponses_PreserveClientProtocolUsesResponsesEndpoint selects
@@ -2002,40 +1990,21 @@ func forceChatResponsesFallbackProvider() *gatewayprovider.ExecutionProvider {
 	return provider
 }
 
-// SetReasoningContent records reasoning text under itemID, allocating the
-// capture map when absent. Existing text is overwritten, context and TTL are
-// ignored, and tests provide serial access to this mutable fixture.
-func (c *reasoningCacheStub) SetReasoningContent(_ context.Context, itemID, content string, _ time.Duration) error {
-	if c.sets == nil {
-		c.sets = make(map[string]string)
-	}
-	// Capture the plain reasoning summary written by history conversion so the
-	// test can inspect it separately from encrypted text supplied by the read
-	// fixture.
-	c.sets[itemID] = content
-	return nil
-}
-
-// GetReasoningContent reads the preloaded reasoning text for itemID and
-// returns the cache not-found error when absent. Context is ignored and
-// captured writes in sets do not populate this read map.
-func (c *reasoningCacheStub) GetReasoningContent(_ context.Context, itemID string) (string, error) {
-	if content, ok := c.getResp[itemID]; ok {
-		return content, nil
-	}
-	return "", session.ErrReasoningContentNotFound
-}
-
 // TestForwardResponsesChatFallbackRestoresEncryptedReasoningFromCache converts
-// tool history containing plain and encrypted reasoning into Chat messages. It
-// checks the encrypted item uses cached text and the plain item is captured by
-// the reasoning cache writer.
+// tool history containing plain summary text and a trc1:plain encrypted carrier
+// into Chat messages. Both reasoning items restore statelessly into
+// assistant reasoning_content without consulting external cache state.
 func TestForwardResponsesChatFallbackRestoresEncryptedReasoningFromCache(t *testing.T) {
+	plainCarrier, carrierErr := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemePlain,
+		Text:   "cached thinking",
+	})
+	require.NoError(t, carrierErr)
 	body := []byte(`{"model":"deepseek-reasoner","stream":false,"input":[
 		{"type":"reasoning","id":"item_plain","summary":[{"type":"summary_text","text":"plain thinking"}]},
 		{"type":"function_call","call_id":"call_0","name":"get_value","arguments":"{}"},
 		{"type":"function_call_output","call_id":"call_0","output":"ok"},
-		{"type":"reasoning","id":"item_enc","summary":[],"encrypted_content":"opaque"},
+		{"type":"reasoning","id":"item_enc","summary":[],"encrypted_content":"` + plainCarrier + `"},
 		{"type":"function_call","call_id":"call_1","name":"get_value","arguments":"{}"},
 		{"type":"function_call_output","call_id":"call_1","output":"ok"},
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"go on"}]}
@@ -2049,15 +2018,13 @@ func TestForwardResponsesChatFallbackRestoresEncryptedReasoningFromCache(t *test
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_restore","object":"chat.completion","model":"deepseek-reasoner","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`)),
 	}}
-	cache := &reasoningCacheStub{getResp: map[string]string{"item_enc": "cached thinking"}}
-	svc := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: upstream, cache: cache})
+	svc := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: upstream})
 
 	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackProvider(), body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "plain thinking", gjson.GetBytes(upstream.lastBody, "messages.0.reasoning_content").String())
 	require.Equal(t, "cached thinking", gjson.GetBytes(upstream.lastBody, "messages.2.reasoning_content").String())
-	require.Equal(t, "plain thinking", cache.sets["item_plain"])
 }
 
 // TestForwardResponsesReplaysUndeclaredNamespaceHistory sends compaction-style
@@ -3716,7 +3683,11 @@ func TestOpenAIGatewayServiceForward_DisabledGroupAllowsPassiveImageNamespace(t 
 			require.NotNil(t, result)
 			require.Equal(t, http.StatusOK, recorder.Code)
 			require.NotNil(t, upstream.lastReq)
-			require.Equal(t, "namespace", gjson.GetBytes(upstream.lastBody, `tools.#(name=="image_gen").type`).String())
+			if tt.passthrough {
+				require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, `tools.#(name=="image_gen__imagegen").type`).String())
+			} else {
+				require.Equal(t, "namespace", gjson.GetBytes(upstream.lastBody, `tools.#(name=="image_gen").type`).String())
+			}
 			cached, known := GetOpenAIImageIntentHint(c)
 			require.True(t, known)
 			require.True(t, cached, "宽泛意图仍应保留给转发和计费")
@@ -3910,7 +3881,11 @@ func TestOpenAIGatewayServiceForward_ProviderPolicyStripsImageNamespaceTools(t *
 			require.False(t, openaicore.HasOpenAIImageGenerationTool(forwarded))
 			require.Equal(t, "auto", forwarded["tool_choice"])
 			require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="shell")`).Exists())
-			require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="code_tools")`).Exists())
+			if tt.passthrough {
+				require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="code_tools__run")`).Exists())
+			} else {
+				require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="code_tools")`).Exists())
+			}
 			require.Equal(t, "write code", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
 			cached, known := GetOpenAIImageIntentHint(c)
 			require.True(t, known)
@@ -6854,7 +6829,7 @@ func TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior(t *testing.
 	require.False(t, gjson.GetBytes(forwarded, `tools.#(type=="namespace")`).Exists())
 	require.True(t, gjson.GetBytes(forwarded, `tools.#(name=="collaboration__spawn_agent")`).Exists())
 	require.False(t, gjson.GetBytes(forwarded, "input.0.namespace").Exists())
-	require.Equal(t, bridge.ResponsesNamespaceName{
+	require.Equal(t, protocolopenai.ResponsesNamespaceName{
 		Namespace: "collaboration",
 		Name:      "spawn_agent",
 	}, OpenAIResponsesNamespaceNames(c)["collaboration__spawn_agent"])
@@ -6869,7 +6844,7 @@ func TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames(t *testing.T) {
 		newOpenAIRejectedFieldTestResponse(http.StatusOK, namespaceForwardOKResponse),
 	}}
 	c := newOpenAIRejectedFieldTestContext(body)
-	SetOpenAIResponsesNamespaceNames(c, map[string]bridge.ResponsesNamespaceName{
+	SetOpenAIResponsesNamespaceNames(c, map[string]protocolopenai.ResponsesNamespaceName{
 		"stale__tool": {Namespace: "stale", Name: "tool"},
 	})
 
@@ -7577,4 +7552,251 @@ func TestResponsesPassthroughOAuthPromptAdditionalToolsSanitizesSchemas(t *testi
 	require.NotNil(t, result)
 	require.Equal(t, "object", gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools").tools.0.parameters.type`).String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools").tools.0.parameters.properties.q.pattern`).Exists())
+}
+
+// TestOpenAIResponsesForward_PrepareNativeReplayPassthroughAndTransform exercises
+// OpenAIResponsesExecutor.Forward across API key passthrough and non-passthrough
+// TransformRequest branches. Literal user "trc1:" stays byte-identical on
+// passthrough, same-account envelopes restore encrypted_content, and cross-account
+// envelopes strip encrypted_content while retaining visible summary text under store=false.
+func TestOpenAIResponsesForward_PrepareNativeReplayPassthroughAndTransform(t *testing.T) {
+	carrierAcct42, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_openai_acct_42",
+		ProviderID: 42,
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAnthropic,
+		Data:   "EqQBForeignAnthropicSig",
+		Text:   "Foreign thought.",
+	})
+	require.NoError(t, err)
+
+	okResp := func() *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(namespaceForwardOKResponse)),
+		}
+	}
+
+	carrierBody := []byte(`{"model":"gpt-5.4","stream":false,"store":false,"nonce":9007199254740993,"input":[{"type":"message","role":"user","content":"keep literal trc1:plain:demo"},{"type":"reasoning","id":"rs_same","summary":[{"type":"summary_text","text":"kept summary"}],"encrypted_content":"` + carrierAcct42 + `"},{"type":"reasoning","id":"rs_foreign","summary":[],"encrypted_content":"` + foreignCarrier + `"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)
+	literalBody := []byte("{\n  \"model\": \"gpt-5.4\",\n  \"stream\": false,\n  \"nonce\": 9007199254740993,\n  \"input\": [{\"type\": \"message\", \"role\": \"user\", \"content\": \"keep literal trc1:plain:demo\"}]\n}")
+
+	makeAPIKeyProvider := func(id int64, passthrough bool) *gatewayprovider.ExecutionProvider {
+		extra := map[string]any{}
+		if passthrough {
+			extra["openai_passthrough"] = true
+		}
+		return &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation:   time.LoadLocation,
+				ID:             id,
+				Name:           "openai-native-replay",
+				Platform:       capability.PlatformOpenAI,
+				Type:           capability.ProviderTypeAPIKey,
+				Concurrency:    1,
+				Status:         billingcore.StatusActive,
+				Schedulable:    true,
+				RateMultiplier: new(float64(1)),
+				Credentials:    map[string]any{"api_key": "sk-openai-test", "base_url": "https://api.openai.com/v1"},
+				Extra:          extra,
+			},
+		}
+	}
+
+	for _, passthrough := range []bool{true, false} {
+		modeName := "transform_non_passthrough"
+		if passthrough {
+			modeName = "passthrough"
+		}
+		t.Run(modeName, func(t *testing.T) {
+			// Literal user "trc1:" preserves exact bytes on passthrough.
+			if passthrough {
+				upLit := &auxiliaryHTTPRecorder{resp: okResp()}
+				svcLit := newResponsesFixture(responsesFixtureInputs{transport: upLit})
+				cLit, _ := gin.CreateTestContext(httptest.NewRecorder())
+				cLit.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(literalBody))
+				_, err = svcLit.Forward(context.Background(), cLit, makeAPIKeyProvider(42, true), literalBody)
+				require.NoError(t, err)
+				require.Equal(t, literalBody, upLit.lastBody)
+			}
+
+			// Same account (ID=42) unpacks carrierAcct42 and removes empty foreignCarrier item.
+			upSame := &auxiliaryHTTPRecorder{resp: okResp()}
+			svcSame := newResponsesFixture(responsesFixtureInputs{transport: upSame})
+			cSame, _ := gin.CreateTestContext(httptest.NewRecorder())
+			cSame.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(carrierBody))
+			_, err = svcSame.Forward(context.Background(), cSame, makeAPIKeyProvider(42, passthrough), carrierBody)
+			require.NoError(t, err)
+			require.Equal(t, "gAAAA_openai_acct_42", gjson.GetBytes(upSame.lastBody, "input.1.encrypted_content").String())
+			require.Equal(t, "message", gjson.GetBytes(upSame.lastBody, "input.2.type").String())
+			require.Contains(t, gjson.GetBytes(upSame.lastBody, "input.0.content").String(), "trc1:plain:demo")
+			require.Equal(t, "9007199254740993", gjson.GetBytes(upSame.lastBody, "nonce").Raw)
+
+			// Cross account (ID=99) strips encrypted_content and synthetic id while retaining visible summary.
+			upCross := &auxiliaryHTTPRecorder{resp: okResp()}
+			svcCross := newResponsesFixture(responsesFixtureInputs{transport: upCross})
+			cCross, _ := gin.CreateTestContext(httptest.NewRecorder())
+			cCross.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(carrierBody))
+			_, err = svcCross.Forward(context.Background(), cCross, makeAPIKeyProvider(99, passthrough), carrierBody)
+			require.NoError(t, err)
+			require.Equal(t, "reasoning", gjson.GetBytes(upCross.lastBody, "input.1.type").String())
+			require.Equal(t, "kept summary", gjson.GetBytes(upCross.lastBody, "input.1.summary.0.text").String())
+			require.False(t, gjson.GetBytes(upCross.lastBody, "input.1.encrypted_content").Exists())
+			require.False(t, gjson.GetBytes(upCross.lastBody, "input.1.id").Exists())
+			require.Equal(t, "message", gjson.GetBytes(upCross.lastBody, "input.2.type").String())
+		})
+	}
+}
+
+// TestOpenAIResponsesForward_DeepSeekPreludeIRClientToolsAndLocalRejection
+// exercises DeepSeek API Key native Responses forwarding through PreparePrelude
+// and openAIForwardHTTPAdapter. It verifies client-tool lowering,
+// prompt_cache_options stripping, buffered and streaming restoration, and local
+// 400 conflict handling without failover.
+func TestOpenAIResponsesForward_DeepSeekPreludeIRClientToolsAndLocalRejection(t *testing.T) {
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeOpenAI,
+		Data:   "gAAAA_foreign_ds",
+	})
+	require.NoError(t, err)
+
+	makeDeepSeek := func() *gatewayprovider.ExecutionProvider {
+		return &gatewayprovider.ExecutionProvider{
+			Record: providercore.Record{
+				LoadLocation:   time.LoadLocation,
+				ID:             801,
+				Name:           "deepseek-responses",
+				Platform:       capability.PlatformDeepseek,
+				Type:           capability.ProviderTypeAPIKey,
+				Concurrency:    1,
+				Status:         billingcore.StatusActive,
+				Schedulable:    true,
+				RateMultiplier: new(float64(1)),
+				Credentials: map[string]any{
+					"api_key":      "sk-deepseek",
+					"base_url":     "https://api.deepseek.com/v1",
+					"api_protocol": providercore.APIProtocolResponses,
+				},
+			},
+		}
+	}
+
+	reqBody := func(stream bool) []byte {
+		streamVal := "false"
+		if stream {
+			streamVal = "true"
+		}
+		return []byte(`{
+			"model":"deepseek-chat",
+			"stream":` + streamVal + `,
+			"prompt_cache_options":{"ttl":"5m"},
+			"tools":[
+				{"type":"custom","name":"exec","description":"Run shell"},
+				{"type":"tool_search","execution":"client"},
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			],
+			"input":[
+				{"type":"reasoning","id":"rs_foreign","summary":[],"encrypted_content":"` + foreignCarrier + `"},
+				{"type":"message","role":"user","content":"hello"}
+			]
+		}`)
+	}
+
+	t.Run("buffered", func(t *testing.T) {
+		body := reqBody(false)
+		upResp := `{"id":"resp_ds_buf","object":"response","model":"deepseek-chat","status":"completed","output":[` +
+			`{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"echo hi\"}"},` +
+			`{"type":"function_call","id":"fc_2","call_id":"c2","name":"tool_search","arguments":"{\"query\":\"db\"}"},` +
+			`{"type":"function_call","id":"fc_3","call_id":"c3","name":"db__query","arguments":"{\"sql\":\"select 1\"}"}` +
+			`],"usage":{"input_tokens":6,"output_tokens":4}}`
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(upResp)),
+		}}
+		svc := newResponsesFixture(responsesFixtureInputs{transport: up})
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		res, fErr := svc.Forward(context.Background(), c, makeDeepSeek(), body)
+		require.NoError(t, fErr)
+		require.NotNil(t, res)
+
+		require.False(t, gjson.GetBytes(up.lastBody, "prompt_cache_options").Exists(), "non-OpenAI platform must strip prompt_cache_options")
+		require.Equal(t, "function", gjson.GetBytes(up.lastBody, "tools.0.type").String())
+		require.Equal(t, "exec", gjson.GetBytes(up.lastBody, "tools.0.name").String())
+		require.Equal(t, "tool_search", gjson.GetBytes(up.lastBody, "tools.1.name").String())
+		require.Equal(t, "db__query", gjson.GetBytes(up.lastBody, "tools.2.name").String())
+		require.Equal(t, "message", gjson.GetBytes(up.lastBody, "input.0.type").String())
+		require.Equal(t, "custom_tool_call", gjson.Get(rec.Body.String(), "output.0.type").String())
+		require.Equal(t, "echo hi", gjson.Get(rec.Body.String(), "output.0.input").String())
+		require.Equal(t, "tool_search_call", gjson.Get(rec.Body.String(), "output.1.type").String())
+		require.Equal(t, "db", gjson.Get(rec.Body.String(), "output.2.namespace").String())
+		require.Equal(t, "query", gjson.Get(rec.Body.String(), "output.2.name").String())
+	})
+
+	t.Run("streaming", func(t *testing.T) {
+		body := reqBody(true)
+		sse := strings.Join([]string{
+			`: ping`,
+			`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","status":"in_progress"}}`,
+			``,
+			`data: {"type":"response.function_call_arguments.done","sequence_number":1,"output_index":0,"item_id":"fc_1","name":"exec","arguments":"{\"input\":\"uname\"}"}`,
+			``,
+			`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"uname\"}","status":"completed"}}`,
+			``,
+			`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_ds_sse","model":"deepseek-chat","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"c1","name":"exec","arguments":"{\"input\":\"uname\"}"}],"usage":{"input_tokens":5,"output_tokens":3}}}`,
+			``,
+		}, "\n")
+		up := &auxiliaryHTTPRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}}
+		svc := newResponsesFixture(responsesFixtureInputs{transport: up})
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		res, fErr := svc.Forward(context.Background(), c, makeDeepSeek(), body)
+		require.NoError(t, fErr)
+		require.NotNil(t, res)
+		out := rec.Body.String()
+		require.Contains(t, out, `"type":"custom_tool_call"`)
+		require.Contains(t, out, `"type":"response.custom_tool_call_input.done"`)
+		require.Contains(t, out, `"input":"uname"`)
+	})
+
+	t.Run("ir_prelude_tool_conflict_returns_local_400_without_failover_or_penalty", func(t *testing.T) {
+		conflictBody := []byte(`{
+			"model":"deepseek-chat",
+			"stream":false,
+			"tools":[
+				{"type":"function","name":"db__query","parameters":{"type":"object"}},
+				{"type":"namespace","name":"db","tools":[{"type":"function","name":"query","parameters":{"type":"object"}}]}
+			],
+			"input":"hi"
+		}`)
+		up := &auxiliaryHTTPRecorder{}
+		svc := newResponsesFixture(responsesFixtureInputs{transport: up})
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(conflictBody))
+		res, fErr := svc.Forward(context.Background(), c, makeDeepSeek(), conflictBody)
+		require.Error(t, fErr)
+		require.Nil(t, res)
+		require.True(t, routing.IsModelAttributeError(fErr))
+		var failoverErr *forwardcore.UpstreamFailoverError
+		require.False(t, errors.As(fErr, &failoverErr))
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+		require.Equal(t, "tools", gjson.Get(rec.Body.String(), "error.param").String())
+		require.Empty(t, up.bodies)
+	})
 }

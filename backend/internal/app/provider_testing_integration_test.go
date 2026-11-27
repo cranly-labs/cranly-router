@@ -340,7 +340,7 @@ func TestQoderAttributeRoutesAcrossPreviewProbeAndGateway(t *testing.T) {
 	require.NoError(t, err)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
-	_, err = gatewayhttp.ForwardQoderAttempt(ctx, c, runtime, record, body, protocol.ProtocolOpenAIResponses)
+	_, err = (&gatewayhttp.UnifiedTextExecutor{Qoder: runtime}).Responses(ctx, c, &gatewayprovider.ExecutionProvider{Record: *record}, body)
 	require.NoError(t, err)
 	require.Len(t, transport.requests, 2)
 	for _, request := range transport.requests {

@@ -17,7 +17,7 @@ INTEGRATION_PKGS = $(shell cd backend && grep -rlE '^//go:build integration$$' -
 
 .PHONY: build build-frontend build-backend generate \
 	fmt fmt-check fmt-go fmt-go-check fmt-frontend fmt-frontend-check lint lint-go lint-frontend \
-	test test-go test-frontend test-frontend-tools test-integration test-embed test-scripts test-installer test-tools test-e2e \
+	test test-go test-frontend test-frontend-tools test-integration test-embed test-scripts test-installer test-tools test-e2e test-clientlab \
 	check check-docs verify security security-go security-frontend hooks
 
 .PHONY: prepare-plugin-sdk-web lint-plugin-sdk test-plugin-sdk plugin-proto-check fmt-plugin-sdk fmt-plugin-sdk-check
@@ -165,6 +165,12 @@ test-tools:
 # environment variables; callers provide an isolated test environment before invocation.
 test-e2e:
 	cd backend && go test -count=1 -tags=e2e -v -timeout=300s ./tests/integration/...
+
+# test-clientlab installs locked CLI coding agents and runs the T6 client
+# laboratory scenarios against the in-process gateway and scripted upstreams.
+test-clientlab:
+	cd tools/clientlab && npm ci
+	TOKENROUTER_CLIENTLAB=1 go -C backend test ./internal/app -run '^TestClientLab' -count=1 -timeout 30m -v
 
 # check selects pre-push checks from changed files in the working tree.
 # BASE defaults to the upstream common ancestor, matching the hook entry point.

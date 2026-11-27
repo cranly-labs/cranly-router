@@ -1,9 +1,7 @@
 package openai
 
 import (
-	"bufio"
 	"bytes"
-	"crypto/rand"
 	"io"
 	"net/http"
 	"strings"
@@ -12,14 +10,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// usage_accounting_scenario_test.go covers response_chat.go and
-// response_messages.go with the shared protocol usage accumulator. Client
-// completion must preserve image accounting after sparse terminal observations.
+// usage_accounting_scenario_test.go covers response_converted.go and the shared
+// protocol/openai usage accumulator across converted Messages and Chat streams.
+// Client completion events and returned billing usage must preserve image token
+// accounting across sparse, omitted, and reset terminal usage observations.
 
 // accountingStreamSink captures converted stream payloads for terminal assertions.
 type accountingStreamSink struct {
@@ -35,9 +35,10 @@ func (s *accountingStreamSink) Emit(event upstream.OutputEvent) error {
 	return err
 }
 
-// TestConvertedResponsesStreamsPreserveImageAccounting drives both client readers
-// through sparse, absent, and reset terminal usage. The emitted completion and
-// returned billing buckets must reflect the same response without dropping images.
+// TestConvertedResponsesStreamsPreserveImageAccounting drives ReadConvertedStreaming
+// for Messages and Chat clients through sparse, absent, and reset terminal usage.
+// The emitted completion and returned billing buckets must reflect the same
+// response without dropping images.
 func TestConvertedResponsesStreamsPreserveImageAccounting(t *testing.T) {
 	for _, client := range []string{"messages", "chat"} {
 		for _, fixture := range []struct {
@@ -70,30 +71,37 @@ func TestConvertedResponsesStreamsPreserveImageAccounting(t *testing.T) {
 					"data: " + `{"type":"response.completed","response":{"id":"resp_images","status":"completed","output":[]` + fixture.usage + `}}` + "\n\n"
 				response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 				sink := &accountingStreamSink{}
-				output := upstream.NewOutputContext(sink)
-				options := ChatResponseOptions{
-					Runtime:          bridge.Runtime{Now: time.Now, ReadRandom: rand.Read},
+				output := upstream.NewDeferredOutputContext(sink)
+
+				clientProto := protocol.ProtocolAnthropicMessages
+				reqBody := []byte(`{"model":"model","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+				if client == "chat" {
+					clientProto = protocol.ProtocolOpenAIChatCompletions
+					reqBody = []byte(`{"model":"model","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`)
+				}
+				ex, exErr := convert.NewExchange(reqBody, convert.Options{
+					Route: convert.Route{
+						Client:   clientProto,
+						Upstream: protocol.ProtocolOpenAIResponses,
+					},
+					ClientModel: "model",
+				})
+				require.NoError(t, exErr)
+
+				result, err := ReadConvertedStreaming(response, output, ex, ConvertedResponseOptions{
 					RequestContext:   t.Context(),
 					Headers:          func(http.Header, http.Header) {},
 					ServiceTier:      func() string { return "" },
-					Scanner:          func(reader io.Reader) *bufio.Scanner { return NewCompatSSEScanner(reader, 1<<20) },
 					StreamInterval:   func() time.Duration { return 0 },
 					RestoreToolNames: func(payload []byte) []byte { return payload },
 					Observe:          func([]byte, string) {},
-				}
-				var result *CompatResponseResult
-				var err error
+				}, "model", "upstream-model", time.Now())
+				require.NoError(t, err)
 				if client == "messages" {
-					result, err = ReadMessagesStreaming(response, output, MessagesResponseOptions{
-						ChatResponseOptions: options,
-						MissingUsage:        func(*wire.ForwardUsage, string, bool) {},
-					}, "model", "upstream-model", time.Now())
 					require.Contains(t, sink.String(), `"type":"message_stop"`)
 				} else {
-					result, err = ReadChatStreaming(response, output, options, "model", "upstream-model", time.Now(), 0)
 					require.Contains(t, sink.String(), "data: [DONE]")
 				}
-				require.NoError(t, err)
 				require.Equal(t, fixture.want, result.Usage)
 				require.Contains(t, sink.String(), "OK")
 			})

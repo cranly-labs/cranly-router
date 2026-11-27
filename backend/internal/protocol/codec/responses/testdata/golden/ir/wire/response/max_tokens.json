@@ -1,0 +1,21 @@
+{
+  "id": "resp_max_tokens",
+  "model": "gpt-5",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "text",
+      "id": "msg_max_tokens_out",
+      "text": "Token bucket rate limiters absorb short traffic bursts by spending accumulated permits, while sliding window counters enforce stricter rolling boundaries at the cost of per-window "
+    }
+  ],
+  "finish": {
+    "reason": "length"
+  },
+  "usage": {
+    "input": 28,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 32
+  }
+}

@@ -1,11 +1,11 @@
 package gemini
 
-// images.go defines Gemini image generation requests and their nested image
-// and thinking settings.
-// Creative image requests carry prompt and reference-image parts with
-// generateContent configuration. Image size and aspect ratio are nested in
-// imageConfig, while optional reasoning settings occupy thinkingConfig; keeping
-// those objects separate supplies the request shape used by BuildImageRequest.
+// images.go defines Gemini creative image generation request types and validates
+// inline image MIME labels observed in Gemini response parts.
+// Creative image requests carry prompt and reference-image parts alongside
+// generateContent configuration, keeping imageSize and aspectRatio nested in
+// imageConfig and reasoning controls nested in thinkingConfig, while inline
+// image observation accepts the four raster MIME types emitted in inlineData.
 
 // ImageGenerationConfig contains creative generateContent output and image-generation settings.
 type ImageGenerationConfig struct {
@@ -30,4 +30,17 @@ type ImageThinkingConfig struct {
 type ImageGenerateRequest struct {
 	Contents         []BatchContent        `json:"contents"`         // prompt and image parts
 	GenerationConfig ImageGenerationConfig `json:"generationConfig"` // creative generation settings
+}
+
+// NativeIsGeminiInlineImageMIMEType reports whether mimeType exactly matches
+// one of the four lowercase raster image MIME types ("image/gif", "image/jpeg",
+// "image/png", or "image/webp") recognized for Gemini inline image parts.
+// Uppercase variants, media-type parameters, and other MIME types return false.
+func NativeIsGeminiInlineImageMIMEType(mimeType string) bool {
+	switch mimeType {
+	case "image/gif", "image/jpeg", "image/png", "image/webp":
+		return true
+	default:
+		return false
+	}
 }

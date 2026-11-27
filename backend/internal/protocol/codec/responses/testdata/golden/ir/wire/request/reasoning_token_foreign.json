@@ -1,0 +1,122 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Compare regional GPU quota headroom in us-east-1 and eu-west-1."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_for_ag_1",
+          "reasoning": {
+            "segments": [
+              "Check us-east-1 quota usage before comparing eu-west-1."
+            ],
+            "summary": true,
+            "token": {
+              "data": "trc1:antigravity_claude:eyJkIjoiYWdfY2xhdWRlX3NpZ19mb3JlaWduX3F1b3RhXzAxIiwidCI6IkNoZWNrIHVzLWVhc3QtMSBxdW90YSB1c2FnZSBiZWZvcmUgY29tcGFyaW5nIGV1LXdlc3QtMS4ifQ"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "id": "fc_quota_use1",
+          "call": {
+            "call_id": "call_quota_use1",
+            "tool": {
+              "kind": "function",
+              "name": "lookup_region_quota"
+            },
+            "arguments": "{\"region\":\"us-east-1\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_quota_use1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"region\":\"us-east-1\",\"used\":12,\"limit\":64}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "id": "rs_for_xai_2",
+          "reasoning": {
+            "segments": [
+              "us-east-1 has 52 spare GPUs; report intermediate status."
+            ],
+            "summary": true,
+            "token": {
+              "data": "trc1:xai:eyJkIjoiZW5jX3hhaV9mb3JlaWduX3F1b3RhXzAxIiwicCI6MjAyfQ"
+            }
+          }
+        },
+        {
+          "kind": "text",
+          "id": "msg_for_2",
+          "text": "us-east-1 currently has 52 spare GPUs out of 64."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Now check eu-west-1 and compare."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "lookup_region_quota",
+      "description": "Look up GPU quota usage in a cloud region.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "Region name"
+          }
+        },
+        "required": [
+          "region"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto",
+    "include_encrypted": true
+  }
+}

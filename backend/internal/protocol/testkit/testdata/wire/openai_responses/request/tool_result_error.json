@@ -1,0 +1,49 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "tools": [
+    {
+      "type": "function",
+      "name": "read_audit_log",
+      "description": "Read the trailing lines of an audit log file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute audit log path"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Read /var/log/restricted-audit.log and report the last entry."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_audit_err_1",
+      "call_id": "call_audit_err_1",
+      "name": "read_audit_log",
+      "arguments": "{\"path\":\"/var/log/restricted-audit.log\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_audit_err_1",
+      "output": "{\"error\":\"EACCES: permission denied opening /var/log/restricted-audit.log\",\"is_error\":true}"
+    }
+  ]
+}

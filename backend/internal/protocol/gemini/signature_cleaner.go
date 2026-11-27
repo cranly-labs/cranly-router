@@ -1,23 +1,30 @@
 package gemini
 
 import (
+	"bytes"
 	"encoding/json"
+	"strings"
 )
 
-// signature_cleaner.go replaces Gemini thought signatures throughout decoded
-// request history for provider-switch recovery.
-// Gemini replay signatures belong to the upstream state that produced their
-// history. Provider-switch preparation can replace thoughtSignature fields
-// with a caller-selected placeholder, including fields nested inside arrays
-// or objects, before the request enters another provider's replay rules.
+// signature_cleaner.go repairs missing functionCall thought signatures and
+// replaces stale thoughtSignature values across decoded Gemini requests.
+// Gemini replay signatures belong to the upstream session that produced their
+// history, while strict Gemini models reject unsigned functionCall parts in
+// native or replayed requests. Provider-switch recovery replaces existing
+// thoughtSignature fields with a caller-selected placeholder, and native
+// forwarding fills absent or whitespace-only signatures on camelCase
+// functionCall parts with DummyThoughtSignature.
 //
-// Replacement matches that exact field name and leaves differently named
-// signature fields untouched. The recursive helper copies map[string]any and
-// []any containers while retaining scalar values; other Go values pass through.
-// The byte-oriented entry point first decodes ordinary JSON, then serializes
-// the complete result even if no matching field existed. Consequently JSON
-// formatting and map-decoded numeric representation can change on success,
-// while decoding or encoding failure returns the supplied request body.
+// CleanNativeThoughtSignatures traverses decoded maps and slices recursively
+// while leaving neighboring "signature" fields untouched.
+// NativeEnsureGeminiFunctionCallThoughtSignatures screens raw bytes for a
+// literal "functionCall" token first so requests without tool calls retain
+// their exact byte slice and numeric formatting without generic map decoding.
+
+// DummyThoughtSignature is the Gemini compatibility sentinel used to bypass
+// upstream thoughtSignature validation when replaying unsigned or cross-account
+// history parts.
+const DummyThoughtSignature = "skip_thought_signature_validator"
 
 // CleanNativeThoughtSignatures replaces every exact thoughtSignature field
 // with placeholder in a decoded request. Empty bodies and decoding or encoding
@@ -51,6 +58,75 @@ func CleanNativeThoughtSignatures(body []byte, placeholder string) []byte {
 	}
 
 	return result
+}
+
+// NativeEnsureGeminiFunctionCallThoughtSignatures populates absent or
+// whitespace-only thoughtSignature fields with dummySignature on contents parts
+// carrying a non-nil camelCase functionCall object. Payloads without a literal
+// "functionCall" substring, malformed JSON, or requests where every call part
+// already carries a non-blank signature return body unchanged, while non-map
+// contents or part elements are skipped without aborting sibling turns.
+//
+// Modified payloads are re-encoded from decoded map[string]any containers,
+// which formats numbers through float64; marshaling errors fall back to
+// returning body unchanged.
+func NativeEnsureGeminiFunctionCallThoughtSignatures(dummySignature string, body []byte) []byte {
+	// Skip generic JSON decoding when no literal "functionCall" key appears so
+	// ordinary text requests keep exact wire formatting and integer precision.
+	if !bytes.Contains(body, []byte(`"functionCall"`)) {
+		return body
+	}
+
+	var payload map[string]any
+	// Preserve malformed JSON verbatim so downstream request handling reports
+	// the caller's original syntax error rather than receiving a partial body.
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+
+	contentsAny, ok := payload["contents"].([]any)
+	if !ok || len(contentsAny) == 0 {
+		return body
+	}
+
+	modified := false
+	for _, c := range contentsAny {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		partsAny, ok := cm["parts"].([]any)
+		if !ok || len(partsAny) == 0 {
+			continue
+		}
+		for _, p := range partsAny {
+			pm, ok := p.(map[string]any)
+			if !ok || pm == nil {
+				continue
+			}
+			if fc, ok := pm["functionCall"].(map[string]any); !ok || fc == nil {
+				continue
+			}
+			ts, _ := pm["thoughtSignature"].(string)
+			// Fill only missing or whitespace-only signatures on functionCall
+			// parts while keeping existing non-blank upstream signatures intact.
+			if strings.TrimSpace(ts) == "" {
+				pm["thoughtSignature"] = dummySignature
+				modified = true
+			}
+		}
+	}
+
+	if !modified {
+		return body
+	}
+	// Return the original slice if re-marshaling fails so optional signature
+	// repair never replaces a valid payload with empty bytes.
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return b
 }
 
 // replaceThoughtSignaturesRecursive copies map[string]any and []any containers

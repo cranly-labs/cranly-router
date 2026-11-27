@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
@@ -21,6 +22,7 @@ import (
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/infra/timingwheel"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -371,4 +373,56 @@ func newDeferredActivityRecorder(t *testing.T) (*providercore.DeferredService, *
 	// lifetime.
 	t.Cleanup(func() { require.NoError(t, svc.StopContext(context.Background())) })
 	return svc, &repo.updates
+}
+
+// TestGatewayService_AnthropicAPIKeyPassthrough_PrepareNativeReplay verifies
+// Anthropic API key passthrough continuity-carrier replay. Literal user "trc1:"
+// payloads stay byte-for-byte identical, matching Anthropic carriers restore
+// raw signatures, and emptied foreign-carrier turns receive a non-empty placeholder block.
+func TestGatewayService_AnthropicAPIKeyPassthrough_PrepareNativeReplay(t *testing.T) {
+	anthCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAnthropic,
+		Data:   "EqQBPassthroughSig",
+		Text:   "Passthrough signed thought.",
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_foreign",
+		ProviderID: 9,
+	})
+	require.NoError(t, err)
+
+	okResp := func() *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"msg_pass","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":8,"output_tokens":2}}`)),
+		}
+	}
+
+	target := newAnthropicAPIKeyProviderForTest()
+	carrierBody := []byte(`{"model":"claude-sonnet-4-6","max_tokens":128,"nonce":9007199254740993,"messages":[{"role":"user","content":"literal trc1:plain:keep"},{"role":"assistant","content":[{"type":"thinking","thinking":"stub","signature":"` + anthCarrier + `"}]},{"role":"user","content":"next"},{"role":"assistant","content":[{"type":"thinking","thinking":"foreign","signature":"` + foreignCarrier + `"}]},{"role":"user","content":"final"}]}`)
+	literalBody := []byte("{\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 128,\n  \"nonce\": 9007199254740993,\n  \"messages\": [{\"role\": \"user\", \"content\": \"literal trc1:plain:keep\"}]\n}")
+
+	// Literal user "trc1:" preserves exact bytes.
+	upLit := &anthropicHTTPUpstreamRecorder{resp: okResp()}
+	svcOn := newPrivateRuntimeFixture(&Options{Configured: true, ResponseReadLimit: 1 << 20}, Dependencies{Transport: upLit}, nil)
+	cLit, _ := newPrivateHTTPFixture(httptest.NewRecorder())
+	cLit.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	_, err = passthroughFixture(svcOn, context.Background(), cLit, target, literalBody, "claude-sonnet-4-6", "claude-sonnet-4-6", false, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, literalBody, upLit.lastBody)
+
+	// Unpacks trc1:anthropic and replaces emptied foreign turn with placeholder.
+	upOn := &anthropicHTTPUpstreamRecorder{resp: okResp()}
+	svcOn2 := newPrivateRuntimeFixture(&Options{Configured: true, ResponseReadLimit: 1 << 20}, Dependencies{Transport: upOn}, nil)
+	cOn, _ := newPrivateHTTPFixture(httptest.NewRecorder())
+	cOn.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	_, err = passthroughFixture(svcOn2, context.Background(), cOn, target, carrierBody, "claude-sonnet-4-6", "claude-sonnet-4-6", false, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "EqQBPassthroughSig", gjson.GetBytes(upOn.lastBody, "messages.1.content.0.signature").String())
+	require.Equal(t, "Passthrough signed thought.", gjson.GetBytes(upOn.lastBody, "messages.1.content.0.thinking").String())
+	require.Equal(t, "(assistant content removed)", gjson.GetBytes(upOn.lastBody, "messages.3.content.0.text").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(upOn.lastBody, "nonce").Raw)
 }

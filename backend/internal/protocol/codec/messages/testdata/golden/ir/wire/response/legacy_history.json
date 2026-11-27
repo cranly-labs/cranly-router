@@ -1,0 +1,30 @@
+{
+  "id": "msg_legacy_history",
+  "model": "claude-sonnet-4-5",
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "Migration checks for the requested tenants are ready to finalize."
+        ],
+        "token": {
+          "data": "EqQBCgIYAiJAbGVnYWN5X2hpc3RvcnlfcmVwbHlfc2lnXzAz"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "text": "Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 112,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 48
+  }
+}

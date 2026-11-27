@@ -16,7 +16,7 @@
 //   - image*.go: image models, request fields, uploads, and response bytes.
 //   - error_message.go, model_error.go, stream_error.go: error classification
 //     and client messages.
-//   - client_tools_stream.go: Responses client-tool stream conversion.
+//   - responses_tool_stream.go: Responses client-tool stream conversion.
 //   - gemini_stream.go, gemini_collect.go: validated Gemini stream consumption
 //     and candidate-preserving buffered collection.
 //   - sse_heartbeat.go: bounded upstream heartbeat classification and line filtering.

@@ -1,0 +1,38 @@
+{
+  "id": "chatcmpl_tools_search",
+  "model": "gpt-4o",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_search_2",
+        "tool": {
+          "kind": "function",
+          "name": "tool_search"
+        },
+        "arguments": "{\"query\":\"slack notify\",\"limit\":3}"
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inc_2",
+        "tool": {
+          "kind": "function",
+          "name": "pager__list_incidents"
+        },
+        "arguments": "{\"severity\":\"sev2\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 148,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 36
+  }
+}

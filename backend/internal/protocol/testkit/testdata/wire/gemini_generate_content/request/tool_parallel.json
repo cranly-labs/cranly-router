@@ -1,0 +1,106 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "city": {
+                "type": "STRING",
+                "description": "City name"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        },
+        {
+          "name": "get_time",
+          "description": "Get the local time for an IANA timezone.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "timezone": {
+                "type": "STRING",
+                "description": "IANA timezone identifier"
+              }
+            },
+            "required": [
+              "timezone"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Check weather and local time for London first, then Tokyo."
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "id": "call_weather_lon_1",
+            "name": "get_weather",
+            "args": {
+              "city": "London"
+            }
+          },
+          "thoughtSignature": "sig_fc_lon_1"
+        },
+        {
+          "functionCall": {
+            "id": "call_time_lon_2",
+            "name": "get_time",
+            "args": {
+              "timezone": "Europe/London"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "call_weather_lon_1",
+            "name": "get_weather",
+            "response": {
+              "city": "London",
+              "temp_c": 12,
+              "condition": "cloudy"
+            }
+          }
+        },
+        {
+          "functionResponse": {
+            "id": "call_time_lon_2",
+            "name": "get_time",
+            "response": {
+              "timezone": "Europe/London",
+              "local_time": "09:30"
+            }
+          }
+        },
+        {
+          "text": "Now check Tokyo weather and Asia/Tokyo time in parallel."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

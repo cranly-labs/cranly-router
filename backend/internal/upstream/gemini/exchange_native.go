@@ -25,6 +25,78 @@ import (
 // own result pointer, while normal final responses transfer body ownership to
 // the caller.
 
+// ExchangeNotice identifies an upstream exchange observation and its selected
+// diagnostic fields.
+type ExchangeNotice struct {
+	// Platform identifies the selected platform; ProviderName identifies its
+	// display name.
+	Platform, ProviderName string
+	ProviderID             int64 // selected provider audit identifier
+	UpstreamStatusCode     int   // upstream HTTP status; zero for transport failure
+	// UpstreamRequestID identifies the server request; Kind classifies
+	// observation; Message supplies public-safe text; Detail supplies diagnostic
+	// text.
+	UpstreamRequestID, Kind, Message, Detail string
+}
+
+// ExchangeOptions supplies synchronous construction, retry policy,
+// diagnostics, and body-recovery callbacks.
+type ExchangeOptions struct {
+	ProviderID int64 // selected provider audit identifier
+	// ProviderName labels provider; Platform labels platform; RequestIDHeader
+	// selects the initial request-ID header.
+	ProviderName, Platform, RequestIDHeader string
+	// MaxRetries is the local attempt count when ExternalRetry is false. Zero
+	// performs no exchange and returns a result with no response.
+	MaxRetries int // total request attempt budget
+	// ExternalRetry selects one ordinary attempt and leaves retryable HTTP or
+	// transport failures to the caller.
+	ExternalRetry bool // caller-owned ordinary retry policy
+	// CountFallback enables an estimate after native retry exhaustion.
+	// EstimateCount is required when this flag is used, and the estimate remains
+	// separate from usage.
+	CountFallback bool // native token estimate selection
+	// Build and Do are required on every attempt. Other callback fields are
+	// called synchronously on their applicable error, policy, throttle, or
+	// recovery path and callers supply those used by their selected exchange.
+	Build func(context.Context) (*http.Request, string, error) // request and ID-header construction
+	// Do returns a nonnil response and body on success. It owns cleanup for any
+	// response returned together with an error because these retry branches do
+	// not close that pair.
+	Do            func(*http.Request) (*http.Response, error) // upstream HTTP exchange callback
+	BuildError    func(error) error                           // request construction error mapping
+	FinalError    func(string) error                          // terminal transport error mapping
+	EstimateCount func() int                                  // native fallback token estimation
+	ReadError     func(*http.Response) []byte                 // error response body consumption
+	// CheckPolicy returns the readable response used for subsequent status
+	// handling, including a nonnil replacement when matched. It owns any original
+	// stream consumed or replaced during evaluation.
+	CheckPolicy func(context.Context, *http.Response) (bool, *http.Response) // error-policy evaluation and response replacement
+	ShouldRetry func(int) bool                                               // HTTP status retry eligibility
+	OnStatus    func(context.Context, int, http.Header, []byte)              // early throttle observation callback
+	Observe     func(ExchangeNotice)                                         // exchange diagnostic observation callback
+	SetError    func(int, string, string)                                    // terminal error state callback
+	// Message extracts error text; Detail extracts diagnostic body text.
+	Message, Detail func([]byte) string
+	Sanitize        func(string) string // diagnostic text redaction callback
+	// RepairToolReplay rebuilds converted request history without replay
+	// signatures after a signature rejection. True permits one repair.
+	RepairToolReplay func() bool
+}
+
+// ExchangeResult carries a selected response or a separate native token
+// estimate.
+type ExchangeResult struct {
+	CandidateCount int // final request candidate count
+
+	// Response and EstimatedTokens represent alternative outcomes. A nonnil
+	// response body belongs to the caller; a native estimate outcome has no
+	// response body to close.
+	Response        *http.Response // caller-owned selected HTTP response
+	RequestIDHeader string         // selected upstream ID-header name
+	EstimatedTokens *int           // independent native token estimate
+}
+
 // ExchangeNative returns the selected upstream response and request-ID header
 // after its total attempt budget. Callers supply callbacks for the selected
 // ExchangeOptions paths and close the returned body.

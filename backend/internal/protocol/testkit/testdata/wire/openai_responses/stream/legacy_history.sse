@@ -1,0 +1,51 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_legacy_history","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_legacy_history","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"rs_leg_reply_3","type":"reasoning","summary":[]}}
+
+event: response.reasoning_summary_part.added
+data: {"type":"response.reasoning_summary_part.added","sequence_number":3,"item_id":"rs_leg_reply_3","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":4,"item_id":"rs_leg_reply_3","output_index":0,"summary_index":0,"delta":"Migration checks for the requested tenants "}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":5,"item_id":"rs_leg_reply_3","output_index":0,"summary_index":0,"delta":"are ready to finalize."}
+
+event: response.reasoning_summary_text.done
+data: {"type":"response.reasoning_summary_text.done","sequence_number":6,"item_id":"rs_leg_reply_3","output_index":0,"summary_index":0,"text":"Migration checks for the requested tenants are ready to finalize."}
+
+event: response.reasoning_summary_part.done
+data: {"type":"response.reasoning_summary_part.done","sequence_number":7,"item_id":"rs_leg_reply_3","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"Migration checks for the requested tenants are ready to finalize."}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":8,"output_index":0,"item":{"id":"rs_leg_reply_3","type":"reasoning","summary":[{"type":"summary_text","text":"Migration checks for the requested tenants are ready to finalize."}],"encrypted_content":"gAAAAABnLegacyHistoryReplyEnc03"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":9,"output_index":1,"item":{"id":"msg_leg_reply_3","type":"message","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":10,"item_id":"msg_leg_reply_3","output_index":1,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":11,"item_id":"msg_leg_reply_3","output_index":1,"content_index":0,"delta":"Pre-upgrade migration verification succeeded: "}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":12,"item_id":"msg_leg_reply_3","output_index":1,"content_index":0,"delta":"schema version 42 is applied cleanly."}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":13,"item_id":"msg_leg_reply_3","output_index":1,"content_index":0,"text":"Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":14,"item_id":"msg_leg_reply_3","output_index":1,"content_index":0,"part":{"type":"output_text","text":"Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly.","annotations":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":15,"output_index":1,"item":{"id":"msg_leg_reply_3","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly.","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":16,"response":{"id":"resp_legacy_history","object":"response","created_at":1760000000,"status":"completed","model":"gpt-5","output":[{"id":"rs_leg_reply_3","type":"reasoning","summary":[{"type":"summary_text","text":"Migration checks for the requested tenants are ready to finalize."}],"encrypted_content":"gAAAAABnLegacyHistoryReplyEnc03"},{"id":"msg_leg_reply_3","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Pre-upgrade migration verification succeeded: schema version 42 is applied cleanly.","annotations":[]}]}],"usage":{"input_tokens":112,"output_tokens":48,"total_tokens":160,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":22}}}}
+

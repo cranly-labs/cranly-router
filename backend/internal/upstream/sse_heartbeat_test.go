@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 )
 
 // filterHeartbeatInput pushes physical SSE lines while preserving their endings.
@@ -103,7 +103,7 @@ func TestSSEHeartbeatLineFilterBoundsAndCopies(t *testing.T) {
 // upstream ping while preserving restored protocol metadata and response identity.
 func TestSSEHeartbeatFilteringComposesWithClientTools(t *testing.T) {
 	input := ": upstream-comment\n\nevent: ping\ndata: {\"type\":\"ping\",\"cost\":0}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\"}}\n\n"
-	body := NewResponsesClientToolStreamBody(io.NopCloser(strings.NewReader(input)), bridge.ResponsesClientToolMapping{CustomTools: map[string]bool{"apply_patch": true}}, DefaultSSELineLimit)
+	body := NewResponsesToolStreamBody(io.NopCloser(strings.NewReader(input)), &convert.ToolMap{CustomTools: map[string]bool{"apply_patch": true}}, DefaultSSELineLimit)
 	data, err := io.ReadAll(body)
 	require.NoError(t, err)
 	require.NoError(t, body.Close())

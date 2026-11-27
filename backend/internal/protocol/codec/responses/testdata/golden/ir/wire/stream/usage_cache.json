@@ -1,0 +1,62 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_usage_cache",
+      "model": "gpt-5",
+      "created_at": 1760002000,
+      "service_tier": "priority"
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "text",
+      "id": "msg_usage_cache_out"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "Cached prefix tokens were reused "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "from the 1h system block while "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "new 5m context was written once."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "text",
+      "id": "msg_usage_cache_out",
+      "text": "Cached prefix tokens were reused from the 1h system block while new 5m context was written once."
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 120,
+      "cache_read": 640,
+      "cache_write": 300,
+      "cache_write_30m": 180,
+      "cache_write_12h": 120,
+      "output": 28
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "stop"
+    },
+    "service_tier": "priority"
+  }
+]

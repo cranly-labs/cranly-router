@@ -9,6 +9,7 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
 // openai_text_raw.go dispatches native and converted requests to Chat-only
@@ -37,10 +38,10 @@ func (s *OpenAITextExecutor) RawChat(
 	return out, err
 }
 
-// MessagesViaRawChat converts Messages input for a selected Chat endpoint and
-// returns Anthropic output. A fresh adapter keeps this call's provider and TLS
-// selection; the runner owns upstream cleanup, and result observations can
-// accompany an error.
+// MessagesViaRawChat converts Messages input for a selected Chat endpoint via
+// newConvertedRawChatAdapter and returns Anthropic output. A fresh adapter
+// keeps this call's provider and TLS selection; the runner owns upstream
+// cleanup, and result observations can accompany an error.
 func (s *OpenAITextExecutor) MessagesViaRawChat(
 	ctx context.Context,
 	c *gin.Context,
@@ -49,17 +50,16 @@ func (s *OpenAITextExecutor) MessagesViaRawChat(
 	defaultMappedModel string,
 	tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult,
 ) (*forwardcore.OpenAIResult, error) {
-	adapter := &openAIRawFallbackAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch}, kind: openaiexecution.NativeMessages}
-	result, err := openaiexecution.MessagesViaRawChat(ctx, body, defaultMappedModel, adapter)
+	ports := s.newConvertedRawChatAdapter(c, provider, openaiexecution.NativeMessages, tlsRouterMatch)
+	result, err := openaiexecution.RunConvertedRawChat(ctx, protocol.ProtocolAnthropicMessages, body, defaultMappedModel, ports)
 	out := openaiexecution.ToForwardResult(result)
 	captureResponseModel(c, out)
 	return out, err
 }
 
 // ResponsesViaRawChat converts Responses input for a selected Chat-only
-// upstream route. Its fresh adapter uses Responses error output and shared
-// reasoning history; callers retain c during synchronous output and inspect
-// the returned result alongside its error.
+// upstream route via newConvertedRawChatAdapter. Callers retain c during
+// synchronous output and inspect the returned result alongside its error.
 func (s *OpenAITextExecutor) ResponsesViaRawChat(
 	ctx context.Context,
 	c *gin.Context,
@@ -67,8 +67,8 @@ func (s *OpenAITextExecutor) ResponsesViaRawChat(
 	body []byte,
 	tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult,
 ) (*forwardcore.OpenAIResult, error) {
-	adapter := &openAIRawFallbackAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch}, kind: openaiexecution.NativeResponses}
-	result, err := openaiexecution.ResponsesViaRawChat(ctx, body, adapter)
+	ports := s.newConvertedRawChatAdapter(c, provider, openaiexecution.NativeResponses, tlsRouterMatch)
+	result, err := openaiexecution.RunConvertedRawChat(ctx, protocol.ProtocolOpenAIResponses, body, "", ports)
 	out := openaiexecution.ToForwardResult(result)
 	captureResponseModel(c, out)
 	return out, err

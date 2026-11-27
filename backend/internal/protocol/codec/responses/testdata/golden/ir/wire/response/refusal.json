@@ -1,0 +1,21 @@
+{
+  "id": "resp_refusal",
+  "model": "gpt-5",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "refusal",
+      "id": "msg_refusal_out",
+      "text": "I cannot provide instructions for bypassing authentication controls or extracting active session credentials."
+    }
+  ],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 46,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 14
+  }
+}

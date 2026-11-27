@@ -1,0 +1,45 @@
+{
+  "id": "chatcmpl_tool_ids_missing",
+  "object": "chat.completion",
+  "created": 1760000000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_lookup_primary_1",
+            "type": "function",
+            "function": {
+              "name": "lookup_host",
+              "arguments": "{\"hostname\":\"db-primary.internal\"}"
+            }
+          },
+          {
+            "id": "",
+            "type": "function",
+            "function": {
+              "name": "lookup_host",
+              "arguments": "{\"hostname\":\"db-replica.internal\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 58,
+    "completion_tokens": 30,
+    "total_tokens": 88,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

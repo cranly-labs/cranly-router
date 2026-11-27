@@ -36,3 +36,15 @@ func TestSparkIdentityIsExact(t *testing.T) {
 	require.False(t, IsCodexSparkModel("gpt-5.3-codex-spark-high"))
 	require.False(t, IsCodexSparkModel("vendor/gpt-5.3-codex-spark"))
 }
+
+// TestExtractAnthropicOutputEffortBytesAndValueReconciliation reads raw
+// output_config.effort bytes and reconciles explicit max effort against
+// converted values. Extracted max effort preserves canonical max when catalog
+// support is unknown while absent effort leaves converted values untouched.
+func TestExtractAnthropicOutputEffortBytesAndValueReconciliation(t *testing.T) {
+	raw := []byte(`{"model":"claude-opus-4-6","extra":9007199254740993,"output_config":{"effort":"MAX"}}`)
+	effort := ExtractAnthropicOutputEffortBytes(raw)
+	require.Equal(t, "MAX", effort)
+	require.Equal(t, "max", OpenAICompatAnthropicReasoningEffortValue(effort, "gpt-5.6-sol", "xhigh"))
+	require.Equal(t, "high", OpenAICompatAnthropicReasoningEffortValue(ExtractAnthropicOutputEffortBytes([]byte(`{"model":"x"}`)), "gpt-5.4", "high"))
+}

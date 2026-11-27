@@ -17,9 +17,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
-	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
-	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -119,7 +116,7 @@ func IsOpenAICompatMessagesBridgeContext(c *gin.Context) bool {
 // Native Anthropic and adaptive protocol routes choose NativeMessages
 // dispatch, while raw-Chat model policy or a resolved other-platform Chat preference
 // selects Chat conversion. The remaining route uses Responses conversion.
-// These routing hints describe one selected provider; RunMessages owns the
+// These routing hints describe one selected provider; RunConvertedResponses owns the
 // subsequent exchange and the outer text loop owns provider switching.
 func (p *openAIMessagesExecutionAdapter) Prepare(ctx context.Context) (openaiexecution.MessagesProfile, openaiexecution.Dispatch, error) {
 	provider, err := gatewayprovider.ProviderForProtocolAttempt(ctx, p.provider)
@@ -204,7 +201,7 @@ func (p *openAIMessagesExecutionAdapter) ClaudeSession(body []byte) string {
 
 // FindDigestKey searches the shared prompt cache by provider, key ID and
 // digest chain. A missing provider supplies ID zero to the cache; the returned
-// key and matched chain guide later history binding in RunMessages.
+// key and matched chain guide later history binding in RunConvertedResponses.
 func (p *openAIMessagesExecutionAdapter) FindDigestKey(key int64, chain string) (string, string) {
 	var id int64
 	if p.provider != nil {
@@ -235,28 +232,9 @@ func (p *openAIMessagesExecutionAdapter) ContinuationDisabled(ctx context.Contex
 	return p.s.Continuation.Disabled(compatResponseKey(p.c, p.provider, key))
 }
 
-// Convert resolves model capabilities and converts Anthropic input to
-// Responses using their options. Successful resolution updates
-// provider.Capabilities before request serialization; later serialization or
-// conversion errors can leave that request-local capability publication
-// visible.
-func (p *openAIMessagesExecutionAdapter) Convert(r *protocolanthropic.AnthropicRequest) (*protocolopenai.ResponsesRequest, error) {
-	result, err := p.modelResolution(r.Model, r, "openai_responses")
-	if err != nil {
-		return nil, err
-	}
-	return protocolbridge.AnthropicToResponses(r, gatewayprovider.ModelConversionOptions(result))
-}
-
 // BetaFast reports whether the inbound Anthropic beta list contains fast mode.
 func (p *openAIMessagesExecutionAdapter) BetaFast() bool {
 	return claude.ContainsBetaToken(p.c.GetHeader("anthropic-beta"), claude.BetaFastMode)
-}
-
-// MessagesEffort delegates model-sensitive effort selection using the
-// Anthropic request and resolved attributes.
-func (p *openAIMessagesExecutionAdapter) MessagesEffort(r *protocolanthropic.AnthropicRequest, model, effort string) string {
-	return gatewayprovider.OpenAICompatAnthropicReasoningEffort(r, model, effort, gatewayprovider.ExecutionModelAttributes(p.provider, model))
 }
 
 // Debug writes supplied structured execution diagnostics through the shared
@@ -279,7 +257,7 @@ func (p *openAIMessagesExecutionAdapter) ForcedTemplate() string {
 
 // ForcedInstructions delegates template rendering using the writable request
 // map and supplied template data. The returned change flag identifies
-// installed instructions, and a render error stops RunMessages before outgoing
+// installed instructions, and a render error stops RunConvertedResponses before outgoing
 // request serialization.
 func (p *openAIMessagesExecutionAdapter) ForcedInstructions(body map[string]any, text string, data openaiexecution.TemplateData) (bool, error) {
 	return applyForcedCodexInstructionsTemplate(body, text, forcedCodexInstructionsTemplateData(data))
@@ -316,7 +294,7 @@ func (p *openAIMessagesExecutionAdapter) ApplyEffort(ctx context.Context, body [
 
 // ApplyFast applies current provider fast-tier policy to the prepared
 // Responses body. A BlockedError marks local policy limitation and writes
-// Anthropic forbidden output; RunMessages returns that preparation error
+// Anthropic forbidden output; RunConvertedResponses returns that preparation error
 // before acquiring upstream request resources.
 func (p *openAIMessagesExecutionAdapter) ApplyFast(ctx context.Context, model string, body []byte) ([]byte, error) {
 	updated, err := tierpolicy.ApplyBody(body, p.s.FastPolicy.Input(ctx, p.provider, model))
@@ -341,7 +319,7 @@ func (p *openAIMessagesExecutionAdapter) GrokCacheIdentity(body []byte, key, mod
 
 // PatchGrokBody prepares Grok Responses fields with the selected model and
 // runtime attributes. It uses the live HTTP request context for resolution,
-// and errors return to RunMessages before the outgoing request can be
+// and errors return to RunConvertedResponses before the outgoing request can be
 // serialized or sent.
 func (p *openAIMessagesExecutionAdapter) PatchGrokBody(body []byte, model string) ([]byte, error) {
 	return gatewayprovider.PrepareGrokResponses(p.c.Request.Context(), p.provider, model, body, p.s.modelAttributes())
@@ -349,7 +327,7 @@ func (p *openAIMessagesExecutionAdapter) PatchGrokBody(body []byte, model string
 
 // GrokFreeToolRoute delegates cache-route preparation for free Grok Messages
 // function tools. Provider policy and canonical intent determine the route;
-// the returned body or error reaches RunMessages before the exchange begins.
+// the returned body or error reaches RunConvertedResponses before the exchange begins.
 func (p *openAIMessagesExecutionAdapter) GrokFreeToolRoute(body, intent []byte, key string) ([]byte, error) {
 	return gatewayprovider.ApplyGrokFreeMessagesFunctionToolCacheRoute(body, intent, p.provider, key)
 }
@@ -443,7 +421,7 @@ func (p *openAIMessagesExecutionAdapter) IsAgentIdentity(ctx context.Context) bo
 
 // RecoverAgentTask delegates recovery using the selected provider's current
 // task ID. The identity service owns the exchange and credential update;
-// RunMessages controls whether this request has already consumed its recovery
+// RunConvertedResponses controls whether this request has already consumed its recovery
 // attempt.
 func (p *openAIMessagesExecutionAdapter) RecoverAgentTask(ctx context.Context) error {
 	return p.s.Requests.Identity.Recover(ctx, p.provider, p.provider.View().GetCredential("task_id"))
@@ -513,14 +491,6 @@ func (p *openAIMessagesExecutionAdapter) BindTurnState(ctx context.Context, key,
 // writer.
 func (p *openAIMessagesExecutionAdapter) Sink() upstream.OutputSink {
 	return NewResponseSink(p.c)
-}
-
-// ResponseOptions binds Responses-to-Messages reading callbacks to the current
-// request and provider. Callers keep the response and configured output
-// services live through reading, and the runner retains responsibility for
-// closing the response body afterward.
-func (p *openAIMessagesExecutionAdapter) ResponseOptions(r *http.Response, original, billing, model string) openai.MessagesResponseOptions {
-	return p.s.Output.MessagesOptions(p.c, p.provider, r, original, billing, model)
 }
 
 // CyberPolicy reports whether this request holds observed OpenAI cyber-policy

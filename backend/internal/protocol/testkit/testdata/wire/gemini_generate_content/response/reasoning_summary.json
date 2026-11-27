@@ -1,0 +1,29 @@
+{
+  "responseId": "gem_reasoning_summary",
+  "modelVersion": "gemini-2.5-pro",
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Merge sort preserves equal-key order during left-before-right merging. In-place quicksort partitions swap non-adjacent elements and can invert equal keys.",
+            "thought": true,
+            "thoughtSignature": "CpEBCocB_gem_merge_quicksort_sig_01"
+          },
+          {
+            "text": "Merge sort is stable because equal elements keep their original order when sorted halves merge. Standard in-place quicksort is unstable because long-range partition swaps can reorder equal keys."
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 42,
+    "candidatesTokenCount": 38,
+    "thoughtsTokenCount": 30,
+    "totalTokenCount": 110
+  }
+}

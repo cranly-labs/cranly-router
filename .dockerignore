@@ -35,6 +35,7 @@ build/
 # Node modules (will be installed in container)
 frontend/node_modules/
 node_modules/
+tools/clientlab/node_modules/
 
 # Plugin SDK development dependencies and sample outputs are rebuilt from source;
 # exclude them from the backend module copy and the container build context.
@@ -93,3 +94,6 @@ backend/data/
 .agents/
 refactor/
 output/
+
+# Unsanitized raw clientlab captures must never enter container build contexts.
+backend/internal/protocol/testkit/testdata/corpus/_incoming/

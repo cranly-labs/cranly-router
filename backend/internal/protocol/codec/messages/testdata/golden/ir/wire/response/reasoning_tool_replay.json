@@ -1,0 +1,46 @@
+{
+  "id": "msg_reasoning_tool_replay",
+  "model": "claude-sonnet-4-5",
+  "parts": [
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "segments": [
+          "SKU-42 has 4 units against a reorder point of 20; now query SKU-99 stock."
+        ],
+        "token": {
+          "data": "EqQBCgIYAiJAc2t1Xzk5X3RoaW5raW5nX3NpZ190dXJuXzAy"
+        }
+      }
+    },
+    {
+      "kind": "reasoning",
+      "reasoning": {
+        "redacted": true,
+        "token": {
+          "data": "EmwKAhgCIkByZWRhY3RlZF9pbnZlbnRvcnlfZGF0YV90dXJuXzAy"
+        }
+      }
+    },
+    {
+      "kind": "tool_call",
+      "call": {
+        "call_id": "call_inv_sku99_2",
+        "tool": {
+          "kind": "function",
+          "name": "query_inventory"
+        },
+        "arguments": "{\"sku\":\"SKU-99\"}"
+      }
+    }
+  ],
+  "finish": {
+    "reason": "tool_calls"
+  },
+  "usage": {
+    "input": 96,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 52
+  }
+}

@@ -18,10 +18,10 @@
 //   - tool_continuation.go: context checks for continuing tool calls.
 //
 // File groups:
-//   - types.go, responses_stream_event_wire.go, compatibility_fields.go: protocol fields and JSON codecs.
-//   - compaction_trigger.go, encrypted_replay.go, input_helpers.go, previous_response_id.go: input items, compaction, and history replay.
-//   - tool_continuation.go, tool_schema.go: tool continuation and parameter schema cleanup.
-//   - response_forward_wire.go, response_lifecycle.go, response_terminal.go: response reading, lifecycle events, and terminal events.
+//   - types.go, compatibility_fields.go: protocol fields and JSON codecs.
+//   - compat_continuation.go, compaction_trigger.go, encrypted_replay.go, input_helpers.go, previous_response_id.go: input items, continuation trimming, compaction, and history replay.
+//   - tool_continuation.go, tool_schema.go, responses_namespace.go: tool continuation, parameter schema cleanup, and Responses namespace flattening/restoration.
+//   - response_forward_wire.go, response_lifecycle.go, response_reconstruction.go, response_terminal.go: response reading, lifecycle events, output reconstruction, and terminal events.
 //   - sse_data.go, sse_documents.go, chat_stream_compat.go: SSE lines, concatenated documents, and Chat stream compatibility.
 //   - ws_events.go, ws_payload.go, ws_warmup.go: WebSocket events, request payloads, and warmup responses.
 //   - usage.go, forward_usage.go, image_output.go, visible_output.go: compatible usage normalization, sparse snapshots, image counting, and visible output detection.

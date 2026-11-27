@@ -1,0 +1,58 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 256,
+  "tools": [
+    {
+      "type": "function",
+      "name": "capture_chart",
+      "description": "Capture a PNG snapshot of a dashboard chart panel.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "panel": {
+            "type": "string",
+            "description": "Dashboard panel identifier"
+          }
+        },
+        "required": [
+          "panel"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Capture the latency_p99 chart and summarize what you see."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_chart_1",
+      "call_id": "call_chart_1",
+      "name": "capture_chart",
+      "arguments": "{\"panel\":\"latency_p99\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_chart_1",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "Captured panel latency_p99 (1x1 preview)."
+        },
+        {
+          "type": "input_image",
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        }
+      ]
+    }
+  ]
+}

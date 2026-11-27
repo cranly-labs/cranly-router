@@ -1,0 +1,108 @@
+[
+  {
+    "kind": "response_start",
+    "response": {
+      "id": "resp_reasoning_token_foreign",
+      "model": "gpt-5",
+      "created_at": 1760000000
+    }
+  },
+  {
+    "kind": "part_start",
+    "part": {
+      "kind": "reasoning",
+      "id": "rs_quota_euw2",
+      "reasoning": {}
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "us-east-1 has 52 GPUs available; "
+    }
+  },
+  {
+    "kind": "part_delta",
+    "delta": {
+      "text": "query eu-west-1 quota next."
+    }
+  },
+  {
+    "kind": "part_end",
+    "part": {
+      "kind": "reasoning",
+      "id": "rs_quota_euw2",
+      "reasoning": {
+        "segments": [
+          "us-east-1 has 52 GPUs available; query eu-west-1 quota next."
+        ],
+        "summary": true,
+        "token": {
+          "data": "gAAAAABnQuotaEuWest1Enc02"
+        }
+      }
+    }
+  },
+  {
+    "kind": "part_start",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "id": "fc_quota_euw2",
+      "call": {
+        "call_id": "call_quota_euw2",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_region_quota"
+        },
+        "arguments": ""
+      }
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "{\"region\":"
+    }
+  },
+  {
+    "kind": "part_delta",
+    "index": 1,
+    "delta": {
+      "arguments": "\"eu-west-1\"}"
+    }
+  },
+  {
+    "kind": "part_end",
+    "index": 1,
+    "part": {
+      "kind": "tool_call",
+      "id": "fc_quota_euw2",
+      "call": {
+        "call_id": "call_quota_euw2",
+        "tool": {
+          "kind": "function",
+          "name": "lookup_region_quota"
+        },
+        "arguments": "{\"region\":\"eu-west-1\"}"
+      }
+    }
+  },
+  {
+    "kind": "usage",
+    "usage": {
+      "input": 104,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 50,
+      "reasoning": 26
+    }
+  },
+  {
+    "kind": "response_end",
+    "finish": {
+      "reason": "tool_calls"
+    }
+  }
+]

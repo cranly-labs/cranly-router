@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
@@ -123,8 +122,8 @@ func CompatTerminalResponse(event *wire.ResponsesStreamEvent, payload []byte) *w
 // supplied event categories while omitted fields retain prior usage. EOF attempts its
 // final frame, and malformed frames leave previously accumulated output and
 // usage available.
-func ReadCompatBufferedTerminal(resp *http.Response, options CompatBufferedOptions) (*wire.ResponsesResponse, wire.ForwardUsage, *bridge.BufferedResponseAccumulator, error) {
-	acc := bridge.NewBufferedResponseAccumulator()
+func ReadCompatBufferedTerminal(resp *http.Response, options CompatBufferedOptions) (*wire.ResponsesResponse, wire.ForwardUsage, *wire.BufferedResponseAccumulator, error) {
+	acc := wire.NewBufferedResponseAccumulator()
 	var usage wire.ForwardUsage
 	var usageAccumulator wire.UsageAccumulator
 	if resp == nil || resp.Body == nil {

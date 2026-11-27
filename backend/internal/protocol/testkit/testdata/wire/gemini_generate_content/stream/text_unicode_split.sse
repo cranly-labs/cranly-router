@@ -1,0 +1,12 @@
+data: {"responseId":"gem_text_unicode_split","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Hello 你"}]}}]}
+
+data: {"responseId":"gem_text_unicode_split","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"好世界！👨‍👩‍"}]}}]}
+
+data: {"responseId":"gem_text_unicode_split","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"👧‍👦 🇯"}]}}]}
+
+data: {"responseId":"gem_text_unicode_split","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"🇵 👋"}]}}]}
+
+data: {"responseId":"gem_text_unicode_split","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"🏽 cafe"}]}}]}
+
+data: {"responseId":"gem_text_unicode_split","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"́ 🚀"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":22,"candidatesTokenCount":19,"totalTokenCount":41}}
+

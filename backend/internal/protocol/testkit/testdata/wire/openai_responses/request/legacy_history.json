@@ -1,0 +1,95 @@
+{
+  "model": "gpt-5",
+  "max_output_tokens": 4096,
+  "store": false,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "check_migration_state",
+      "description": "Check tenant database migration version and status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "description": "Tenant ID"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Verify pre-upgrade migration status for tenant-7 and tenant-12."
+        }
+      ]
+    },
+    {
+      "id": "rs_leg_bare_1",
+      "type": "reasoning",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Check tenant-7 migration row before checking tenant-12."
+        }
+      ],
+      "encrypted_content": "gAAAAABnLegacyBareResponsesEncFromPreUpgrade01"
+    },
+    {
+      "id": "fc_mig_t7_1",
+      "type": "function_call",
+      "call_id": "call_mig_t7_1",
+      "name": "check_migration_state",
+      "arguments": "{\"tenant_id\":\"tenant-7\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_mig_t7_1",
+      "output": "{\"tenant_id\":\"tenant-7\",\"schema_version\":42,\"status\":\"applied\"}"
+    },
+    {
+      "id": "rs_leg_redis_2",
+      "type": "reasoning",
+      "summary": [],
+      "encrypted_content": "enc_legacy_redis_reasoning_history_opaque_02"
+    },
+    {
+      "id": "msg_leg_2",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "tenant-7 is already at schema version 42."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Confirm tenant-12 status next."
+        }
+      ]
+    }
+  ]
+}

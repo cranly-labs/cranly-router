@@ -13,7 +13,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	openaicore "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -29,11 +29,13 @@ import (
 //
 // The request state pointer is initialized through a shared mutex, and
 // ResponseTools synchronizes publication of its individual slots. Name
-// publication copies string maps; client and namespace mappings retain their
-// internal maps, and getters return shared references. Consumers keep published
-// storage immutable. SSE restoration can temporarily borrow its event-line type
-// for missing payload metadata, removing that added field after a successful
-// name rewrite.
+// publication copies string maps, IR ToolMap publication and retrieval return
+// detached deep copies, and native namespace mappings retain shared internal
+// maps that consumers keep immutable. Buffered restoration uses the stored IR
+// ToolMap and re-applies Codex alias reversal when un-flattening exposes an
+// aliased function name. SSE restoration can temporarily borrow its event-line
+// type for missing payload metadata, removing that added field after a
+// successful name rewrite.
 
 // responseToolsContextKey names shared request restoration state read by HTTP
 // and turn output adapters before restoring client-visible tool metadata.
@@ -175,36 +177,50 @@ func RestoreCodexToolNamesFromSSEContext(c *gin.Context, data []byte, eventType 
 	return withoutSyntheticType
 }
 
-// HasOpenAIResponsesClientToolMapping reports custom, search or namespace
-// restoration state presence.
-func HasOpenAIResponsesClientToolMapping(mapping protocolbridge.ResponsesClientToolMapping) bool {
-	return len(mapping.CustomTools) > 0 || mapping.ToolSearch || len(mapping.NamespaceTools) > 0
-}
-
 // RestoreOpenAIResponsesClientToolPayload restores lowered client tool
-// representations using the stored OpenAI mapping. Missing mappings or invalid
-// JSON return supplied bytes with no error; a mapped valid payload receives the
-// shared bridge result and its restoration error.
+// representations using the stored OpenAI IR ToolMap. Missing mappings,
+// non-object JSON, or invalid JSON return supplied bytes with no error;
+// restoration preserves untouched numeric precision and re-applies Codex alias
+// reversal when un-flattening exposes an aliased function name.
 func RestoreOpenAIResponsesClientToolPayload(c *gin.Context, payload []byte) ([]byte, error) {
-	mapping, ok := OpenAIResponsesClientToolMapping(c)
-	if !ok || !json.Valid(payload) {
+	toolMap, ok := OpenAIResponsesClientToolMap(c)
+	if !ok || !isJSONObjectBytes(payload) {
 		return payload, nil
 	}
-	restored, _, err := protocolbridge.RestoreResponsesClientToolPayload(payload, mapping)
-	return restored, err
+	restored, err := convert.RestoreResponsesTools(payload, toolMap)
+	if err != nil {
+		return payload, err
+	}
+	// Buffered passthrough runs Codex alias restoration before client-tool
+	// un-flattening, so re-apply alias reversal once namespace names emerge.
+	if !bytes.Equal(restored, payload) && len(CodexToolNameReverseFromContext(c)) > 0 {
+		restored = RestoreCodexToolNamesFromContext(c, restored)
+	}
+	return restored, nil
 }
 
 // RestoreGrokResponsesClientToolPayload restores lowered tool representations
-// using the Grok mapping. Missing mapping, absent raw function_call marker or
-// invalid JSON returns supplied bytes with no error; otherwise the shared
-// bridge supplies restored bytes and any error.
+// using the stored Grok IR ToolMap. Missing mappings, absent raw function_call
+// markers, non-object JSON, or invalid JSON return supplied bytes with no
+// error; otherwise convert.RestoreResponsesTools rewrites output.
 func RestoreGrokResponsesClientToolPayload(c *gin.Context, payload []byte) ([]byte, error) {
-	mapping, ok := GrokResponsesClientToolMapping(c)
-	if !ok || !bytes.Contains(payload, []byte(`"function_call"`)) || !json.Valid(payload) {
+	toolMap, ok := GrokResponsesClientToolMap(c)
+	if !ok || !bytes.Contains(payload, []byte(`"function_call"`)) || !isJSONObjectBytes(payload) {
 		return payload, nil
 	}
-	restored, _, err := protocolbridge.RestoreResponsesClientToolPayload(payload, mapping)
-	return restored, err
+	restored, err := convert.RestoreResponsesTools(payload, toolMap)
+	if err != nil {
+		return payload, err
+	}
+	return restored, nil
+}
+
+// isJSONObjectBytes reports whether payload is a syntactically valid top-level
+// JSON object after trimming outer whitespace. Non-object JSON scalars or
+// arrays return false so envelope restorers skip non-response payloads cleanly.
+func isJSONObjectBytes(payload []byte) bool {
+	trimmed := bytes.TrimSpace(payload)
+	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(payload)
 }
 
 // FlattenOpenAIResponsesNamespaces lowers supported namespace declarations
@@ -226,7 +242,7 @@ func FlattenOpenAIResponsesNamespaces(c *gin.Context, body []byte) ([]byte, erro
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		return body, fmt.Errorf("decode OpenAI namespace body: %w", err)
 	}
-	names, changed, err := protocolbridge.FlattenResponsesNamespacesExcept(requestBody, map[string]bool{"image_gen": true})
+	names, changed, err := openaicore.FlattenResponsesNamespacesExcept(requestBody, map[string]bool{"image_gen": true})
 	if err != nil {
 		return body, err
 	}
@@ -252,7 +268,7 @@ func RestoreOpenAIResponsesNamespacePayload(c *gin.Context, payload []byte) ([]b
 	if len(names) == 0 || !json.Valid(payload) {
 		return payload, nil
 	}
-	restored, changed, err := protocolbridge.RestoreResponsesNamespaceCalls(payload, names)
+	restored, changed, err := openaicore.RestoreResponsesNamespaceCalls(payload, names)
 	if err != nil {
 		return payload, err
 	}
@@ -300,66 +316,11 @@ func responseTools(c *gin.Context, create bool) *requeststate.ResponseTools {
 	return state
 }
 
-// SetOpenAIResponsesClientToolMapping publishes a nonempty OpenAI client
-// mapping or clears existing state when its presence test fails. Internal maps
-// remain shared after publication, so callers keep them immutable while
-// response restoration consumes them.
-func SetOpenAIResponsesClientToolMapping(c *gin.Context, mapping protocolbridge.ResponsesClientToolMapping) {
-	if !HasOpenAIResponsesClientToolMapping(mapping) {
-		ClearOpenAIResponsesClientToolMapping(c)
-		return
-	}
-	responseTools(c, true).SetClientMapping(false, mapping)
-}
-
-// ClearOpenAIResponsesClientToolMapping clears the OpenAI mapping in existing
-// request state. Missing state is ignored through its nil-safe setter, so
-// clearing does not allocate an otherwise absent restoration instance.
-func ClearOpenAIResponsesClientToolMapping(c *gin.Context) {
-	responseTools(c, false).SetClientMapping(false, protocolbridge.ResponsesClientToolMapping{})
-}
-
-// OpenAIResponsesClientToolMapping returns the stored OpenAI mapping and its
-// meaningful-presence flag. Missing state yields empty and false; internal
-// mapping maps are shared and stay read-only for response consumers.
-func OpenAIResponsesClientToolMapping(c *gin.Context) (protocolbridge.ResponsesClientToolMapping, bool) {
-	mapping := responseTools(c, false).ClientMapping(false)
-	return mapping, HasOpenAIResponsesClientToolMapping(mapping)
-}
-
-// SetGrokResponsesClientToolMapping publishes a nonempty Grok client mapping or
-// clears it when its presence test fails. Internal maps are retained, so
-// callers leave their published contents immutable while output restoration
-// reads them.
-func SetGrokResponsesClientToolMapping(c *gin.Context, mapping protocolbridge.ResponsesClientToolMapping) {
-	if !HasOpenAIResponsesClientToolMapping(mapping) {
-		ClearGrokResponsesClientToolMapping(c)
-		return
-	}
-	responseTools(c, true).SetClientMapping(true, mapping)
-}
-
-// ClearGrokResponsesClientToolMapping clears Grok mapping from existing
-// restoration state. Missing state remains absent because the nil-safe setter
-// performs no allocation; callers use this before another attempt must discard
-// earlier lowered tool evidence.
-func ClearGrokResponsesClientToolMapping(c *gin.Context) {
-	responseTools(c, false).SetClientMapping(true, protocolbridge.ResponsesClientToolMapping{})
-}
-
-// GrokResponsesClientToolMapping returns the stored Grok mapping and its
-// presence flag. An absent instance yields empty and false, while present
-// mapping internals remain shared and require immutable consumer access.
-func GrokResponsesClientToolMapping(c *gin.Context) (protocolbridge.ResponsesClientToolMapping, bool) {
-	mapping := responseTools(c, false).ClientMapping(true)
-	return mapping, HasOpenAIResponsesClientToolMapping(mapping)
-}
-
 // SetOpenAIResponsesNamespaceNames publishes a nonempty namespace reverse map
 // for the request. Empty input retains existing names; callers use
 // ClearOpenAIResponsesNamespaceNames to remove them. Published map storage is
 // shared and remains immutable while restoration reads it.
-func SetOpenAIResponsesNamespaceNames(c *gin.Context, names map[string]protocolbridge.ResponsesNamespaceName) {
+func SetOpenAIResponsesNamespaceNames(c *gin.Context, names map[string]openaicore.ResponsesNamespaceName) {
 	if len(names) > 0 {
 		responseTools(c, true).SetNamespaces(names)
 	}
@@ -374,21 +335,72 @@ func ClearOpenAIResponsesNamespaceNames(c *gin.Context) { responseTools(c, false
 // OpenAIResponsesNamespaceNames returns the shared namespace reverse-name map
 // from request state. Missing state yields nil; callers read the map immutably
 // and use setters to publish a replacement for later restoration.
-func OpenAIResponsesNamespaceNames(c *gin.Context) map[string]protocolbridge.ResponsesNamespaceName {
+func OpenAIResponsesNamespaceNames(c *gin.Context) map[string]openaicore.ResponsesNamespaceName {
 	return responseTools(c, false).Namespaces()
 }
 
-// OpenAIWSHTTPBridgeToolStateFromContext returns retained bridge declarations
-// and their presence flag. Missing state is absent; retrieved bytes and mapping
-// internals are shared, so the consuming turn keeps that storage immutable.
-func OpenAIWSHTTPBridgeToolStateFromContext(c *gin.Context) (requeststate.WSBridgeTools, bool) {
-	return responseTools(c, false).Bridge()
+// SetOpenAIResponsesClientToolMap publishes an OpenAI IR ToolMap with active
+// call restorations or clears existing state when tools has none. ResponseTools
+// stores a detached deep copy so callers may reuse or discard tools safely.
+func SetOpenAIResponsesClientToolMap(c *gin.Context, tools *convert.ToolMap) {
+	if !tools.HasRestorations() {
+		ClearOpenAIResponsesClientToolMap(c)
+		return
+	}
+	responseTools(c, true).SetClientToolMap(false, tools)
 }
 
-// SetOpenAIWSHTTPBridgeToolState publishes bridge declarations and marks the
-// state present, including an empty value. Lowered declaration bytes are
-// copied, while internal client mapping maps remain shared and caller-immutable
-// for the next bridge turn.
-func SetOpenAIWSHTTPBridgeToolState(c *gin.Context, state requeststate.WSBridgeTools) {
-	responseTools(c, true).SetBridge(state)
+// ClearOpenAIResponsesClientToolMap clears the OpenAI IR ToolMap from existing
+// request state without allocating a new ResponseTools instance when absent.
+// Callers invoke this before a new attempt so stale lowered state never leaks.
+func ClearOpenAIResponsesClientToolMap(c *gin.Context) {
+	responseTools(c, false).SetClientToolMap(false, nil)
+}
+
+// OpenAIResponsesClientToolMap returns a detached copy of the stored OpenAI IR
+// ToolMap and reports whether active call restorations exist. Missing state or
+// maps without call restorations return nil and false.
+func OpenAIResponsesClientToolMap(c *gin.Context) (*convert.ToolMap, bool) {
+	tools := responseTools(c, false).ClientToolMap(false)
+	return tools, tools.HasRestorations()
+}
+
+// SetGrokResponsesClientToolMap publishes a Grok IR ToolMap with active call
+// restorations or clears existing state when tools has none. ResponseTools
+// stores a detached deep copy so output readers observe stable snapshot state.
+func SetGrokResponsesClientToolMap(c *gin.Context, tools *convert.ToolMap) {
+	if !tools.HasRestorations() {
+		ClearGrokResponsesClientToolMap(c)
+		return
+	}
+	responseTools(c, true).SetClientToolMap(true, tools)
+}
+
+// ClearGrokResponsesClientToolMap clears the Grok IR ToolMap from existing
+// request state without allocating a new ResponseTools instance when absent.
+// Callers invoke this before another attempt discards prior lowered evidence.
+func ClearGrokResponsesClientToolMap(c *gin.Context) {
+	responseTools(c, false).SetClientToolMap(true, nil)
+}
+
+// GrokResponsesClientToolMap returns a detached copy of the stored Grok IR
+// ToolMap and reports whether active call restorations exist. Missing state or
+// maps without call restorations return nil and false.
+func GrokResponsesClientToolMap(c *gin.Context) (*convert.ToolMap, bool) {
+	tools := responseTools(c, false).ClientToolMap(true)
+	return tools, tools.HasRestorations()
+}
+
+// OpenAIWSHTTPBridgeToolMapFromContext returns a detached copy of the retained
+// HTTP-bridge IR ToolMap and its publication-presence flag. Missing state
+// returns (nil, false), while an explicit tools reset returns (nil, true).
+func OpenAIWSHTTPBridgeToolMapFromContext(c *gin.Context) (*convert.ToolMap, bool) {
+	return responseTools(c, false).BridgeToolMap()
+}
+
+// SetOpenAIWSHTTPBridgeToolMap publishes a detached copy of tools into the
+// HTTP-bridge session slot and marks it present, including a nil reset value.
+// Nil context is ignored by the underlying nil-safe ResponseTools setter.
+func SetOpenAIWSHTTPBridgeToolMap(c *gin.Context, tools *convert.ToolMap) {
+	responseTools(c, true).SetBridgeToolMap(tools)
 }

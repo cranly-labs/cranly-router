@@ -1,0 +1,126 @@
+{
+  "model": "claude-sonnet-4-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Verify pre-upgrade migration status for tenant-7 and tenant-12."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "segments": [
+              "Check tenant-7 migration row before checking tenant-12."
+            ],
+            "token": {
+              "data": "gAAAAABnLegacyBareEncryptedContentFromPreUpgradeTurn1"
+            }
+          }
+        },
+        {
+          "kind": "tool_call",
+          "call": {
+            "call_id": "call_mig_t7_1",
+            "tool": {
+              "kind": "function",
+              "name": "check_migration_state"
+            },
+            "arguments": "{\"tenant_id\":\"tenant-7\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_mig_t7_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"tenant_id\":\"tenant-7\",\"schema_version\":42,\"status\":\"applied\"}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "reasoning",
+          "reasoning": {
+            "segments": [
+              "tenant-7 is at version 42; now check tenant-12 migration row."
+            ]
+          }
+        },
+        {
+          "kind": "tool_call",
+          "call": {
+            "call_id": "call_mig_t12_2",
+            "tool": {
+              "kind": "function",
+              "name": "check_migration_state"
+            },
+            "arguments": "{\"tenant_id\":\"tenant-12\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_mig_t12_2",
+            "content": [
+              {
+                "kind": "text",
+                "text": "{\"tenant_id\":\"tenant-12\",\"schema_version\":42,\"status\":\"applied\"}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "function",
+      "name": "check_migration_state",
+      "description": "Check tenant database migration version and status.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "description": "Tenant ID"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "mode": "auto"
+  },
+  "max_output_tokens": 4096,
+  "reasoning": {
+    "mode": "enabled",
+    "budget_tokens": 2048
+  }
+}

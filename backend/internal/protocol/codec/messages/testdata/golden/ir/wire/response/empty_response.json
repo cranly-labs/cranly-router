@@ -1,0 +1,14 @@
+{
+  "id": "msg_empty_response",
+  "model": "claude-sonnet-4-5",
+  "parts": [],
+  "finish": {
+    "reason": "stop"
+  },
+  "usage": {
+    "input": 18,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 0
+  }
+}

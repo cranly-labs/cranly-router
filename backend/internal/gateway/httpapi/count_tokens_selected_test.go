@@ -188,3 +188,108 @@ func TestSelectedCountFinalizesObservedExchange(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectedGeminiCountIRConversionOmitsSignatures exercises Messages
+// count_tokens to Gemini across API-key and OAuth targets. ReplayScheme and
+// PlaceholderToken must stay empty so historical signatures and placeholders
+// never enter generateContentRequest, while 64-bit schema bounds and OAuth
+// scope fallbacks hold.
+func TestSelectedGeminiCountIRConversionOmitsSignatures(t *testing.T) {
+	t.Run("ir_conversion_omits_signatures_and_preserves_64bit_schema", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
+		body := []byte(`{
+			"model":"claude-alias",
+			"system":"Count accurately",
+			"tools":[{"name":"lookup","input_schema":{"type":"object","properties":{"seq":{"type":"integer","minimum":9007199254740993}}}}],
+			"messages":[
+				{"role":"user","content":"ping"},
+				{"role":"assistant","content":[
+					{"type":"thinking","thinking":"plan","signature":"trc1:gemini:eyJkIjoic2lnLTEifQ"},
+					{"type":"tool_use","id":"toolu_1","name":"lookup","input":{"seq":9007199254740993}}
+				]},
+				{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"pong"}]}
+			]
+		}`)
+		parsed, err := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(body), "anthropic")
+		require.NoError(t, err)
+
+		target := gatewayadapter.NewExecutionProvider(&provider.Record{
+			ID:       11,
+			Platform: "gemini",
+			Type:     "apikey",
+			Credentials: map[string]any{
+				"api_key":       "test-key",
+				"model_mapping": map[string]any{"claude-alias": "gemini-2.5-pro"},
+			},
+		})
+		transport := &auxiliaryHTTPRecorder{
+			resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": {"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"totalTokens":91}`)),
+			},
+		}
+		executor := &GeminiExecutor{
+			Runtime: &googleforward.Gemini{
+				Transport: transport,
+				Options: googleforward.Options{
+					Configured:        true,
+					ResponseReadLimit: 1 << 20,
+				},
+			},
+		}
+
+		require.NoError(t, ForwardSelectedCountTokens(t.Context(), c, target, parsed, nil, nil, executor))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.JSONEq(t, `{"input_tokens":91}`, rec.Body.String())
+		require.Contains(t, transport.lastReq.URL.Path, "gemini-2.5-pro:countTokens")
+		require.Equal(t, "models/gemini-2.5-pro", gjson.GetBytes(transport.lastBody, "generateContentRequest.model").String())
+		require.Equal(t, "Count accurately", gjson.GetBytes(transport.lastBody, "generateContentRequest.systemInstruction.parts.0.text").String())
+		require.NotContains(t, string(transport.lastBody), "thoughtSignature")
+		require.NotContains(t, string(transport.lastBody), "skip_thought_signature_validator")
+		require.Contains(t, string(transport.lastBody), "9007199254740993")
+	})
+
+	t.Run("oauth_insufficient_scope_estimates_locally_under_ir", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
+		body := []byte(`{"model":"gemini-2.5-flash","system":"System instructions","messages":[{"role":"user","content":"hello world count me"}]}`)
+		parsed, err := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(body), "anthropic")
+		require.NoError(t, err)
+
+		target := gatewayadapter.NewExecutionProvider(&provider.Record{
+			ID:       12,
+			Platform: "gemini",
+			Type:     "oauth",
+			Credentials: map[string]any{
+				"access_token": "ya29.test",
+				"oauth_type":   "ai_studio",
+			},
+		})
+		transport := &auxiliaryHTTPRecorder{
+			resp: &http.Response{
+				StatusCode: http.StatusForbidden,
+				Header:     http.Header{"Www-Authenticate": {`Bearer error="insufficient_scope"`}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"insufficient authentication scopes"}}`)),
+			},
+		}
+		tokens := &provider.GeminiTokenSource{}
+		executor := &GeminiExecutor{
+			Runtime: &googleforward.Gemini{
+				Transport: transport,
+				Tokens:    tokens,
+				Options: googleforward.Options{
+					Configured:        true,
+					ResponseReadLimit: 1 << 20,
+				},
+			},
+		}
+
+		require.NoError(t, ForwardSelectedCountTokens(t.Context(), c, target, parsed, nil, nil, executor))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Positive(t, gjson.Get(rec.Body.String(), "input_tokens").Int())
+	})
+}

@@ -1,0 +1,2 @@
+data: {"responseId":"gem_tool_parallel","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":"call_weather_tyo_1","name":"get_weather","args":{"city":"Tokyo"}},"thoughtSignature":"sig_fc_tyo_1"},{"functionCall":{"id":"call_time_tyo_2","name":"get_time","args":{"timezone":"Asia/Tokyo"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":96,"candidatesTokenCount":32,"totalTokenCount":128}}
+

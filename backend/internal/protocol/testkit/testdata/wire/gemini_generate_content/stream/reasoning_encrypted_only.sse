@@ -1,0 +1,8 @@
+data: {"responseId":"gem_reasoning_encrypted_only","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Step go-test exited with code 1 in TestPoolTimeout; ","thought":true}]}}]}
+
+data: {"responseId":"gem_reasoning_encrypted_only","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"summarize the root cause.","thought":true,"thoughtSignature":"CpEBCocB_gem_enconly_sig_02"}]}}]}
+
+data: {"responseId":"gem_reasoning_encrypted_only","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Build job-8841 failed during the go-test step with exit code 1 "}]}}]}
+
+data: {"responseId":"gem_reasoning_encrypted_only","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"because TestPoolTimeout timed out."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":88,"candidatesTokenCount":30,"thoughtsTokenCount":24,"totalTokenCount":142}}
+

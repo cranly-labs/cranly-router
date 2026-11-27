@@ -1,0 +1,42 @@
+{
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "write_note",
+          "description": "Write text content to a note path.",
+          "parameters": {
+            "type": "OBJECT",
+            "properties": {
+              "path": {
+                "type": "STRING",
+                "description": "Relative file path"
+              },
+              "text": {
+                "type": "STRING",
+                "description": "Note body"
+              }
+            },
+            "required": [
+              "path",
+              "text"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Write notes/a.txt containing quotes, a newline, Japanese text, and a literal backslash."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

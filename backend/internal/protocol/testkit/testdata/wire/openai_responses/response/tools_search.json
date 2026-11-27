@@ -1,0 +1,40 @@
+{
+  "id": "resp_tools_search",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "tsc_slack_2",
+      "type": "tool_search_call",
+      "status": "completed",
+      "call_id": "call_search_2",
+      "execution": "client",
+      "arguments": {
+        "query": "slack notify",
+        "limit": 3
+      }
+    },
+    {
+      "id": "fc_inc_2",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_inc_2",
+      "namespace": "pager",
+      "name": "list_incidents",
+      "arguments": "{\"severity\":\"sev2\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 148,
+    "output_tokens": 36,
+    "total_tokens": 184,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

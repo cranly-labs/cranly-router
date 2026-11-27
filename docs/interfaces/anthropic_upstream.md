@@ -38,11 +38,11 @@ Anthropic 管理端正式支持五类提供商：
 ### 入口与协议转换
 
 - 原生入口：`POST /v1/messages` 与 `POST /v1/messages/count_tokens`。
-- 兼容入口：OpenAI Chat Completions 与 Responses 入口先把请求归一化为 Anthropic 格式，每次 attempt 选提供商并转发，再把非流式或 SSE 结果转回原协议。
+- 兼容入口：OpenAI Chat Completions（含带顶层 `input` 的 Cursor 请求）与 Responses 选定提供商后，统一经 `protocol/convert` 单步编码为 Anthropic Messages，并由合并读取器将缓冲或 SSE 响应转回原客户端协议。
 - 协议门禁：三个入口的开放状态由分组 `allowed_protocols` 控制（见[统一协议能力](protocol_capabilities.md)）。协议关闭时，在读取正文和调度之前返回对应客户端格式的 `403`，不产生上游 attempt 或结算。
 - 模型日期规则：OAuth 和 `setup-token` 不自动补全 Claude 日期，提供商测试与正式转发均使用映射后的型号；Vertex 仅把调用方指定的日期转为 `@日期` 格式；Bedrock 保留同一型号的区域资源编码。
-- 传输差异：API Key、OAuth 与 `setup-token` 走 Anthropic HTTP；Bedrock 走独立签名与 AWS EventStream 适配；Service Account 走 Vertex Claude 路径。这些传输层在 beta header、模型名、错误结构和 usage 来源上的差异在协议转换后仍然保留。
-- 流式换号窗口：流式请求仅在写出首个客户端分块前允许重试或换提供商。每次 attempt 从原始请求重建转换状态，保持工具名、停止原因、thinking block、usage 与错误事件和客户端协议一致。
+- 传输差异：API Key、OAuth 与 `setup-token` 走 Anthropic HTTP；Bedrock 走独立签名与二进制 EventStream 转 SSE 桥；Service Account 走 Vertex Claude（Bedrock 与 Vertex 出站前剥离顶层 `speed`）。传输层在 beta、模型名、错误结构和 usage 上的差异在转换后保留。
+- 流式换号窗口与签名重试：转换流在首个语义帧（`Semantic == true`）或不可重试终态前暂存非语义前导帧以保留切号窗口；每次 attempt 从原请求重建转换状态，跨 Claude 模型遇签名 `400` 时无损剥离历史签名同号重试一次。
 
 ### SSE 帧解析与用量归一化
 
@@ -55,12 +55,13 @@ Messages 上游转 Responses 或 Chat Completions 时，流式和非流式客户
 - 用量与缓存归一：先归一化兼容缓存别名和 `cache_creation` 的 5m/1h 分档，再交给客户端转换和计费。仅含缓存读写而普通输入/输出为零的观测同样有效；缺失正数写入总量时由已报告分档补齐，已有聚合数不与分档重复相加。
 - OpenAI 兼容总输入：包含普通输入、缓存读取与缓存写入，详见[客户端用量与缓存](protocol_capabilities.md#client_usage_cache)。
 
-### Responses 转 Messages 内容过滤
+### 跨协议转 Messages 与原生重放规则
 
-Responses 转换为 Anthropic Messages 时仅发送 Anthropic 入站协议认识的内容块：
+Responses 或 Chat 转换为 Anthropic Messages 以及原生 Messages 重放遵循统一连续性与合法化规则（详见[推理连续性](../architecture/protocol_conversion.md#reasoning_continuity)）：
 
-- 过滤 OpenAI `reasoning`、`reasoning_text`、未知专有分片、空消息和纯空白文本块；空白文本与合法图片共存时只删空白文本并保留图片。
-- `function_call` 与 `function_call_output` 按调用 ID 转为相邻的 `tool_use` 与 `tool_result`，过滤后保持工具配对、角色交替和历史顺序完整。
+- 推理信封与原生重放：同方案 `trc1:anthropic` 信封解封还原 `thinking` 文本与签名（或 `redacted_thinking.data`），`passback` 模型在工具轮输出无签名明文思考，异源信封、跨协议裸令牌与标准 Claude 明文推理丢弃；原生 `/v1/messages` 与 `count_tokens` 出站前经 `PrepareNativeReplay` 解封或清理信封。
+- 专属块与空文本清理：异源协议专属条目（如 `compaction`、`web_search_call`）与空字符串文本块在编码时丢弃，紧邻同角色消息合并并保持非空内容块与合法图片。
+- 工具降级与配对：`custom`、`namespace`、`tool_search` 客户端工具降级为标准 `tool` 并在响应侧还原；函数调用与结果按调用 ID 配对为 `tool_use` 与紧邻 `user` 消息首部的 `tool_result`，孤儿项自动裁剪。
 
 ## 模型与请求策略
 
@@ -135,7 +136,7 @@ Bedrock 先执行提供商模型映射，再解析区域。已登记的 Claude �
 <a id="anthropic_native_execution"></a>
 ## 平台执行边界
 
-- 协议与转换归属：Anthropic 报文、Beta 常量与 thinking/tool 字节修复归 `protocol/anthropic`；Responses/Chat 转换归 `protocol/bridge`；客户端 UA 解析归 `gateway/clientmeta`。
+- 协议与转换归属：Anthropic 报文、Beta 常量与 thinking/tool 字节修复归 `protocol/anthropic`；跨协议转换与原生信封解封归 `protocol/convert` 与 `protocol/codec/*`；客户端 UA 解析归 `gateway/clientmeta`。
 - 平台与凭据归属：`provider.anthropic.claude_cli_version` 覆盖（进程初始化解析一次）、默认 Header、指纹常量、Beta 白名单与 Messages/CountTokens 构造归 `upstream/anthropic`。Bedrock 签名、区域与 AWS EventStream 隔离在 `upstream/bedrock`（两者互不引用）；Claude 令牌读写、版本比较、刷新资格与合并归 `provider`。
 - 直通与标准恢复分离：API Key 直通路径与标准路径的恢复策略独立，API Key 直通不做 400 请求体降级，也不触发上游接受回调。
 - 指纹存储兼容：Redis 的 `fingerprint:` 与 `masked_session:` 键格式、TTL、UA 升级与遮罩规则保持向后兼容。

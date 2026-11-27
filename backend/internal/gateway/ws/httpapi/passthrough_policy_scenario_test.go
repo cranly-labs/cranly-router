@@ -16,14 +16,13 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
-	protocolforward "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
-	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
@@ -31,12 +30,12 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
-// Fast policy checks read a frame's current or retained session model before
-// deciding whether its service tier is accepted, removed or blocked. These
-// scenarios compare default policy, user rules, explicit force and filtering,
-// including requests that omit model or tier after a prior turn. Post-policy
-// metadata describes the actual accepted frame rather than the client's
-// pre-filter tier.
+// passthrough_policy_scenario_test.go covers openai_ws_v2_passthrough_adapter.go
+// and openai_ws_ingress_execution_adapter.go across service-tier policy,
+// native carrier replay, and waiting-admission barriers. Fast policy checks
+// read a frame's current or retained session model before deciding whether its
+// service tier is accepted, removed, or blocked across default policy, user
+// rules, explicit force, and turns that omit model or tier.
 //
 // Fixture frame wrappers call the production policy and lifecycle helpers
 // while retaining observable scripted reads and writes. Separate usage atoms
@@ -519,11 +518,17 @@ func TestForwardAsAnthropicMessages_BetaFastModePassesOpenAIFastPolicyByDefault(
 	svc := newWSFastPolicy(t, tierpolicy.Default())
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
 
-	// Convert the Anthropic request before applying the beta-header tier.
+	// Convert the Anthropic request via convert.NewExchange before applying the beta-header tier.
 	anthropicBody := []byte(`{"model":"gpt-5.5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
-	var anthropicReq protocolanthropic.AnthropicRequest
-	require.NoError(t, json.Unmarshal(anthropicBody, &anthropicReq))
-	responsesReq, err := protocolbridge.AnthropicToResponses(&anthropicReq, protocolforward.ConversionOptionsForModel(anthropicReq.Model))
+	exchange, err := convert.NewExchange(anthropicBody, convert.Options{
+		Route: convert.Route{
+			Client:   protocol.ProtocolAnthropicMessages,
+			Upstream: protocol.ProtocolOpenAIResponses,
+		},
+		ClientModel: "gpt-5.5",
+	})
+	require.NoError(t, err)
+	convertedBytes, err := exchange.UpstreamRequest()
 	require.NoError(t, err)
 
 	// Supply priority directly after recognizing the beta token; the fixture checks
@@ -531,11 +536,13 @@ func TestForwardAsAnthropicMessages_BetaFastModePassesOpenAIFastPolicyByDefault(
 	headers := http.Header{}
 	headers.Set("anthropic-beta", claude.BetaFastMode)
 	require.True(t, claude.ContainsBetaToken(headers.Get("anthropic-beta"), claude.BetaFastMode))
-	responsesReq.ServiceTier = "priority"
-	responsesReq.Model = "gpt-5.5"
+	var responsesMap map[string]any
+	require.NoError(t, json.Unmarshal(convertedBytes, &responsesMap))
+	responsesMap["service_tier"] = "priority"
+	responsesMap["model"] = "gpt-5.5"
 
 	// Apply the Fast policy to the converted body.
-	responsesBody, err := json.Marshal(responsesReq)
+	responsesBody, err := json.Marshal(responsesMap)
 	require.NoError(t, err)
 	require.Equal(t, "priority", gjson.GetBytes(responsesBody, "service_tier").String(), "前置：beta 翻译应当注入 priority")
 

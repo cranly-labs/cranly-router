@@ -1,0 +1,20 @@
+{
+  "id": "chatcmpl_refusal",
+  "model": "gpt-4o",
+  "created_at": 1760000000,
+  "parts": [
+    {
+      "kind": "refusal",
+      "text": "I cannot provide instructions for bypassing authentication controls or extracting active session credentials."
+    }
+  ],
+  "finish": {
+    "reason": "content_filter"
+  },
+  "usage": {
+    "input": 46,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 14
+  }
+}

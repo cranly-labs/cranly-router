@@ -1,0 +1,13 @@
+{
+  "model": "gpt-4o",
+  "max_completion_tokens": 256,
+  "stream_options": {
+    "include_usage": true
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Confirm that quirky SSE framing normalizes without dropping tokens."
+    }
+  ]
+}

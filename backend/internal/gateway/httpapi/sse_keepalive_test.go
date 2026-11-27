@@ -1,9 +1,7 @@
 package httpapi
 
 import (
-	"bufio"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,13 +18,12 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
-	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/messageforward"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -298,12 +295,32 @@ func TestDownstreamSSEKeepaliveThinkingWait(t *testing.T) {
 				defer func() { require.NoError(t, resp.Body.Close()) }()
 				timing.ObserveResponse(req.Context(), resp)
 				if conversion {
-					boundary := &MessageForwardBoundary{context: c}
-					output := boundary.ConversionOutput(true, &messageforward.AttemptState{})
-					_, err = forwardcore.ResponsesStreaming(forwardcore.Response{
-						Lines: bufio.NewScanner(resp.Body), Headers: resp.Header,
-						Runtime: bridge.Runtime{Now: time.Now, ReadRandom: rand.Read},
-					}, output, "model", "model", nil, time.Now(), bridge.ResponsesClientToolMapping{})
+					ex, exErr := convert.NewExchange(
+						[]byte(`{"model":"model","stream":true,"input":"hi"}`),
+						convert.Options{
+							Route: convert.Route{
+								Client:   protocol.ProtocolOpenAIResponses,
+								Upstream: protocol.ProtocolAnthropicMessages,
+							},
+						},
+					)
+					require.NoError(t, exErr)
+					_, exErr = ex.UpstreamRequest()
+					require.NoError(t, exErr)
+					fixture := newResponsesFixture(responsesFixtureInputs{})
+					targetProv := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Platform: capability.PlatformAnthropic}}
+					_, err = openaiforward.ReadConvertedAnthropicStreaming(
+						req.Context(),
+						resp,
+						upstream.NewDeferredOutputContext(NewResponseSink(c)),
+						ex,
+						fixture.Output.ConvertedAnthropicOptions(c, targetProv, resp, protocol.ProtocolOpenAIResponses, "model", "model", "model", 0),
+						"model",
+						"model",
+						"model",
+						nil,
+						time.Now(),
+					)
 				} else {
 					fixture := newResponsesFixture(responsesFixtureInputs{})
 					platform := capability.PlatformOpenAI
@@ -810,13 +827,13 @@ func TestDownstreamSSEKeepaliveHeaderWaitDirectHTTPErrorsEmitSSE(t *testing.T) {
 			},
 		},
 		{
-			name:      "ForwardConversionOutput.Error responses",
+			name:      "writeTextResponsesError",
 			path:      EndpointResponses,
 			proto:     protocol.ProtocolOpenAIResponses,
 			wantToken: "event: response.failed\n",
 			wantCode:  http.StatusBadGateway,
 			emit: func(c *gin.Context) {
-				(ForwardConversionOutput{Context: c, Responses: true, Commit: func() {}}).Error(http.StatusBadGateway, "upstream_error", "conversion failed")
+				writeTextResponsesError(c, http.StatusBadGateway, "upstream_error", "conversion failed")
 			},
 		},
 		{

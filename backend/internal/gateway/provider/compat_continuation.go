@@ -6,17 +6,20 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
+	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// compat_continuation.go gates compatible continuation and classifies
-// previous-response errors.
+// compat_continuation.go gates compatible continuation, trims raw replay and
+// continuation payloads, and classifies previous-response errors.
 // Previous-response recovery needs to distinguish an unavailable continuation
-// ID from an unsupported continuation parameter. Compatible API Key requests
-// enable continuation only for selected model identities and saved support
-// policy; classifiers then recognize upstream text and structured error forms
-// before a caller decides how to retry.
+// ID from an unsupported continuation parameter while keeping lossless byte-level
+// history trimming available to converted request flows. Compatible API Key
+// requests enable continuation only for selected model identities and saved
+// support policy; classifiers then recognize upstream text and structured error
+// forms before a caller decides how to retry.
 
 // CompatContinuationEnabled permits automatic continuation for API Key targets
 // whose saved extras enable it and whose model qualifies for compatibility
@@ -76,4 +79,20 @@ func CompatPreviousResponseUnsupported(statusCode int, upstreamMsg string, upstr
 	}
 	return check(gjson.GetBytes(upstreamBody, "error.code").String()) ||
 		check(gjson.GetBytes(upstreamBody, "error.message").String())
+}
+
+// ApplyAnthropicCompatFullReplayGuardBytes trims raw Anthropic Messages history
+// to a recent message suffix while keeping paired tool blocks intact and
+// preserving unmodeled JSON fields. Short or malformed histories return body
+// unchanged with false.
+func ApplyAnthropicCompatFullReplayGuardBytes(body []byte) ([]byte, int, bool) {
+	return protocolanthropic.ApplyAnthropicCompatFullReplayGuardBytes(body)
+}
+
+// TrimCompatResponsesInputToLatestTurnBytes trims raw Responses input arrays to
+// the latest continuation turn and its paired function calls without dropping
+// unmodeled item fields or structured tool outputs. Unchanged or unreadable
+// inputs return body verbatim with false.
+func TrimCompatResponsesInputToLatestTurnBytes(body []byte) ([]byte, bool) {
+	return protocolopenai.TrimCompatResponsesInputToLatestTurnBytes(body)
 }

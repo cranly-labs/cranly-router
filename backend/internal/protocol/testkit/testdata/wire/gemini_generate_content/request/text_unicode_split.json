@@ -1,0 +1,15 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Reply with the multilingual greeting, family emoji, flag, waved hand, accented cafe, and rocket."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

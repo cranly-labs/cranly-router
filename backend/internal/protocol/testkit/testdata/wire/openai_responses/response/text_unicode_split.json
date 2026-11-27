@@ -1,0 +1,33 @@
+{
+  "id": "resp_text_unicode_split",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_text_unicode_split_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "Hello 你好世界！👨‍👩‍👧‍👦 🇯🇵 👋🏽 café 🚀"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 22,
+    "output_tokens": 19,
+    "total_tokens": 41,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

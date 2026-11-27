@@ -1,0 +1,68 @@
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Update timeout from 5 to 15 in config.toml and README.md."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "tool_call",
+          "id": "ctc_patch_1",
+          "call": {
+            "call_id": "call_patch_1",
+            "tool": {
+              "kind": "custom",
+              "name": "apply_patch"
+            },
+            "arguments": "*** Begin Patch\n*** Update File: config.toml\n@@\n-timeout = 5\n+timeout = 15\n*** End Patch\n"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "parts": [
+        {
+          "kind": "tool_result",
+          "result": {
+            "call_id": "call_patch_1",
+            "content": [
+              {
+                "kind": "text",
+                "text": "Success. Updated the following files:\nM config.toml"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "custom",
+      "name": "apply_patch",
+      "description": "Apply a unified patch to files in the workspace.",
+      "format": {
+        "type": "grammar",
+        "syntax": "lark",
+        "definition": "start: patch\npatch: \"*** Begin Patch\\n\" /.+/s \"*** End Patch\\n\""
+      }
+    }
+  ],
+  "tool_choice": {
+    "mode": "tool",
+    "tool": {
+      "kind": "custom",
+      "name": "apply_patch"
+    }
+  },
+  "max_output_tokens": 512
+}

@@ -1,0 +1,33 @@
+{
+  "id": "resp_system_roles",
+  "object": "response",
+  "created_at": 1760000000,
+  "status": "completed",
+  "model": "gpt-5",
+  "output": [
+    {
+      "id": "msg_system_roles_out",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "The default keepalive timeout is 30 seconds (30000 milliseconds)."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 48,
+    "output_tokens": 14,
+    "total_tokens": 62,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

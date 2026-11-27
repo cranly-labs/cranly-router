@@ -2,14 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
-	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
@@ -27,32 +25,6 @@ func (s *OpenAITextExecutor) modelAttributes() *routing.ModelAttributeService {
 		return nil
 	}
 	return s.Requests.Readers.Attributes
-}
-
-// modelResolution resolves provider capabilities and adjusts them for
-// serialized request parameters. It uses the HTTP context when available,
-// otherwise background context. Successful resolution updates the execution
-// provider before serialization, which can still fail.
-func (p *openAIMessagesExecutionAdapter) modelResolution(model string, request any, protocol string) (modelrules.Resolution, error) {
-	// Adapters without an HTTP request still resolve catalog attributes; a
-	// background context gives those direct execution paths a usable lookup
-	// context.
-	ctx := context.Background()
-	if p.c != nil && p.c.Request != nil {
-		ctx = p.c.Request.Context()
-	}
-	result, err := gatewayprovider.ResolveModelAttributes(ctx, p.provider, model, p.s.modelAttributes(), protocol)
-	if err != nil {
-		return modelrules.Resolution{}, err
-	}
-	if p.provider != nil {
-		p.provider.Capabilities = &result
-	}
-	body, err := json.Marshal(request)
-	if err != nil {
-		return modelrules.Resolution{}, err
-	}
-	return result.ForRequest(gatewayprovider.ModelRequestState(body)), nil
 }
 
 // applyModelAttributes prepares request parameters for the selected model and

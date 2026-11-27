@@ -1,0 +1,23 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_tools_custom","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_tools_custom","object":"response","created_at":1760000000,"status":"in_progress","model":"gpt-5","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"ctc_patch_2","type":"custom_tool_call","status":"in_progress","call_id":"call_patch_2","name":"apply_patch","input":""}}
+
+event: response.custom_tool_call_input.delta
+data: {"type":"response.custom_tool_call_input.delta","sequence_number":3,"item_id":"ctc_patch_2","output_index":0,"delta":"*** Begin Patch\n*** Update File: README.md\n@@\n"}
+
+event: response.custom_tool_call_input.delta
+data: {"type":"response.custom_tool_call_input.delta","sequence_number":4,"item_id":"ctc_patch_2","output_index":0,"delta":"-Default timeout: 5s\n+Default timeout: 15s\n*** End Patch\n"}
+
+event: response.custom_tool_call_input.done
+data: {"type":"response.custom_tool_call_input.done","sequence_number":5,"item_id":"ctc_patch_2","output_index":0,"input":"*** Begin Patch\n*** Update File: README.md\n@@\n-Default timeout: 5s\n+Default timeout: 15s\n*** End Patch\n"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"ctc_patch_2","type":"custom_tool_call","status":"completed","call_id":"call_patch_2","name":"apply_patch","input":"*** Begin Patch\n*** Update File: README.md\n@@\n-Default timeout: 5s\n+Default timeout: 15s\n*** End Patch\n"}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_tools_custom","object":"response","created_at":1760000000,"status":"completed","model":"gpt-5","output":[{"id":"ctc_patch_2","type":"custom_tool_call","status":"completed","call_id":"call_patch_2","name":"apply_patch","input":"*** Begin Patch\n*** Update File: README.md\n@@\n-Default timeout: 5s\n+Default timeout: 15s\n*** End Patch\n"}],"usage":{"input_tokens":104,"output_tokens":42,"total_tokens":146,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}

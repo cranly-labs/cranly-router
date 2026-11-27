@@ -1,0 +1,46 @@
+{
+  "model": "",
+  "messages": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Check the Go 1.26 release date first."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Go 1.26 was released in February 2026."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Now search for the Go 1.27 encoding/json/v2 release notes and summarize its status."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "hosted",
+      "name": "googleSearch",
+      "hosted": {
+        "origin": "gemini_generate_content",
+        "type": "googleSearch",
+        "raw": {
+          "googleSearch": {}
+        }
+      }
+    }
+  ],
+  "max_output_tokens": 512
+}

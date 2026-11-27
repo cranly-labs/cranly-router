@@ -1,90 +1,45 @@
 package requeststate
 
 import (
-	"encoding/json"
 	"maps"
 	"sync"
 
-	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
 // response_tools.go stores tool restoration mappings for active requests, later
-// session turns, and HTTP bridging. Replacing session names leaves the
-// active-turn slot intact, so restoration can continue using the current turn's
-// names while future declarations change.
+// session turns, and WebSocket-to-HTTP bridging. Replacing session names leaves
+// the active-turn slot intact, so response restoration can continue using the
+// current turn's names while future session declarations change concurrently.
 //
-// The mutex synchronizes reference publication and retrieval, while consumers
-// keep published maps immutable after retrieval. Client mappings and namespace
-// maps are retained; Codex-name publication clones its string map, and bridge
-// publication clones declaration bytes while sharing its client mapping.
-// Getters return those captured references, so callers replace whole maps for a
-// later turn and keep retrieved storage read-only. Synchronizing a getter
-// cannot protect later mutation by its consumer.
+// The mutex synchronizes reference publication and retrieval across request and
+// session readers. Namespace maps remain caller-immutable after publication,
+// Codex-name publication clones its string map into either the active or
+// session slot, and IR ToolMap publication and retrieval return detached deep
+// copies so callers can inspect or replace per-turn state without mutating
+// active output restoration.
 
 // ResponseTools holds separate request, active-turn, session, and HTTP-bridge
-// restoration state. Its lock protects slot access; callers treat the maps and
-// bytes returned from those slots as immutable while restoration uses them.
+// tool restoration state. Its lock protects slot access while callers treat
+// shared string and namespace maps returned from those slots as immutable.
 type ResponseTools struct {
-	// mu protects openai, grok, namespaces, activeNames, sessionNames, bridgeState,
-	// and bridgePresent during publication and retrieval. Published map contents
-	// stay immutable after a getter releases the lock.
+	// mu protects openaiToolMap, grokToolMap, namespaces, activeNames,
+	// sessionNames, bridgeToolMap, and bridgeToolMapPresent during publication
+	// and retrieval. Shared map contents stay immutable after unlocking.
 	mu                        sync.RWMutex                             // mapping reference publication lock
-	openai, grok              bridge.ResponsesClientToolMapping        // OpenAI lowered-tool mapping and Grok lowered-tool mapping
-	namespaces                map[string]bridge.ResponsesNamespaceName // shared flattened namespace reverse map
+	openaiToolMap             *convert.ToolMap                         // OpenAI IR lowered-tool identity map
+	grokToolMap               *convert.ToolMap                         // Grok IR lowered-tool identity map
+	namespaces                map[string]openai.ResponsesNamespaceName // shared flattened namespace reverse map
 	activeNames, sessionNames map[string]string                        // active-turn name restoration and future-session name restoration
-	bridgeState               WSBridgeTools                            // captured next HTTP-bridge tool state
-	bridgePresent             bool                                     // bridge state publication presence flag
-}
-
-// WSBridgeTools carries lowered tool declarations and client mappings into an
-// HTTP bridge turn.
-type WSBridgeTools struct {
-	// ClientMapping and LoweredTools describe the same lowered declarations.
-	// SetBridge copies LoweredTools bytes but retains the mapping's internal maps;
-	// Bridge returns both shared references to the next turn.
-	ClientMapping bridge.ResponsesClientToolMapping // shared lowered client-tool mapping
-	LoweredTools  json.RawMessage                   // captured tool declaration JSON bytes
-}
-
-// ClientMapping returns the selected OpenAI or Grok mapping value under a read
-// lock. Nil state yields an empty mapping, and its internal maps remain shared;
-// callers keep their contents immutable while restoration uses them.
-func (s *ResponseTools) ClientMapping(grok bool) bridge.ResponsesClientToolMapping {
-	if s == nil {
-		return bridge.ResponsesClientToolMapping{}
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if grok {
-		return s.grok
-	}
-	return s.openai
-}
-
-// SetClientMapping publishes the supplied mapping to the OpenAI or Grok slot
-// and ignores nil state. Its internal maps are retained, so callers keep them
-// unchanged after publication and synchronize any replacement through this
-// setter.
-func (s *ResponseTools) SetClientMapping(grok bool, mapping bridge.ResponsesClientToolMapping) {
-	if s == nil {
-		return
-	}
-	// Replace the selected platform's complete mapping under the publication lock
-	// so a concurrent getter captures one consistent set of tool-kind and
-	// namespace evidence.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if grok {
-		s.grok = mapping
-	} else {
-		s.openai = mapping
-	}
+	bridgeToolMap             *convert.ToolMap                         // captured next HTTP-bridge IR tool state
+	bridgeToolMapPresent      bool                                     // IR bridge tool state publication presence flag
 }
 
 // Namespaces returns the captured namespace-name map under a read lock, or nil
 // for nil state. The map remains shared after unlocking; callers read it
 // immutably and publish a replacement to change names.
-func (s *ResponseTools) Namespaces() map[string]bridge.ResponsesNamespaceName {
+func (s *ResponseTools) Namespaces() map[string]openai.ResponsesNamespaceName {
 	if s == nil {
 		return nil
 	}
@@ -96,7 +51,7 @@ func (s *ResponseTools) Namespaces() map[string]bridge.ResponsesNamespaceName {
 // SetNamespaces publishes the supplied namespace map and ignores nil state. It
 // retains that map rather than cloning it; callers leave its contents unchanged
 // while request output may still read its names.
-func (s *ResponseTools) SetNamespaces(names map[string]bridge.ResponsesNamespaceName) {
+func (s *ResponseTools) SetNamespaces(names map[string]openai.ResponsesNamespaceName) {
 	if s == nil {
 		return
 	}
@@ -150,39 +105,72 @@ func (s *ResponseTools) SetCodexNames(session bool, reverse map[string]string) {
 	}
 }
 
-// Bridge returns captured HTTP-bridge declarations and their presence flag
-// under a read lock. Nil state returns absent zero values; returned declaration
-// bytes and mapping internals are shared and stay read-only for the consuming
-// turn.
-func (s *ResponseTools) Bridge() (WSBridgeTools, bool) {
+// ClientToolMap returns an independent deep copy of the selected OpenAI or Grok
+// IR tool map under a read lock. Nil state or an unset slot returns nil so
+// callers can inspect HasRestorations safely without aliasing internal storage.
+func (s *ResponseTools) ClientToolMap(grok bool) *convert.ToolMap {
 	if s == nil {
-		return WSBridgeTools{}, false
+		return nil
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.bridgeState, s.bridgePresent
+	var selected *convert.ToolMap
+	if grok {
+		selected = s.grokToolMap
+	} else {
+		selected = s.openaiToolMap
+	}
+	s.mu.RUnlock()
+	return selected.Clone()
 }
 
-// SetBridge publishes supplied HTTP-bridge state and marks it present, ignoring
-// a nil receiver. LoweredTools bytes are copied before publication; empty
-// storage can become nil, while ClientMapping internal maps remain shared and
-// caller-immutable.
-//
-// The captured state and presence flag change under one lock, so Bridge
-// observes a complete publication. A zero WSBridgeTools value is still present
-// after this call; callers use that presence to distinguish published empty
-// declarations from an uninitialized bridge slot. They leave returned byte
-// storage and mapping contents unchanged while the next turn reads them.
-func (s *ResponseTools) SetBridge(state WSBridgeTools) {
+// SetClientToolMap publishes a detached deep copy of tools to the OpenAI or
+// Grok IR restoration slot and ignores nil state. Maps without active
+// restorations clear the slot to nil so non-lowered attempts leave no stale state.
+func (s *ResponseTools) SetClientToolMap(grok bool, tools *convert.ToolMap) {
 	if s == nil {
 		return
 	}
-	// Bridge turns retain declaration bytes after this request update finishes.
-	// Copy those bytes before publication while retaining the read-only client mapping.
-	state.LoweredTools = append(json.RawMessage(nil), state.LoweredTools...)
-	// Pair state replacement with its presence flag before unlocking so the next
-	// bridge turn cannot observe newly present state with the preceding declarations.
+	var cloned *convert.ToolMap
+	if tools.HasRestorations() {
+		cloned = tools.Clone()
+	}
+	// Replace the selected platform's IR tool map atomically under the write
+	// lock so concurrent stream and buffered readers observe one coherent snapshot.
 	s.mu.Lock()
-	s.bridgeState, s.bridgePresent = state, true
+	if grok {
+		s.grokToolMap = cloned
+	} else {
+		s.openaiToolMap = cloned
+	}
+	s.mu.Unlock()
+}
+
+// BridgeToolMap returns an independent deep copy of the captured HTTP-bridge IR
+// tool map and its presence flag under a read lock. Nil state returns (nil, false),
+// while an explicit nil publication returns (nil, true) after a tools reset turn.
+func (s *ResponseTools) BridgeToolMap() (*convert.ToolMap, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.mu.RLock()
+	selected := s.bridgeToolMap
+	present := s.bridgeToolMapPresent
+	s.mu.RUnlock()
+	return selected.Clone(), present
+}
+
+// SetBridgeToolMap publishes a detached deep copy of tools into the HTTP-bridge
+// IR session slot and marks it present, ignoring nil state. Cloning happens
+// outside the write lock, and nil tools record an explicit reset while keeping
+// the presence marker true for subsequent continuation turns.
+func (s *ResponseTools) SetBridgeToolMap(tools *convert.ToolMap) {
+	if s == nil {
+		return
+	}
+	cloned := tools.Clone()
+	// Update the cloned session ToolMap and presence flag under one lock so the
+	// next WebSocket bridge turn observes atomic declaration and mapping state.
+	s.mu.Lock()
+	s.bridgeToolMap, s.bridgeToolMapPresent = cloned, true
 	s.mu.Unlock()
 }

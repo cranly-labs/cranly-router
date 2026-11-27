@@ -1,0 +1,8 @@
+data: {"responseId":"gem_usage_cache","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Cached prefix tokens were reused "}]}}],"usageMetadata":{"promptTokenCount":760,"cachedContentTokenCount":640,"totalTokenCount":760}}
+
+data: {"responseId":"gem_usage_cache","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"from the 1h system block while "}]}}]}
+
+data: {"responseId":"gem_usage_cache","modelVersion":"gemini-2.5-pro","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"new 5m context was written once."}]},"finishReason":"STOP"}]}
+
+data: {"responseId":"gem_usage_cache","modelVersion":"gemini-2.5-pro","usageMetadata":{"candidatesTokenCount":28,"totalTokenCount":788}}
+

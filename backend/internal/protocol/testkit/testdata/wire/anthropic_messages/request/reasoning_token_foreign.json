@@ -1,0 +1,67 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 4096,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  },
+  "tools": [
+    {
+      "name": "lookup_region_quota",
+      "description": "Look up GPU quota usage in a cloud region.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "Region name"
+          }
+        },
+        "required": [
+          "region"
+        ]
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Compare regional GPU quota headroom in us-east-1 and eu-west-1."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Check us-east-1 quota usage before comparing eu-west-1.",
+          "signature": "trc1:xai:eyJkIjoiZW5jX3hhaV9mb3JlaWduX3F1b3RhXzAxIiwicCI6MjAyfQ"
+        },
+        {
+          "type": "redacted_thinking",
+          "data": "trc1:antigravity_claude:eyJkIjoiYWdfY2xhdWRlX3JlZGFjdGVkX2ZvcmVpZ25fMDEiLCJyIjp0cnVlfQ"
+        },
+        {
+          "type": "tool_use",
+          "id": "call_quota_use1",
+          "name": "lookup_region_quota",
+          "input": {
+            "region": "us-east-1"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_quota_use1",
+          "content": "{\"region\":\"us-east-1\",\"used\":12,\"limit\":64}"
+        }
+      ]
+    }
+  ]
+}
