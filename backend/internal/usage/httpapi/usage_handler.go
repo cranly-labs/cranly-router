@@ -529,12 +529,12 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 	}
 
 	if sc := strings.TrimSpace(c.Query("status_code")); sc != "" {
-		n, err := strconv.Atoi(sc)
-		if err != nil || n < 0 {
+		n64, err := strconv.ParseInt(sc, 10, 32)
+		if err != nil || n64 < 0 {
 			response.BadRequest(c, "Invalid status_code")
 			return
 		}
-		filter.StatusCodes = []int{n}
+		filter.StatusCodes = []int{int(n64)}
 	}
 
 	if cat := strings.TrimSpace(c.Query("category")); cat != "" {

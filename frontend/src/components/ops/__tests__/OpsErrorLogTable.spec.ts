@@ -87,6 +87,85 @@ describe('OpsErrorLogTable user/api-key/provider columns', () => {
     expect(wrapper.text()).toContain('old-key')
     expect(wrapper.text()).toContain('admin.ops.errorLog.keyDeletedBadge')
   })
+
+  // Error rows can carry distinct client and upstream statuses, explicit zero
+  // credential failures, or null upstream statuses on local rejections. The
+  // table must render both columns independently and map sort clicks to their
+  // separate backend fields.
+  it('renders separate client and upstream status columns and maps both sort keys', async () => {
+    const wrapper = mount(OpsErrorLogTable, {
+      props: {
+        rows: [
+          {
+            id: 1,
+            created_at: '2026-06-05T23:59:50Z',
+            phase: 'upstream',
+            type: 'upstream_error',
+            error_owner: 'provider',
+            error_source: 'upstream_http',
+            severity: 'error',
+            status_code: 502,
+            upstream_status_code: 403,
+            platform: 'openai',
+            model: 'gpt-5',
+            resolved: false,
+            client_request_id: '',
+            request_id: 'req-1',
+            message: 'upstream forbidden',
+            user_email: '',
+            provider_name: 'p1',
+            group_name: '',
+          },
+          {
+            id: 2,
+            created_at: '2026-06-05T23:59:51Z',
+            phase: 'provider_auth',
+            type: 'upstream_error',
+            error_owner: 'provider',
+            error_source: 'gateway',
+            severity: 'error',
+            status_code: 503,
+            upstream_status_code: 0,
+            platform: 'openai',
+            model: 'gpt-5',
+            resolved: false,
+            client_request_id: '',
+            request_id: 'req-2',
+            message: 'credential failure',
+            user_email: '',
+            provider_name: 'p2',
+            group_name: '',
+          },
+        ],
+        total: 2,
+        loading: false,
+        page: 1,
+        pageSize: 20,
+      },
+      global: { stubs: { 'el-tooltip': TooltipStub, Pagination: PaginationStub } },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('admin.ops.errorLog.status')
+    expect(text).toContain('admin.ops.errorLog.upstreamStatus')
+    expect(text).toContain('502')
+    expect(text).toContain('403')
+    expect(text).toContain('503')
+    expect(text).toContain('0')
+
+    const headers = wrapper.findAll('th')
+    const clientStatusHeader = headers.find((h) => h.text().includes('admin.ops.errorLog.status'))
+    const upstreamStatusHeader = headers.find((h) =>
+      h.text().includes('admin.ops.errorLog.upstreamStatus'),
+    )
+    expect(clientStatusHeader).toBeTruthy()
+    expect(upstreamStatusHeader).toBeTruthy()
+
+    await clientStatusHeader!.trigger('click')
+    await upstreamStatusHeader!.trigger('click')
+    const sortEvents = wrapper.emitted('sort') ?? []
+    expect(sortEvents.map((e) => e[0])).toEqual(['status_code', 'upstream_status_code'])
+  })
 })
 
 // The component reads the admin.ops.errorLog namespace, so misplaced keys can
@@ -97,13 +176,15 @@ describe('OpsErrorLogTable user/api-key/provider columns', () => {
 describe('OpsErrorLogTable i18n keys exist in the errorLog namespace', () => {
   const locales: Record<string, any> = { zh: zhLocale, en: enLocale }
   for (const [name, msgs] of Object.entries(locales)) {
-    // The table uses API-key labels under the errorLog locale namespace. Each
-    // tested language must provide both keys so rendering does not fall back to
-    // untranslated paths.
-    it(`has apiKey & keyDeletedBadge for ${name}`, () => {
+    // The table uses API-key and status labels under the errorLog locale
+    // namespace. Each tested language must provide these keys so rendering does
+    // not fall back to untranslated paths.
+    it(`has apiKey, keyDeletedBadge, status & upstreamStatus for ${name}`, () => {
       const errorLog = msgs?.admin?.ops?.errorLog
       expect(errorLog?.apiKey).toBeTruthy()
       expect(errorLog?.keyDeletedBadge).toBeTruthy()
+      expect(errorLog?.status).toBeTruthy()
+      expect(errorLog?.upstreamStatus).toBeTruthy()
     })
   }
 })

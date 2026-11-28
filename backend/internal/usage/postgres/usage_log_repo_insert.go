@@ -12,6 +12,7 @@ import (
 	"time"
 
 	dbent "github.com/TokenFlux/TokenRouter/ent"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
@@ -132,6 +133,7 @@ var (
 		{name: "request_source", dataType: "text"},
 		{name: "system_usage", dataType: "jsonb"},
 		{name: "cache_write_anomaly", dataType: "jsonb"},
+		{name: "protocol_conversion", dataType: "jsonb"},
 	}
 
 	// usageLogInsert caches fixed SQL metadata once for the direct and batch
@@ -1222,6 +1224,12 @@ func prepareUsageLogInsert(log *usage.UsageLog) usageLogInsertPrepared {
 			anomalyArg = anomalyJSON
 		}
 	}
+	var conversionArg any
+	if normalizedConv := telemetry.NormalizeProtocolConversion(log.ProtocolConversion); normalizedConv != nil {
+		if convJSON, err := json.Marshal(normalizedConv); err == nil {
+			conversionArg = convJSON
+		}
+	}
 	var userIDArg, keyIDArg, payerIDArg any
 	userIDArg, keyIDArg = log.UserID, log.APIKeyID
 	billingUserID := log.BillingUserID
@@ -1317,6 +1325,7 @@ func prepareUsageLogInsert(log *usage.UsageLog) usageLogInsertPrepared {
 			log.EffectiveRequestSource(),
 			systemArg,
 			anomalyArg,
+			conversionArg,
 		},
 	}
 }

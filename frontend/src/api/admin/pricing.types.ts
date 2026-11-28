@@ -11,7 +11,6 @@ export interface BillingSettings {
   peak_end: string // Peak end in HH:mm.
   peak_rate_multiplier: number // Peak rate multiplier.
   long_context_pricing_enabled: boolean // Long-context pricing activation switch.
-  free_openai_fast: boolean // OpenAI Fast surcharge waiver.
   batch_image_discount_multiplier: number // Batch image settlement multiplier.
   batch_image_hold_multiplier: number // Batch image reservation multiplier.
   // web_search_price_per_call, search_price_per_1k, audio_realtime_price_per_min,

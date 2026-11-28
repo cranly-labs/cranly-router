@@ -3,6 +3,7 @@ package forward
 import (
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -29,11 +30,13 @@ type Result struct {
 	// selected upstream name. Gemini keeps its initial mapping after provider-local
 	// model recovery. Completion applies its configured source, while the response
 	// declaration remains independent evidence.
-	Model, UpstreamModel string              // logical request model; captured upstream model
-	Stream               bool                // client streaming output mode
-	Duration             time.Duration       // forwarding elapsed duration
-	Timings              *timing.Performance // frozen exchange performance observations
-	ClientDisconnect     bool                // observed client disconnect flag
+
+	Model, UpstreamModel string                        // logical request model; captured upstream model
+	Stream               bool                          // client streaming output mode
+	Duration             time.Duration                 // forwarding elapsed duration
+	Timings              *timing.Performance           // frozen exchange performance observations
+	ProtocolConversion   *telemetry.ProtocolConversion // bounded protocol transformation diagnostics
+	ClientDisconnect     bool                          // observed client disconnect flag
 	// ReasoningEffort records the producer's executed policy, while
 	// RequestedReasoningEffort retains client input before compatibility mapping.
 	// Completion records those separate observations when request preparation

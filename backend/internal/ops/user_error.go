@@ -21,14 +21,16 @@ type UserErrorRequest struct {
 	// the recorded requested model when available.
 	Model           string `json:"model"`            // user-visible requested model label
 	InboundEndpoint string `json:"inbound_endpoint"` // observed incoming endpoint path
-	// StatusCode copies the internal query display status. PostgreSQL prefers a
-	// nonnull upstream status, then client status, then zero, so this value can
-	// differ from the final client response code.
-	StatusCode int    `json:"status_code"`
-	Category   string `json:"category"` // frontend error category code
-	Platform   string `json:"platform"` // recorded execution platform snapshot
-	Message    string `json:"message"`  // gateway error description text
-	KeyName    string `json:"key_name"` // owner-visible API-key name
+	// StatusCode and ClientStatusCode distinguish the display value from the
+	// observed HTTP response. A positive display value without a wire observation
+	// comes from a legacy writer's logical status. The optional pointer is shared
+	// with the source and callers treat its value as immutable.
+	StatusCode       int    `json:"status_code"`                  // effective display status
+	ClientStatusCode *int   `json:"client_status_code,omitempty"` // observed client HTTP status
+	Category         string `json:"category"`                     // frontend error category code
+	Platform         string `json:"platform"`                     // recorded execution platform snapshot
+	Message          string `json:"message"`                      // gateway error description text
+	KeyName          string `json:"key_name"`                     // owner-visible API-key name
 	// KeyDeleted copies the joined API-key soft-deletion flag. PostgreSQL sets it
 	// when api_keys.deleted_at is present; false also covers a missing joined key
 	// row.
@@ -127,8 +129,8 @@ func CategoryToFilter(category string) (phases []string, errorTypes []string) {
 // ToUserErrorRequest copies selected request fields from an internal error log
 // and returns nil for nil input. RequestedModel takes display precedence over
 // execution Model, category codes follow the stored classification, and
-// RequestType remains shared with the source. Authorization belongs to the
-// owning service caller.
+// RequestType and ClientStatusCode remain shared with the source. The owning
+// service checks authorization before it calls this converter.
 func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 	if e == nil {
 		return nil
@@ -144,29 +146,30 @@ func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 		clientIP = *e.ClientIP
 	}
 	return &UserErrorRequest{
-		ID:              e.ID,
-		RequestID:       e.RequestID,
-		CreatedAt:       e.CreatedAt,
-		Model:           model,
-		InboundEndpoint: e.InboundEndpoint,
-		StatusCode:      e.StatusCode,
-		Category:        MapUserErrorCategory(e.Phase, e.Type),
-		Platform:        e.Platform,
-		Message:         e.Message,
-		KeyName:         e.APIKeyName,
-		KeyDeleted:      e.APIKeyDeleted,
-		ClientIP:        clientIP,
-		GroupName:       e.GroupName,
-		RequestType:     e.RequestType,
-		Stream:          e.Stream,
-		UserAgent:       e.UserAgent,
+		ID:               e.ID,
+		RequestID:        e.RequestID,
+		CreatedAt:        e.CreatedAt,
+		Model:            model,
+		InboundEndpoint:  e.InboundEndpoint,
+		StatusCode:       e.StatusCode,
+		ClientStatusCode: e.ClientStatusCode,
+		Category:         MapUserErrorCategory(e.Phase, e.Type),
+		Platform:         e.Platform,
+		Message:          e.Message,
+		KeyName:          e.APIKeyName,
+		KeyDeleted:       e.APIKeyDeleted,
+		ClientIP:         clientIP,
+		GroupName:        e.GroupName,
+		RequestType:      e.RequestType,
+		Stream:           e.Stream,
+		UserAgent:        e.UserAgent,
 	}
 }
 
 // ToUserErrorRequestDetail copies selected request and captured response
 // fields, returning nil for nil input. It performs no body redaction or
 // ownership check; callers use the capture policy and owning service
-// authorization, and UpstreamStatusCode and RequestType remain shared pointers.
+// authorization. Wire status and request type pointers remain shared with the source.
 func ToUserErrorRequestDetail(e *OpsErrorLogDetail) *UserErrorRequestDetail {
 	if e == nil {
 		return nil

@@ -181,6 +181,8 @@ const UsageTableStub = {
     'columns', // visible table column definitions
     'userClickable', // administrator navigation permission flag
     'compactUserColumn', // compact member attribution flag
+    'showProtocolConversion', // administrator protocol-conversion visibility flag
+    'showUpstreamEndpoint', // administrator upstream-endpoint visibility flag
   ],
   template: '<div data-test="usage-table" />',
 }
@@ -676,5 +678,18 @@ describe('user UsageView', () => {
     dialog.vm.$emit('tasksChanged', 0)
     await flushPromises()
     expect(exportBtn.text()).toBe('Export')
+  })
+
+  // Regular users must never see upstream protocol routes, dialects, or conversion
+  // loss diagnostics on /usage. User UsageView must pass showProtocolConversion=false
+  // and showUpstreamEndpoint=false to the shared UsageTable component.
+  it('explicitly disables protocol conversion and upstream endpoint display on user UsageTable', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    const table = wrapper.findComponent(UsageTableStub)
+    expect(table.exists()).toBe(true)
+    expect(table.props('showProtocolConversion')).toBe(false)
+    expect(table.props('showUpstreamEndpoint')).toBe(false)
   })
 })

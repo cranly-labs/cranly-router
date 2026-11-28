@@ -19,12 +19,14 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -74,14 +76,15 @@ type rawConvertedMember struct {
 // convertedResponsesBodyPatch specifies lossless top-level JSON edits applied
 // after convert.Exchange.UpstreamRequest or on raw Cursor Responses bodies.
 type convertedResponsesBodyPatch struct {
-	Model                string                        // target upstream model when non-empty
-	ForceStream          bool                          // sets top-level stream=true when enabled
-	DeleteFields         []string                      // top-level member names to remove
-	SetServiceTier       string                        // explicit service_tier value to set when non-empty
-	NormalizeServiceTier bool                          // canonicalizes existing service_tier via ServiceTierValue
-	PreviousResponseID   string                        // previous_response_id value to attach when non-empty
-	InjectPromptCacheKey string                        // prompt_cache_key injected when absent or blank
-	ReconcileEffort      func(converted string) string // optional callback rewriting reasoning.effort
+	Model                string                                  // target upstream model when non-empty
+	ForceStream          bool                                    // sets top-level stream=true when enabled
+	DeleteFields         []string                                // top-level member names to remove
+	OnDeleteField        func(key string, rawVal jsontext.Value) // optional observer invoked before removing an existing DeleteFields member
+	SetServiceTier       string                                  // explicit service_tier value to set when non-empty
+	NormalizeServiceTier bool                                    // canonicalizes existing service_tier via ServiceTierValue
+	PreviousResponseID   string                                  // previous_response_id value to attach when non-empty
+	InjectPromptCacheKey string                                  // prompt_cache_key injected when absent or blank
+	ReconcileEffort      func(converted string) string           // optional callback rewriting reasoning.effort
 }
 
 // RunConvertedResponses dispatches or converts a Messages or Chat request onto
@@ -105,7 +108,7 @@ func RunConvertedResponses(
 ) (*Result, error) {
 	switch source {
 	case protocol.ProtocolAnthropicMessages:
-		return runConvertedMessagesToResponses(ctx, body, promptCacheKey, defaultMappedModel, p)
+		return runConvertedMessagesToResponses(ctx, body, promptCacheKey, defaultMappedModel, protocolanthropic.SignatureRetryLosses{}, p)
 	case protocol.ProtocolOpenAIChatCompletions:
 		return runConvertedChatToResponses(ctx, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated, p)
 	default:
@@ -129,6 +132,7 @@ func runConvertedMessagesToResponses(
 	body []byte,
 	promptCacheKey string,
 	defaultMappedModel string,
+	sourceLosses protocolanthropic.SignatureRetryLosses,
 	p ConvertedResponsesPorts,
 ) (*Result, error) {
 	profile, route, err := p.PrepareMessages(ctx)
@@ -235,6 +239,12 @@ func runConvertedMessagesToResponses(
 		p.SourceError(protocol.ProtocolAnthropicMessages, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(fmt.Errorf("encode converted responses request: %w", err))
 	}
+	// A recursive Grok recovery may already have stripped the client Messages
+	// body. Those losses belong to this rebuilt request across continuation retries.
+	if sourceLosses.Tokens > 0 || sourceLosses.Reasoning > 0 {
+		exchange.SetSignatureRetryLosses(sourceLosses.Tokens, sourceLosses.Reasoning)
+	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	tierOverride := ""
 	if p.BetaFast() {
@@ -411,6 +421,7 @@ func runConvertedMessagesToResponses(
 	// Retry once on Grok HTTP 400 after stripping invalid replayed encrypted
 	// reasoning content before treating the error as terminal or switching providers.
 	var resp *http.Response
+	var droppedCiphertexts int
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
 			if profile.Platform != "grok" {
@@ -422,6 +433,7 @@ func runConvertedMessagesToResponses(
 			if err != nil {
 				return nil, fmt.Errorf("build grok retry request: %w", err)
 			}
+			upstream.StageSignatureRetry(ctx, exchange, sourceLosses.Tokens+droppedCiphertexts, sourceLosses.Reasoning)
 		}
 		resp, err = p.Send(upstreamReq)
 		if err != nil {
@@ -440,12 +452,13 @@ func runConvertedMessagesToResponses(
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			break
 		}
-		retryBody, changed := protocolopenai.StripResponsesEncryptedReasoningBytes(responsesBody)
+		retryBody, changed, dropped := protocolopenai.StripResponsesEncryptedReasoningWithCount(responsesBody)
 		if !changed {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			break
 		}
 		responsesBody = retryBody
+		droppedCiphertexts = dropped
 		logging.L().Info("openai messages (ir): retrying after stripping invalid Grok encrypted_content",
 			zap.Int64("provider_id", profile.ID),
 			zap.Bool("cache_identity_present", strings.TrimSpace(grokCacheIdentity) != ""),
@@ -457,18 +470,21 @@ func runConvertedMessagesToResponses(
 	if resp.StatusCode >= 400 {
 		respBody, _ := p.ReadUpstreamError(resp)
 		// Spend the single per-request Agent Identity task recovery before rebuilding
-		// from client bytes so repeated task errors proceed to standard error handling.
+		// from client bytes in a fresh conversion scope so repeated task errors
+		// proceed to standard error handling without summing prior attempt losses.
 		if !requeststate.AgentTaskRecoveryTried(ctx) && p.IsAgentIdentity(ctx) && openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 			if err := p.RecoverAgentTask(ctx); err != nil {
 				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
 			}
-			return RunConvertedResponses(requeststate.WithAgentTaskRecovery(ctx), protocol.ProtocolAnthropicMessages, body, callerPromptCacheKey, defaultMappedModel, false, p)
+			retryCtx := telemetry.WithProtocolConversionScope(requeststate.WithAgentTaskRecovery(ctx))
+			return runConvertedMessagesToResponses(retryCtx, body, callerPromptCacheKey, defaultMappedModel, sourceLosses, p)
 		}
 		respBody = p.RedactErrorBody(ctx, respBody)
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(respBody)))
 		// Clear or disable rejected previous_response_id state before re-running
-		// full history conversion from the original Messages payload.
+		// full history conversion in an isolated conversion scope so attempt two
+		// records only its own request losses instead of summing with attempt one.
 		if previousResponseID != "" && (gatewayprovider.CompatPreviousResponseNotFound(resp.StatusCode, upstreamMsg, respBody) || gatewayprovider.CompatPreviousResponseUnsupported(resp.StatusCode, upstreamMsg, respBody)) {
 			if gatewayprovider.CompatPreviousResponseUnsupported(resp.StatusCode, upstreamMsg, respBody) {
 				p.DisableContinuation(ctx, promptCacheKey)
@@ -481,18 +497,21 @@ func runConvertedMessagesToResponses(
 				zap.String("upstream_model", upstreamModel),
 				zap.Bool("compat_continuation_supported", profile.ContinuationSupported),
 			)
-			return RunConvertedResponses(ctx, protocol.ProtocolAnthropicMessages, body, callerPromptCacheKey, defaultMappedModel, false, p)
+			retryCtx := telemetry.WithProtocolConversionScope(ctx)
+			return runConvertedMessagesToResponses(retryCtx, body, callerPromptCacheKey, defaultMappedModel, sourceLosses, p)
 		}
 		if profile.Platform == "grok" &&
 			gatewayprovider.GrokBodyCodec().IsGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) &&
 			!gatewayprovider.GrokBodyCodec().GrokEncryptedContentStripRetried(ctx) {
 			// Strip rejected thinking signatures and empty redacted blocks losslessly via
-			// jsontext so a subsequent Grok replay retains readable thinking text and integers.
-			if strippedBody, strippedOK := protocolanthropic.StripMessagesSignatureBlocksForRetryBytes(body, true); strippedOK {
+			// jsontext in an isolated conversion scope so a subsequent Grok replay
+			// retains readable thinking text without summing prior attempt losses.
+			if strippedBody, strippedOK, losses := protocolanthropic.StripMessagesSignatureBlocksWithLosses(body, true); strippedOK {
 				logging.L().Info("openai messages (ir): stripping thinking signatures for Grok failover retry",
 					zap.Int64("provider_id", profile.ID),
 				)
-				return RunConvertedResponses(gatewayprovider.GrokBodyCodec().MarkGrokEncryptedContentStripRetried(ctx), protocol.ProtocolAnthropicMessages, strippedBody, callerPromptCacheKey, defaultMappedModel, false, p)
+				retryCtx := telemetry.WithProtocolConversionScope(gatewayprovider.GrokBodyCodec().MarkGrokEncryptedContentStripRetried(ctx))
+				return runConvertedMessagesToResponses(retryCtx, strippedBody, callerPromptCacheKey, defaultMappedModel, losses, p)
 			}
 		}
 		if foErr := p.FailoverHTTP(ctx, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
@@ -512,6 +531,11 @@ func runConvertedMessagesToResponses(
 
 	output := upstream.NewDeferredOutputContext(p.Sink())
 	convOpts := p.ConvertedResponseOptions(resp, protocol.ProtocolAnthropicMessages, originalModel, billingModel, upstreamModel, len(body))
+	if ctx != nil {
+		// Pass the active retry context so FinalizeExchangeConversion updates this
+		// attempt's isolated scope even when resp.Request is synthetic in tests.
+		convOpts.RequestContext = ctx
+	}
 	var nativeResult *openai.CompatResponseResult
 	var handleErr error
 	if clientStream {
@@ -705,17 +729,27 @@ func runConvertedChatToResponses(
 	if isResponsesShape {
 		// Cursor input-shaped requests targeting Responses upstream preserve raw
 		// Responses fields, force stream=true for SSE response readers, strip
-		// incompatible Cursor extensions, and normalize service_tier via jsontext.
+		// incompatible Cursor extensions, normalize service_tier via jsontext, and
+		// collect deleted-field losses during the same single top-level parse.
+		var cursorLosses []ir.Loss
 		responsesBody, _, err = patchConvertedResponsesBody(body, convertedResponsesBodyPatch{
 			Model:                upstreamModel,
 			ForceStream:          true,
 			DeleteFields:         CursorResponsesUnsupportedFields,
 			NormalizeServiceTier: true,
+			OnDeleteField: func(key string, rawVal jsontext.Value) {
+				if loss, ok := cursorDeletedFieldLoss(key, rawVal); ok {
+					cursorLosses = append(cursorLosses, loss)
+				}
+			},
 		})
 		if err != nil {
 			p.SourceError(protocol.ProtocolOpenAIChatCompletions, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(fmt.Errorf("patch responses-shape chat body: %w", err))
 		}
+		// Replace Exchange's unused re-encoded request losses with losses from the
+		// raw Cursor body actually sent upstream while preserving response losses.
+		exchange.ReplaceRequestLosses(cursorLosses)
 	} else {
 		responsesBody, err = exchange.UpstreamRequest()
 		if err != nil {
@@ -731,6 +765,7 @@ func runConvertedChatToResponses(
 			return nil, fmt.Errorf("patch converted responses request: %w", err)
 		}
 	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	logFields := []zap.Field{
 		zap.Int64("provider_id", profile.ID),
@@ -821,12 +856,14 @@ func runConvertedChatToResponses(
 	if resp.StatusCode >= 400 {
 		respBody, _ := p.ReadUpstreamError(resp)
 		// Spend the single Agent Identity recovery guard before recursively
-		// rebuilding the converted Chat attempt from client bytes.
+		// rebuilding the converted Chat attempt from client bytes in a fresh
+		// conversion scope so retry losses never sum with the rejected attempt.
 		if !requeststate.AgentTaskRecoveryTried(ctx) && p.IsAgentIdentity(ctx) && openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 			if err := p.RecoverAgentTask(ctx); err != nil {
 				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
 			}
-			return RunConvertedResponses(requeststate.WithAgentTaskRecovery(ctx), protocol.ProtocolOpenAIChatCompletions, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated, p)
+			retryCtx := telemetry.WithProtocolConversionScope(requeststate.WithAgentTaskRecovery(ctx))
+			return RunConvertedResponses(retryCtx, protocol.ProtocolOpenAIChatCompletions, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated, p)
 		}
 		respBody = p.RedactErrorBody(ctx, respBody)
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -839,6 +876,11 @@ func runConvertedChatToResponses(
 
 	output := upstream.NewDeferredOutputContext(p.Sink())
 	convOpts := p.ConvertedResponseOptions(resp, protocol.ProtocolOpenAIChatCompletions, originalModel, billingModel, upstreamModel, len(body))
+	if ctx != nil {
+		// Pass the active retry context so FinalizeExchangeConversion updates this
+		// attempt's isolated scope even when resp.Request is synthetic in tests.
+		convOpts.RequestContext = ctx
+	}
 	var nativeResult *openai.CompatResponseResult
 	var handleErr error
 	if clientStream {
@@ -952,11 +994,59 @@ func isConvertedThinkingDisabledBytes(rawObj jsontext.Value) bool {
 	return disabled
 }
 
+// cursorDeletedFieldLoss classifies one stripped Cursor extension member into
+// an extra_dropped ir.Loss record. Consumed stream_options.include_usage
+// toggles and null stream_options values return false because Exchange applies
+// include_usage during response encoding without losing request semantics.
+func cursorDeletedFieldLoss(key string, rawVal jsontext.Value) (ir.Loss, bool) {
+	if key == "stream_options" && !cursorStreamOptionsHasDroppedKeys(rawVal) {
+		return ir.Loss{}, false
+	}
+	return ir.Loss{
+		Kind:   ir.LossExtraDropped,
+		Path:   key,
+		Detail: key,
+	}, true
+}
+
+// cursorStreamOptionsHasDroppedKeys reports whether rawVal carries any
+// stream_options content other than null or the consumed include_usage toggle
+// without copying nested values.
+func cursorStreamOptionsHasDroppedKeys(rawVal jsontext.Value) bool {
+	trimmed := bytes.TrimSpace(rawVal)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return false
+	}
+	if trimmed[0] != '{' {
+		return true
+	}
+	dec := jsontext.NewDecoder(bytes.NewReader(trimmed), jsontext.AllowInvalidUTF8(true))
+	tok, err := dec.ReadToken()
+	if err != nil || tok.Kind() != '{' {
+		return true
+	}
+	for dec.PeekKind() != '}' {
+		kTok, err := dec.ReadToken()
+		if err != nil || kTok.Kind() != '"' {
+			return true
+		}
+		if kTok.String() != "include_usage" {
+			return true
+		}
+		if err := dec.SkipValue(); err != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // patchConvertedResponsesBody applies model, stream, service_tier, effort,
 // continuation, and prompt_cache_key edits onto ordered raw JSON object members
-// without decoding unmodeled fields or rounding large integers. It returns the
-// updated JSON bytes alongside any resolved canonical service_tier string, or
-// an error when body is not a valid JSON object.
+// without decoding unmodeled fields or rounding large integers. When
+// patch.OnDeleteField is set, it observes each matched DeleteFields member
+// before removal during the same parse. It returns the updated JSON bytes
+// alongside any resolved canonical service_tier string, or an error when body
+// is not a valid JSON object.
 func patchConvertedResponsesBody(body []byte, patch convertedResponsesBodyPatch) ([]byte, string, error) {
 	members, err := readConvertedObjectMembers(body)
 	if err != nil {
@@ -964,6 +1054,13 @@ func patchConvertedResponsesBody(body []byte, patch convertedResponsesBodyPatch)
 	}
 
 	for _, delKey := range patch.DeleteFields {
+		rawVal, ok := findConvertedMember(members, delKey)
+		if !ok {
+			continue
+		}
+		if patch.OnDeleteField != nil {
+			patch.OnDeleteField(delKey, rawVal)
+		}
 		members = deleteConvertedMember(members, delKey)
 	}
 

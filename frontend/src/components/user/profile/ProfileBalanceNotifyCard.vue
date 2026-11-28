@@ -1,226 +1,269 @@
 <template>
-  <div class="card">
-    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 class="text-lg font-medium text-gray-900 dark:text-white">
-        {{ t('profile.balanceNotify.title') }}
-      </h2>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-        {{ t('profile.balanceNotify.description') }}
-      </p>
-    </div>
-    <div class="px-6 py-6 space-y-6">
-      <!-- Enable toggle -->
-      <div class="flex items-center justify-between">
-        <label class="input-label mb-0">{{ t('profile.balanceNotify.enabled') }}</label>
-        <label class="relative inline-flex items-center cursor-pointer">
-          <Toggle
-            v-model="notifyEnabled"
-            variant="flush"
-            off-tone="soft"
-            @update:model-value="handleToggle"
-          />
-        </label>
+  <section class="card" data-testid="balance-notify-card">
+    <!-- The header switch is the master control; the body collapses when notifications are off. -->
+    <header class="flex items-center justify-between gap-4 px-6 py-4">
+      <div class="min-w-0">
+        <h2 class="text-lg font-medium text-gray-900 dark:text-white">
+          {{ t('profile.balanceNotify.title') }}
+        </h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          {{ t('profile.balanceNotify.description') }}
+        </p>
       </div>
+      <Toggle
+        :model-value="notifyEnabled"
+        :disabled="savingEnabled"
+        :aria-label="t('profile.balanceNotify.enabled')"
+        data-testid="balance-notify-enabled"
+        @update:model-value="handleToggle"
+      />
+    </header>
 
-      <template v-if="notifyEnabled">
-        <!-- Custom threshold with save button -->
+    <Collapse :open="notifyEnabled">
+      <div
+        class="space-y-4 border-t border-gray-100 px-6 py-6 dark:border-dark-700"
+        data-testid="balance-notify-body"
+      >
+        <!-- Delivery only reaches verified, enabled addresses, so an empty recipient set must be visible. -->
+        <SettingsNotice
+          v-if="!hasActiveRecipient"
+          tone="warning"
+          data-testid="balance-notify-no-recipient"
+        >
+          {{ t('profile.balanceNotify.noActiveRecipient') }}
+        </SettingsNotice>
+
         <div>
-          <label class="input-label">
+          <label for="balance-notify-threshold" class="input-label">
             {{ t('profile.balanceNotify.threshold') }}
-            <span class="text-xs text-gray-400 ml-2">{{
-              t('profile.balanceNotify.thresholdHint')
-            }}</span>
           </label>
-          <div class="flex items-center gap-2">
-            <span class="text-gray-500">{{ balanceUnitSymbol }}</span>
-            <input
-              v-model.number="customThreshold"
-              type="number"
-              min="0"
-              step="0.01"
-              class="input flex-1"
-              :placeholder="
-                systemDefaultThreshold > 0
-                  ? `${t('profile.balanceNotify.systemDefault')} ${formatBalanceAmount(systemDefaultThreshold, { fractionDigits: 2 })}`
-                  : t('profile.balanceNotify.thresholdPlaceholder')
-              "
-            />
+          <div class="flex gap-2">
+            <div class="input-icon-wrap flex-1">
+              <span
+                class="input-icon font-medium text-gray-500 dark:text-dark-400"
+                aria-hidden="true"
+              >
+                {{ balanceUnitSymbol }}
+              </span>
+              <input
+                id="balance-notify-threshold"
+                v-model.number="customThreshold"
+                type="number"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                class="input input-has-icon"
+                :class="thresholdPrefixClass"
+                :placeholder="t('profile.balanceNotify.thresholdPlaceholder')"
+                aria-describedby="balance-notify-threshold-hint"
+                @keyup.enter="handleThresholdUpdate"
+              />
+            </div>
             <button
+              type="button"
+              class="btn btn-secondary whitespace-nowrap"
+              :disabled="!thresholdChanged || savingThreshold"
+              data-testid="balance-notify-threshold-save"
               @click="handleThresholdUpdate"
-              :disabled="savingThreshold"
-              class="btn btn-primary btn-sm whitespace-nowrap"
             >
               {{ savingThreshold ? t('common.saving') : t('common.save') }}
             </button>
           </div>
+          <p id="balance-notify-threshold-hint" class="input-hint">
+            {{ thresholdHint }}
+          </p>
         </div>
 
-        <!-- Email list with toggles -->
         <div>
-          <label class="input-label">{{ t('profile.balanceNotify.extraEmails') }}</label>
-          <p class="mb-2 text-xs text-yellow-600 dark:text-yellow-400">
-            {{ t('profile.balanceNotify.extraEmailsHint') }}
-          </p>
+          <label for="balance-notify-new-email" class="input-label">
+            {{ t('profile.balanceNotify.extraEmails') }}
+          </label>
 
-          <!-- Saved email entries -->
-          <div v-if="emailEntries.length > 0" class="space-y-2 mb-3">
+          <div class="space-y-2">
+            <!-- Saved addresses: verified rows carry a delivery switch, unverified rows offer verification. -->
             <div
-              v-for="(entry, idx) in emailEntries"
-              :key="idx"
-              class="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-dark-700 rounded-control"
+              v-for="entry in emailEntries"
+              :key="entry.email"
+              class="rounded-control border border-gray-200 px-3 py-2 dark:border-dark-600"
+              data-testid="balance-notify-email-row"
             >
-              <div class="flex items-center gap-2 min-w-0 flex-1">
-                <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                  <Toggle
-                    :model-value="!entry.disabled"
-                    size="sm"
-                    off-tone="soft"
-                    @update:model-value="handleEmailToggle(entry)"
-                  />
-                </label>
-                <span class="text-sm text-gray-700 dark:text-gray-300 truncate">{{
-                  entry.email
-                }}</span>
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <template v-if="!entry.verified">
-                  <!-- Inline verify flow for saved unverified emails -->
-                  <template v-if="verifyingEmail === entry.email">
-                    <input
-                      v-model="verifyCode"
-                      type="text"
-                      maxlength="6"
-                      class="input min-h-0 w-20 rounded-compact px-2 py-1 text-xs"
-                      :placeholder="t('profile.balanceNotify.codePlaceholder')"
-                    />
-                    <button
-                      @click="verifySavedEmail(entry.email)"
-                      :disabled="!verifyCode || verifyCode.length !== 6 || verifyingSaved"
-                      class="text-xs text-primary-600 hover:text-primary-700"
-                    >
-                      {{ t('profile.balanceNotify.verify') }}
-                    </button>
-                    <span v-if="verifyCountdown > 0" class="text-xs text-gray-400"
-                      >{{ verifyCountdown }}s</span
-                    >
-                    <button
-                      v-else
-                      @click="sendCodeForSaved(entry.email)"
-                      :disabled="sendingSavedCode"
-                      class="text-xs text-gray-500 hover:text-gray-700"
-                    >
-                      {{ t('profile.balanceNotify.resend') }}
-                    </button>
-                    <button
-                      @click="verifyingEmail = ''"
-                      class="text-xs text-gray-400 hover:text-gray-600"
-                    >
-                      {{ t('common.cancel') }}
-                    </button>
-                  </template>
-                  <template v-else>
-                    <button
-                      @click="sendCodeForSaved(entry.email)"
-                      :disabled="sendingSavedCode"
-                      class="text-xs text-primary-600 hover:text-primary-700"
-                    >
-                      {{ t('profile.balanceNotify.verify') }}
-                    </button>
-                    <span class="text-xs text-yellow-500">{{
-                      t('profile.balanceNotify.unverified')
-                    }}</span>
-                  </template>
-                </template>
-                <span v-else class="text-xs text-green-500">{{
-                  t('profile.balanceNotify.verified')
-                }}</span>
-                <button
-                  @click="handleRemoveEmail(entry.email)"
-                  class="text-red-500 hover:text-red-700 text-xs"
+              <div class="flex items-center gap-3">
+                <span
+                  class="min-w-0 flex-1 truncate text-sm"
+                  :class="
+                    entry.verified && entry.disabled
+                      ? 'text-gray-400 dark:text-dark-400'
+                      : 'text-gray-900 dark:text-dark-100'
+                  "
                 >
-                  {{ t('profile.balanceNotify.removeEmail') }}
+                  {{ entry.email }}
+                </span>
+                <span
+                  class="badge shrink-0"
+                  :class="entry.verified ? 'badge-success' : 'badge-warning'"
+                >
+                  {{
+                    entry.verified
+                      ? t('profile.balanceNotify.verified')
+                      : t('profile.balanceNotify.unverified')
+                  }}
+                </span>
+                <Toggle
+                  v-if="entry.verified"
+                  :model-value="!entry.disabled"
+                  size="sm"
+                  :aria-label="t('profile.balanceNotify.emailEnabled', { email: entry.email })"
+                  @update:model-value="handleEmailToggle(entry)"
+                />
+                <button
+                  v-else-if="verifyingEmail !== entry.email"
+                  type="button"
+                  class="btn btn-secondary btn-sm shrink-0"
+                  :disabled="sendingSavedCode"
+                  @click="sendCodeForSaved(entry.email)"
+                >
+                  {{ t('profile.balanceNotify.verify') }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-icon-sm shrink-0 hover:text-red-600 dark:hover:text-red-400"
+                  :aria-label="t('profile.balanceNotify.removeEmail')"
+                  :title="t('profile.balanceNotify.removeEmail')"
+                  @click="handleRemoveEmail(entry.email)"
+                >
+                  <Icon name="trash" size="sm" />
+                </button>
+              </div>
+
+              <div
+                v-if="!entry.verified && verifyingEmail === entry.email"
+                class="mt-2 flex flex-wrap items-center gap-2"
+              >
+                <input
+                  v-model="verifyCode"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  maxlength="6"
+                  class="input w-32"
+                  :aria-label="t('profile.balanceNotify.codePlaceholder')"
+                  :placeholder="t('profile.balanceNotify.codePlaceholder')"
+                  @keyup.enter="verifySavedEmail(entry.email)"
+                />
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  :disabled="verifyCode.length !== 6 || verifyingSaved"
+                  @click="verifySavedEmail(entry.email)"
+                >
+                  {{ t('profile.balanceNotify.verify') }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="verifyCountdown > 0 || sendingSavedCode"
+                  @click="sendCodeForSaved(entry.email)"
+                >
+                  {{ resendLabel(verifyCountdown) }}
+                </button>
+                <button type="button" class="btn btn-ghost" @click="verifyingEmail = ''">
+                  {{ t('common.cancel') }}
                 </button>
               </div>
             </div>
-          </div>
 
-          <!-- Pending (unverified) emails in verification flow -->
-          <div v-if="pendingEmails.length > 0" class="space-y-2 mb-3">
+            <!-- Pending addresses share the unverified row layout until their code is accepted. -->
             <div
               v-for="(pe, idx) in pendingEmails"
               :key="pe.email"
-              class="flex items-center gap-2 px-3 py-2 bg-yellow-50 dark:bg-yellow-900/10 rounded-control border border-yellow-200 dark:border-yellow-800"
+              class="rounded-control border border-gray-200 px-3 py-2 dark:border-dark-600"
+              data-testid="balance-notify-pending-row"
             >
-              <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">{{ pe.email }}</span>
-              <div v-if="!pe.codeSent" class="flex items-center gap-1">
+              <div class="flex items-center gap-3">
+                <span class="min-w-0 flex-1 truncate text-sm text-gray-900 dark:text-dark-100">
+                  {{ pe.email }}
+                </span>
+                <span class="badge badge-warning shrink-0">
+                  {{ t('profile.balanceNotify.unverified') }}
+                </span>
                 <button
-                  @click="sendCodeFor(idx)"
+                  v-if="!pe.codeSent"
+                  type="button"
+                  class="btn btn-secondary btn-sm shrink-0"
                   :disabled="pe.sending"
-                  class="text-xs text-primary-600 hover:text-primary-700"
+                  @click="sendCodeFor(idx)"
                 >
                   {{ t('profile.balanceNotify.sendCode') }}
                 </button>
                 <button
-                  @click="pendingEmails.splice(idx, 1)"
-                  class="text-xs text-red-500 hover:text-red-700 ml-1"
+                  type="button"
+                  class="btn btn-ghost btn-icon-sm shrink-0 hover:text-red-600 dark:hover:text-red-400"
+                  :aria-label="t('profile.balanceNotify.removeEmail')"
+                  :title="t('profile.balanceNotify.removeEmail')"
+                  @click="removePendingEmail(idx)"
                 >
-                  {{ t('profile.balanceNotify.removeEmail') }}
+                  <Icon name="trash" size="sm" />
                 </button>
               </div>
-              <div v-else class="flex items-center gap-1">
+
+              <div v-if="pe.codeSent" class="mt-2 flex flex-wrap items-center gap-2">
                 <input
                   v-model="pe.code"
                   type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
                   maxlength="6"
-                  class="input min-h-0 w-20 rounded-compact px-2 py-1 text-xs"
+                  class="input w-32"
+                  :aria-label="t('profile.balanceNotify.codePlaceholder')"
                   :placeholder="t('profile.balanceNotify.codePlaceholder')"
+                  @keyup.enter="verifyPending(idx)"
                 />
                 <button
+                  type="button"
+                  class="btn btn-primary"
+                  :disabled="pe.code.length !== 6 || pe.verifying"
                   @click="verifyPending(idx)"
-                  :disabled="!pe.code || pe.code.length !== 6 || pe.verifying"
-                  class="text-xs text-primary-600 hover:text-primary-700"
                 >
                   {{ t('profile.balanceNotify.verify') }}
                 </button>
-                <span v-if="pe.countdown > 0" class="text-xs text-gray-400"
-                  >{{ pe.countdown }}s</span
-                >
                 <button
-                  v-else
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="pe.countdown > 0 || pe.sending"
                   @click="sendCodeFor(idx)"
-                  :disabled="pe.sending"
-                  class="text-xs text-gray-500 hover:text-gray-700"
                 >
-                  {{ t('profile.balanceNotify.resend') }}
+                  {{ resendLabel(pe.countdown) }}
                 </button>
               </div>
             </div>
-          </div>
 
-          <!-- Add new email input (hidden when at limit) -->
-          <div v-if="canAddMore" class="flex gap-2">
-            <input
-              v-model="newEmail"
-              type="email"
-              class="input flex-1"
-              :placeholder="t('profile.balanceNotify.emailPlaceholder')"
-              @keyup.enter="addPendingEmail"
-            />
-            <button
-              @click="addPendingEmail"
-              :disabled="!newEmail"
-              class="btn btn-secondary whitespace-nowrap"
-            >
-              {{ t('common.add') }}
-            </button>
+            <div v-if="canAddMore" class="flex gap-2">
+              <input
+                id="balance-notify-new-email"
+                v-model="newEmail"
+                type="email"
+                class="input flex-1"
+                :placeholder="t('profile.balanceNotify.emailPlaceholder')"
+                aria-describedby="balance-notify-email-hint"
+                @keyup.enter="addPendingEmail"
+              />
+              <button
+                type="button"
+                class="btn btn-secondary whitespace-nowrap"
+                :disabled="!newEmail.trim()"
+                @click="addPendingEmail"
+              >
+                {{ t('common.add') }}
+              </button>
+            </div>
           </div>
-          <p v-else class="text-xs text-gray-400">
-            {{ t('profile.balanceNotify.maxEmailsReached') }}
+          <p id="balance-notify-email-hint" class="input-hint">
+            {{ t('profile.balanceNotify.extraEmailsHint', { max: maxTotalEmails }) }}
           </p>
         </div>
-      </template>
-    </div>
-  </div>
+      </div>
+    </Collapse>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -232,12 +275,20 @@ import { userAPI } from '@/api'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { NotifyEmailEntry } from '@/api/notifications.types'
+import Collapse from '@/components/common/Collapse.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import SettingsNotice from '@/components/common/settings/SettingsNotice.vue'
+import Icon from '@/components/icons/Icon.vue'
 
 // ProfileBalanceNotifyCard.vue edits balance-notification settings and verifies additional
 // delivery addresses. Persisted profile fields are mirrored into local drafts, while pending
 // addresses retain their own code, request flags, and countdown interval. Saved unverified
 // addresses share a separate verification form and timer.
+//
+// The header switch owns enablement and collapses the threshold and address fields when it
+// is off. The backend delivers alerts only to verified addresses that are not disabled, and
+// the account email is never an implicit recipient, so the card warns whenever no address
+// qualifies instead of letting an enabled switch imply working delivery.
 //
 // Verification and removal mutate server state before requesting a fresh profile, so a
 // failed refresh can follow a successful mutation. Pending verification also removes its
@@ -280,12 +331,16 @@ const appStore = useAppStore()
 const { balanceUnitSymbol, formatBalanceAmount } = useBalanceDisplay()
 
 // notifyEnabled, customThreshold, and emailEntries mirror persisted settings; pendingEmails
-// and newEmail hold unsaved address verification drafts within this card.
+// and newEmail hold unsaved address verification drafts within this card. savingEnabled
+// and savingThreshold disable their controls while the matching profile update runs.
 const notifyEnabled = ref(props.enabled)
-const customThreshold = ref<number | null>(props.threshold)
+// customThreshold holds the input draft. An empty input from v-model.number arrives as an
+// empty string, and a stored zero is shown as empty because zero selects the system default.
+const customThreshold = ref<number | string | null>(thresholdInputValue(props.threshold))
 const emailEntries = ref<NotifyEmailEntry[]>([...props.extraEmails])
 const pendingEmails = ref<PendingEmail[]>([])
 const newEmail = ref('')
+const savingEnabled = ref(false)
 const savingThreshold = ref(false)
 
 // verifyingEmail and verifyCode identify the saved address being verified; request flags and
@@ -303,6 +358,36 @@ const canAddMore = computed(() => {
   return emailEntries.value.length + pendingEmails.value.length < maxTotalEmails
 })
 
+// hasActiveRecipient reports whether any saved address will receive alerts, matching the
+// backend recipient filter that skips unverified, disabled, and empty-address entries.
+const hasActiveRecipient = computed(() => {
+  return emailEntries.value.some(
+    (entry) => entry.verified && !entry.disabled && entry.email.trim() !== '',
+  )
+})
+
+// thresholdChanged reports whether the normalized draft differs from the persisted
+// threshold, so the save button stays inactive until there is something to save.
+const thresholdChanged = computed(() => {
+  return normalizeThreshold(customThreshold.value) !== normalizeThreshold(props.threshold)
+})
+
+// thresholdHint names the effective default amount when the administrator configured one;
+// otherwise it only explains that an empty field falls back to the default.
+const thresholdHint = computed(() => {
+  if (props.systemDefaultThreshold <= 0) {
+    return t('profile.balanceNotify.thresholdHint')
+  }
+  const amount = formatBalanceAmount(props.systemDefaultThreshold, { fractionDigits: 2 })
+  return t('profile.balanceNotify.thresholdHintWithDefault', { amount })
+})
+
+// thresholdPrefixClass narrows the prefix slot for single-character symbols, matching
+// AmountInput; longer or multi-unit symbols such as emoji keep the default slot width.
+const thresholdPrefixClass = computed(() => {
+  return balanceUnitSymbol.value.length === 1 ? 'input-icon-text' : ''
+})
+
 watch(
   () => props.enabled,
   (val) => {
@@ -312,7 +397,7 @@ watch(
 watch(
   () => props.threshold,
   (val) => {
-    customThreshold.value = val
+    customThreshold.value = thresholdInputValue(val)
   },
 )
 watch(
@@ -321,6 +406,26 @@ watch(
     emailEntries.value = [...val]
   },
 )
+
+// normalizeThreshold converts a draft or persisted threshold into the saved number. Empty,
+// non-numeric, zero, and negative values become zero, which the backend treats as the
+// system default.
+function normalizeThreshold(value: number | string | null): number {
+  return typeof value === 'number' && value > 0 ? value : 0
+}
+
+// thresholdInputValue maps a persisted threshold to the input draft, leaving the field
+// empty for the zero or null values that select the system default.
+function thresholdInputValue(value: number | null): number | null {
+  return normalizeThreshold(value) > 0 ? value : null
+}
+
+// resendLabel returns the resend button text, appending the remaining cooldown seconds
+// while a countdown is active.
+function resendLabel(countdown: number): string {
+  const label = t('profile.balanceNotify.resend')
+  return countdown > 0 ? `${label} (${countdown}s)` : label
+}
 
 // When list is empty on mount, pre-fill the add input with user's email
 onMounted(() => {
@@ -338,28 +443,35 @@ onUnmounted(() => {
   if (verifyTimer) clearInterval(verifyTimer)
 })
 
-// handleToggle saves the current notification-enabled value and publishes the returned
-// profile. Failure reports the API error and reverses the local switch value to recover from
-// the attempted toggle.
-const handleToggle = async () => {
+// handleToggle shows the requested enablement immediately, so the body expands or collapses
+// without waiting, then saves it and publishes the returned profile. The switch stays
+// disabled during the request; failure reports the API error and restores the previous
+// value.
+const handleToggle = async (value: boolean) => {
+  notifyEnabled.value = value
+  savingEnabled.value = true
   try {
-    const updated = await userAPI.updateProfile({ balance_notify_enabled: notifyEnabled.value })
+    const updated = await userAPI.updateProfile({ balance_notify_enabled: value })
     authStore.user = updated
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
-    // The input already changed the local switch before saving. On persistence failure, flip
-    // the current value as recovery for the optimistic update shown by this control.
-    notifyEnabled.value = !notifyEnabled.value
+    // The switch was updated optimistically above; revert it so the card matches the
+    // setting the server still holds.
+    notifyEnabled.value = !value
+  } finally {
+    savingEnabled.value = false
   }
 }
 
 // handleThresholdUpdate saves a positive custom threshold or zero for the default setting.
-// It publishes the returned profile after success and resets its save indicator after either
-// success or failure.
+// The Enter key reaches it directly, so it ignores calls while unchanged or already saving.
+// It publishes the returned profile after success and resets its save indicator after
+// either success or failure.
 const handleThresholdUpdate = async () => {
+  if (!thresholdChanged.value || savingThreshold.value) return
   savingThreshold.value = true
   try {
-    const threshold = customThreshold.value && customThreshold.value > 0 ? customThreshold.value : 0
+    const threshold = normalizeThreshold(customThreshold.value)
     const updated = await userAPI.updateProfile({ balance_notify_threshold: threshold })
     authStore.user = updated
     appStore.showSuccess(t('common.saved'))
@@ -409,6 +521,15 @@ function addPendingEmail() {
     timer: null,
   })
   newEmail.value = ''
+}
+
+// removePendingEmail discards an unsaved address draft at the supplied index. Its resend
+// countdown is cleared first because the unmount cleanup only reaches rows still listed.
+function removePendingEmail(idx: number) {
+  const pe = pendingEmails.value[idx]
+  if (!pe) return
+  if (pe.timer) clearInterval(pe.timer)
+  pendingEmails.value.splice(idx, 1)
 }
 
 // sendCodeFor requests verification for a pending row identified by its current index.

@@ -364,7 +364,8 @@ func TestOpsErrorLoggerMiddleware_IntermediateSkipMonitoringDoesNotHideFinalVisi
 
 // TestOpsErrorLoggerMiddleware_CapturesSplitResponsesFailedSSE splits a
 // Responses terminal event name and payload across writes under HTTP 200. The
-// queued entry must infer 429 and retain the final rate-limit message.
+// queued entry must infer logical 429 and retain the final rate-limit message.
+// The test opens no upstream response, so the upstream HTTP status stays absent.
 func TestOpsErrorLoggerMiddleware_CapturesSplitResponsesFailedSSE(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -388,6 +389,7 @@ func TestOpsErrorLoggerMiddleware_CapturesSplitResponsesFailedSSE(t *testing.T) 
 	job := <-opsErrorLogQueue
 	require.Equal(t, http.StatusTooManyRequests, job.entry.StatusCode)
 	require.Equal(t, "rate_limit_error", job.entry.ErrorType)
+	require.Nil(t, job.entry.UpstreamStatusCode)
 	require.Contains(t, job.entry.ErrorMessage, "Too many pending requests")
 }
 
@@ -458,8 +460,8 @@ func TestOpsCaptureWriter_CapturesSplitDataOnlyTerminalMarkers(t *testing.T) {
 
 // TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptContext
 // stores an earlier transport error before a terminal context-length failure.
-// The queued logical status and upstream summary must use the terminal 400,
-// leaving the client wire at 200.
+// Both sides receive HTTP 200 on the final dispatch. Only the logical status
+// and error message describe the context-length failure in the terminal frame.
 func TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptContext(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 
@@ -468,6 +470,13 @@ func TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptConte
 	router.Use(opsLoggerFixture(ops))
 	router.POST("/v1/responses", func(c *gin.Context) {
 		SetOpsUpstreamError(c, http.StatusBadGateway, "Upstream transport error", "earlier attempt failed")
+		const providerID = int64(7)
+		c.Set(OpsProviderIDKey, providerID)
+		ctx := telemetry.WithRequestCapture(c.Request.Context(), telemetry.RequestRecord{}, nil)
+		ctx = telemetry.WithRequestProvider(ctx, providerID, "")
+		c.Request = c.Request.WithContext(ctx)
+		dispatch := timing.BeginHTTPTrace(ctx)
+		timing.ObserveResponse(dispatch, &http.Response{StatusCode: http.StatusOK})
 		c.Status(http.StatusOK)
 		_, _ = c.Writer.WriteString("event: er")
 		_, _ = c.Writer.WriteString("ror\n")
@@ -482,9 +491,11 @@ func TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptConte
 	require.Equal(t, int64(1), OpsErrorLogQueueLength())
 	job := <-opsErrorLogQueue
 	require.Equal(t, http.StatusBadRequest, job.entry.StatusCode)
+	require.NotNil(t, job.entry.ClientStatusCode)
+	require.Equal(t, http.StatusOK, *job.entry.ClientStatusCode)
 	require.Equal(t, "invalid_request_error", job.entry.ErrorType)
 	require.NotNil(t, job.entry.UpstreamStatusCode)
-	require.Equal(t, http.StatusBadRequest, *job.entry.UpstreamStatusCode)
+	require.Equal(t, http.StatusOK, *job.entry.UpstreamStatusCode)
 	require.NotNil(t, job.entry.UpstreamErrorMessage)
 	require.Equal(t, "input exceeds the context window", *job.entry.UpstreamErrorMessage)
 }
@@ -540,7 +551,9 @@ func TestLogOpsStreamError_RecordsInBandConcurrencyLimit(t *testing.T) {
 	require.True(t, job.entry.IsBusinessLimited)
 	require.True(t, job.entry.Stream)
 	require.Equal(t, http.StatusOK, job.entry.StatusCode) // Retain the actual wire status of 200.
-	require.Equal(t, "P1", job.entry.Severity)            // Classify severity using IntendedStatus 429.
+	require.NotNil(t, job.entry.ClientStatusCode)
+	require.Equal(t, http.StatusOK, *job.entry.ClientStatusCode)
+	require.Equal(t, "P1", job.entry.Severity) // Classify severity using IntendedStatus 429.
 	require.Equal(t, "test-model", job.entry.Model)
 	require.Equal(t, "Concurrency limit exceeded for provider, please retry later", job.entry.ErrorMessage)
 }
@@ -555,6 +568,7 @@ func TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	c.Set(OpsModelKey, "gpt-5.6-sol")
+	SetOpsUpstreamError(c, http.StatusBadGateway, "stream interrupted", "")
 	MarkOpsStreamFailure(
 		c,
 		"upstream_error",
@@ -569,10 +583,13 @@ func TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA(t *testing.T) {
 	job := <-opsErrorLogQueue
 	require.NotNil(t, job.entry)
 	require.Equal(t, http.StatusBadGateway, job.entry.StatusCode)
+	require.NotNil(t, job.entry.ClientStatusCode)
+	require.Equal(t, http.StatusOK, *job.entry.ClientStatusCode)
 	require.Equal(t, "upstream_error", job.entry.ErrorType)
 	require.Equal(t, "upstream", job.entry.ErrorPhase)
 	require.Equal(t, "provider", job.entry.ErrorOwner)
 	require.False(t, job.entry.IsBusinessLimited)
+	require.Nil(t, job.entry.UpstreamStatusCode)
 	require.Contains(t, job.entry.ErrorBody, openai.OpenAIUpstreamHTTP2StreamErrorCode)
 }
 
@@ -673,8 +690,10 @@ func TestLogOpsStreamError_RecordsOneFailurePerWebSocketTurn(t *testing.T) {
 	second := <-opsErrorLogQueue
 	require.Equal(t, "turn one failed", first.entry.ErrorMessage)
 	require.Equal(t, http.StatusTooManyRequests, first.entry.StatusCode)
+	require.Nil(t, first.entry.ClientStatusCode)
 	require.Equal(t, "turn two failed", second.entry.ErrorMessage)
 	require.Equal(t, http.StatusForbidden, second.entry.StatusCode)
+	require.Nil(t, second.entry.ClientStatusCode)
 }
 
 // TestClassifyOpsNoAvailableProvidersExcludedFromSLA marks a no-provider

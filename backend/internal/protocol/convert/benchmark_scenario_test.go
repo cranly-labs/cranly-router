@@ -94,16 +94,16 @@ func TestBenchmarkPayloadsValid(t *testing.T) {
 			})
 			require.NoError(t, err)
 			ex.ensureUpstreamPrepared()
-			reqLossLen := len(ex.recordedLosses)
+			reqLossLen := len(ex.requestLosses)
 
 			var newStreamBytes []byte
 			for range 2 {
 				newStreamBytes, err = runNewStreamConversion(ex, item.rawStreamSSE)
 				require.NoError(t, err)
 				require.NotEmpty(t, newStreamBytes)
-				ex.recordedLosses = ex.recordedLosses[:reqLossLen]
+				ex.responseLosses = ex.responseLosses[:0]
 				require.Len(t, ex.Losses(), reqLossLen,
-					"Exchange.recordedLosses must not grow across repeated stream benchmark iterations on %s", item.spec.slug)
+					"Exchange.responseLosses must not grow across repeated stream benchmark iterations on %s", item.spec.slug)
 			}
 
 			outFrames := parseFramesForValidation(t, newStreamBytes)
@@ -210,7 +210,6 @@ func BenchmarkStreamConversion5000Frames(b *testing.B) {
 			b.Fatalf("NewExchange setup failed for %s: %v", item.spec.slug, err)
 		}
 		ex.ensureUpstreamPrepared()
-		reqLossLen := len(ex.recordedLosses)
 
 		b.Run(item.spec.slug+"/new", func(b *testing.B) {
 			b.SetBytes(int64(len(item.rawStreamSSE)))
@@ -221,9 +220,9 @@ func BenchmarkStreamConversion5000Frames(b *testing.B) {
 				if runErr != nil || len(out) == 0 {
 					b.Fatalf("new stream conversion failed on %s: %v", item.spec.slug, runErr)
 				}
-				// Truncate response-side losses appended by stream.Close back to the
-				// request-preparation prefix so repeated iterations never grow recordedLosses.
-				ex.recordedLosses = ex.recordedLosses[:reqLossLen]
+				// Clear response-side losses appended by stream.Close so repeated
+				// benchmark iterations reuse backing capacity without unbounded growth.
+				ex.responseLosses = ex.responseLosses[:0]
 			}
 		})
 	}

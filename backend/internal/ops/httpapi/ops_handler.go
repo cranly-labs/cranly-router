@@ -237,25 +237,8 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 			return
 		}
 	}
-	// Parse statuses as nonnegative integers, preserving duplicates and zero.
-	// Blank comma parts disappear; an all-blank list adds no status condition when
-	// storage reads it.
-	if statusCodesStr := strings.TrimSpace(c.Query("status_codes")); statusCodesStr != "" {
-		parts := strings.Split(statusCodesStr, ",")
-		out := make([]int, 0, len(parts))
-		for _, part := range parts {
-			p := strings.TrimSpace(part)
-			if p == "" {
-				continue
-			}
-			n, err := strconv.Atoi(p)
-			if err != nil || n < 0 {
-				response.BadRequest(c, "Invalid status_codes")
-				return
-			}
-			out = append(out, n)
-		}
-		filter.StatusCodes = out
+	if !applyOpsErrorStatusParams(c, filter) {
+		return
 	}
 
 	applyOpsErrorSortParams(c, filter)
@@ -355,25 +338,8 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 			return
 		}
 	}
-	// Parse statuses as nonnegative integers, preserving duplicates and zero.
-	// Blank comma parts disappear; an all-blank list adds no status condition when
-	// storage reads it.
-	if statusCodesStr := strings.TrimSpace(c.Query("status_codes")); statusCodesStr != "" {
-		parts := strings.Split(statusCodesStr, ",")
-		out := make([]int, 0, len(parts))
-		for _, part := range parts {
-			p := strings.TrimSpace(part)
-			if p == "" {
-				continue
-			}
-			n, err := strconv.Atoi(p)
-			if err != nil || n < 0 {
-				response.BadRequest(c, "Invalid status_codes")
-				return
-			}
-			out = append(out, n)
-		}
-		filter.StatusCodes = out
+	if !applyOpsErrorStatusParams(c, filter) {
+		return
 	}
 
 	applyOpsErrorSortParams(c, filter)
@@ -492,6 +458,10 @@ func (h *OpsHandler) ListRequestErrorUpstreamErrors(c *gin.Context) {
 		filter.RequestID = requestID
 	} else {
 		filter.ClientRequestID = clientRequestID
+	}
+
+	if !applyOpsErrorStatusParams(c, filter) {
+		return
 	}
 
 	applyOpsErrorSortParams(c, filter)
@@ -615,25 +585,8 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 			return
 		}
 	}
-	// Validate integer status spelling without imposing an HTTP-code upper bound.
-	// Blank components are skipped and duplicate/nonnegative values remain for the
-	// storage condition.
-	if statusCodesStr := strings.TrimSpace(c.Query("status_codes")); statusCodesStr != "" {
-		parts := strings.Split(statusCodesStr, ",")
-		out := make([]int, 0, len(parts))
-		for _, part := range parts {
-			p := strings.TrimSpace(part)
-			if p == "" {
-				continue
-			}
-			n, err := strconv.Atoi(p)
-			if err != nil || n < 0 {
-				response.BadRequest(c, "Invalid status_codes")
-				return
-			}
-			out = append(out, n)
-		}
-		filter.StatusCodes = out
+	if !applyOpsErrorStatusParams(c, filter) {
+		return
 	}
 
 	applyOpsErrorSortParams(c, filter)
@@ -822,6 +775,68 @@ func (h *OpsHandler) UpdateErrorResolution(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"ok": true})
+}
+
+// applyOpsErrorStatusParams parses client and upstream status-code lists and
+// Other-bucket flags onto filter, writing a HTTP 400 response and returning
+// false when either comma-separated list contains negative, out-of-range
+// 32-bit, or non-integer text. Supply usable Gin context and filter pointers;
+// blank comma segments are skipped and recognized truthy flags set their
+// corresponding Other booleans.
+func applyOpsErrorStatusParams(c *gin.Context, filter *ops.OpsErrorLogFilter) bool {
+	codes, ok := parseOpsStatusCodesParam(c.Query("status_codes"))
+	if !ok {
+		response.BadRequest(c, "Invalid status_codes")
+		return false
+	}
+	filter.StatusCodes = codes
+	filter.StatusCodesOther = parseOpsTruthyParam(c.Query("status_codes_other"))
+
+	upstreamCodes, ok := parseOpsStatusCodesParam(c.Query("upstream_status_codes"))
+	if !ok {
+		response.BadRequest(c, "Invalid upstream_status_codes")
+		return false
+	}
+	filter.UpstreamStatusCodes = upstreamCodes
+	filter.UpstreamStatusCodesOther = parseOpsTruthyParam(c.Query("upstream_status_codes_other"))
+	return true
+}
+
+// parseOpsStatusCodesParam parses a comma-separated status query string into
+// nonnegative 32-bit integers, preserving duplicates and explicit zero while
+// skipping blank segments. It returns false when any nonblank segment fails
+// 32-bit signed integer conversion or is negative, preventing PostgreSQL INT4
+// array binding overflow on 64-bit runtimes.
+func parseOpsStatusCodesParam(raw string) ([]int, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, true
+	}
+	parts := strings.Split(trimmed, ",")
+	out := make([]int, 0, len(parts))
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		n64, err := strconv.ParseInt(p, 10, 32)
+		if err != nil || n64 < 0 {
+			return nil, false
+		}
+		out = append(out, int(n64))
+	}
+	return out, true
+}
+
+// parseOpsTruthyParam reports whether a query parameter value matches 1, true,
+// or yes after trimming whitespace and folding ASCII case.
+func parseOpsTruthyParam(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseOpsTimeRange selects endpoints from explicit timestamps, an ID query, or

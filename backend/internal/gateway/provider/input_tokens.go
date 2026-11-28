@@ -21,6 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // input_tokens.go prepares counting requests while retaining client, billing,
@@ -151,6 +152,7 @@ func PrepareAnthropicInputTokensWithAttributes(
 	if err != nil {
 		return nil, fmt.Errorf("convert anthropic request to responses: %w", err)
 	}
+	upstream.ObserveExchangeConversion(ctx, ex)
 
 	payload, err := tokenestimate.ProjectCountingPayload(convertedBytes)
 	if err != nil {

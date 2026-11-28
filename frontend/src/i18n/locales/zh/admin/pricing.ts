@@ -361,7 +361,6 @@ export default {
       peak_end: '高峰结束时间',
       peak_rate_multiplier: '高峰倍率',
       long_context_pricing_enabled: '启用内置长上下文定价',
-      free_openai_fast: 'OpenAI Fast 按 Standard 价格收费',
       batch_image_discount_multiplier: '批量图片折扣倍率',
       batch_image_hold_multiplier: '批量图片预扣倍率',
       web_search_price_per_call: 'Codex 网页搜索（美元/次）',
@@ -380,8 +379,6 @@ export default {
           '输入超过模型的长上下文阈值时，按内置阶梯价格计费。关闭后使用基础价；手动配置的上下文区间仍然生效。',
         peak_rate_enabled:
           '在设定时段内，额外叠加高峰倍率，仅影响 token 费用。按服务器时区计算，结束时间必须晚于开始时间，不支持跨天。',
-        free_openai_fast:
-          'OpenAI 请求使用 Fast 时，向用户收取 Standard 价格，上游仍使用 Fast 档位；提供商成本统计保留 Fast 费用。',
         batch_image_discount_multiplier:
           '适用于 Gemini API 和 Vertex 批量图片任务。按普通图片单价乘以此倍率结算，0 表示免费。',
         batch_image_hold_multiplier:

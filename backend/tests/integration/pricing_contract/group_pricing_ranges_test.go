@@ -2,7 +2,6 @@ package pricingcontract
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,73 +19,66 @@ import (
 // ranges whose multiplier has no usable base.
 
 // TestPricingDisplayPreservesDefaultRanges supplies reversed manual intervals
-// with a priced default and optional Free Fast. It checks displayed gap
+// with a priced default and Fast multiplier. It checks displayed gap
 // boundaries, the first source interval, Fast ratios, and billed amounts at
 // selected context endpoints.
 func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 	for _, source := range []string{"channel"} {
-		for _, freeFast := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/freeFast=%v", source, freeFast), func(t *testing.T) {
-				card := routing.ModelPricingEntry{
-					Models: []string{"custom-ranges"}, BillingMode: routing.BillingModeToken,
-					InputPrice: testPtrFloat64(0.001), FastMultiplier: testPtrFloat64(3),
-					// Supply the later range first so quote sorting can be
-					// checked against the retained source order
-					// after display construction.
-					Intervals: []routing.PricingInterval{
-						{MinTokens: 200, MaxTokens: testPtrInt(300), InputPrice: testPtrFloat64(0.003)},
-						{MinTokens: 100, MaxTokens: testPtrInt(150), InputPrice: testPtrFloat64(0.002)},
-					},
+		t.Run(source, func(t *testing.T) {
+			card := routing.ModelPricingEntry{
+				Models: []string{"custom-ranges"}, BillingMode: routing.BillingModeToken,
+				InputPrice: testPtrFloat64(0.001), FastMultiplier: testPtrFloat64(3),
+				// Supply the later range first so quote sorting can be
+				// checked against the retained source order
+				// after display construction.
+				Intervals: []routing.PricingInterval{
+					{MinTokens: 200, MaxTokens: testPtrInt(300), InputPrice: testPtrFloat64(0.003)},
+					{MinTokens: 100, MaxTokens: testPtrInt(150), InputPrice: testPtrFloat64(0.002)},
+				},
+			}
+			group := &routing.Group{
+				ID:             100,
+				RateMultiplier: 1.5,
+			}
+			rCalculator := billingtestkit.ResolverCalculator()
+			settings := pricing.DefaultBillingSettings()
+			r := billingtestkit.SharedPriceResolver(rCalculator, group.ID, settings, []routing.ModelPricingEntry{card})
+			market := newPricingMarketplaceFixture(nil, nil, r, rCalculator, nil, nil, nil)
+			display := market.PublicModelPricing(context.Background(), group, "custom-ranges")
+			require.Len(t, display.ContextIntervals, 5)
+			require.Equal(t, 200, card.Intervals[0].MinTokens)
+			for i, min := range []int{0, 100, 150, 200, 300} {
+				require.Equal(t, min, display.ContextIntervals[i].MinTokens)
+				if i < 4 {
+					require.Equal(t, []int{100, 150, 200, 300}[i], *display.ContextIntervals[i].MaxTokens)
+				} else {
+					require.Nil(t, display.ContextIntervals[i].MaxTokens)
 				}
-				group := &routing.Group{
-					ID:             100,
-					RateMultiplier: 1.5,
-				}
-				rCalculator := billingtestkit.ResolverCalculator()
-				settings := pricing.DefaultBillingSettings()
-				settings.FreeOpenAIFast = freeFast
-				r := billingtestkit.SharedPriceResolver(rCalculator, group.ID, settings, []routing.ModelPricingEntry{card})
-				market := newPricingMarketplaceFixture(nil, nil, r, rCalculator, nil, nil, nil)
-				display := market.PublicModelPricing(context.Background(), group, "custom-ranges")
-				require.Len(t, display.ContextIntervals, 5)
-				require.Equal(t, 200, card.Intervals[0].MinTokens)
-				fastRatio := 3.0
-				if freeFast {
-					fastRatio = 1
-				}
-				for i, min := range []int{0, 100, 150, 200, 300} {
-					require.Equal(t, min, display.ContextIntervals[i].MinTokens)
-					if i < 4 {
-						require.Equal(t, []int{100, 150, 200, 300}[i], *display.ContextIntervals[i].MaxTokens)
-					} else {
-						require.Nil(t, display.ContextIntervals[i].MaxTokens)
+				// Displayed USD-per-token rates use an absolute tolerance
+				// for multiplier rounding.
+				require.InDelta(t, display.ContextIntervals[i].InputPricePerToken*3, display.ContextIntervals[i].FastInputPricePerToken, 1e-12)
+			}
+			for _, count := range []int{50, 100, 101, 150, 151, 200, 201, 300, 301} {
+				var displayed float64
+				// Use the quote's (min,max] convention for the expected
+				// amount, so exact endpoints exercise the same context
+				// range used by billing.
+				for _, interval := range display.ContextIntervals {
+					if count > interval.MinTokens && (interval.MaxTokens == nil || count <= *interval.MaxTokens) {
+						displayed = interval.InputPricePerToken
+						break
 					}
-					// Displayed USD-per-token rates use an absolute tolerance
-					// for multiplier rounding.
-					require.InDelta(t, display.ContextIntervals[i].InputPricePerToken*fastRatio, display.ContextIntervals[i].FastInputPricePerToken, 1e-12)
 				}
-				for _, count := range []int{50, 100, 101, 150, 151, 200, 201, 300, 301} {
-					var displayed float64
-					// Use the quote's (min,max] convention for the expected
-					// amount, so exact endpoints exercise the same context
-					// range used by billing.
-					for _, interval := range display.ContextIntervals {
-						if count > interval.MinTokens && (interval.MaxTokens == nil || count <= *interval.MaxTokens) {
-							displayed = interval.InputPricePerToken
-							break
-						}
-					}
-					cost, err := rCalculator.CalculateCostUnified(billing.CostInput{
-						Ctx: context.Background(), Model: "custom-ranges", GroupID: &group.ID,
-						Tokens: pricing.UsageTokens{InputTokens: count}, RateMultiplier: group.RateMultiplier, Resolver: r,
-					})
-					require.NoError(t, err)
-					// The billed USD amount allows rounding of the
-					// displayed rate product.
-					require.InDelta(t, displayed*float64(count), cost.ActualCost, 1e-12, "context=%d", count)
-				}
-			})
-		}
+				cost, err := rCalculator.CalculateCostUnified(billing.CostInput{
+					Ctx: context.Background(), Model: "custom-ranges", GroupID: &group.ID,
+					Tokens: pricing.UsageTokens{InputTokens: count}, RateMultiplier: group.RateMultiplier, Resolver: r,
+				})
+				require.NoError(t, err)
+				// The billed USD amount allows rounding of the
+				// displayed rate product.
+				require.InDelta(t, displayed*float64(count), cost.ActualCost, 1e-12, "context=%d", count)
+			}
+		})
 	}
 }
 

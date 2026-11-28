@@ -53,7 +53,11 @@
             class="inline-flex items-center rounded-compact px-2 py-0.5 text-xs font-medium"
             :class="statusClass(row.status_code)"
           >
-            {{ row.status_code || '-' }}
+            {{
+              showsLegacyStreamStatus(row)
+                ? t('usage.errors.fallbackStatus', { status: row.status_code })
+                : row.status_code || '-'
+            }}
           </span>
         </template>
 
@@ -154,6 +158,7 @@ import IpGeoBatchToolbar from '@/components/common/IpGeoBatchToolbar.vue'
 import { formatDateTime } from '@/utils/format'
 import {
   mapErrorSortKey,
+  showsLegacyStreamStatus,
   numericRequestTypeKind,
   requestTypeBadgeClass,
   requestTypeLabelKey,

@@ -21,6 +21,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
@@ -28,6 +29,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/sse"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/testkit/mockupstream"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
+	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
@@ -3012,4 +3015,56 @@ func dedupStage6Rules(in []string) []string {
 		out = appendUniqueLabRule(out, r)
 	}
 	return out
+}
+
+// TestQoderRefreshConversionCounts sends the same custom tool through a
+// credential retry. Each rejected HTTP dispatch must record exactly one tool
+// adaptation, including when neither response reaches the usage writer.
+func TestQoderRefreshConversionCounts(t *testing.T) {
+	var mu sync.Mutex
+	var record telemetry.RequestRecord
+	var requests int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		requests++
+		first := requests == 1
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if first {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"code":"101","message":"Signature expired"}`)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"code":"112","message":"Model entitlement denied"}`)
+	}))
+	defer up.Close()
+	spec := makeStage6QoderProviderSpec(1, 0, up.URL, stage6QoderLabProviderSpec())
+	lab := newProtocolLabRouter(t, labOptions{
+		Providers: []labProvider{spec},
+		OnTelemetry: func(snapshot telemetry.RequestRecord) {
+			mu.Lock()
+			defer mu.Unlock()
+			record = snapshot
+		},
+	})
+	store := fixtureRetryStore{ExecutionProviderStore: lab.providers}
+	lab.unified.QoderRefresh = &provideradapter.QoderRequestRefresh{
+		Store:       store,
+		Coordinator: provider.NewOAuthRefreshAPI(store, nil, provider.RefreshOptions{}),
+	}
+	gw := httptest.NewServer(lab)
+	defer gw.Close()
+	body := []byte(`{"model":"gpt-5","stream":true,"input":"hello","tools":[{"type":"custom","name":"patch","format":{"type":"text"}}]}`)
+	sendLabClientRequest(t, gw, protocolLabClients[1], body)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 2, requests)
+	require.Len(t, record.Attempts, 2)
+	require.Equal(t, http.StatusUnauthorized, record.Attempts[0].Status)
+	require.Equal(t, http.StatusForbidden, record.Attempts[1].Status)
+	for _, attempt := range record.Attempts {
+		require.NotNil(t, attempt.ProtocolConversion)
+		require.Equal(t, 1, attempt.ProtocolConversion.LossCounts[string(ir.LossToolLowered)])
+	}
 }

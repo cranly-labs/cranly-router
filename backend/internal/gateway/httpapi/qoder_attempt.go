@@ -89,6 +89,7 @@ func forwardQoderAttempt(
 		Usage:                 result.Usage,
 		Stream:                result.Stream,
 		Duration:              result.Duration,
+		ProtocolConversion:    result.ProtocolConversion,
 		ClientDisconnect:      result.ClientDisconnect,
 	}, err
 }

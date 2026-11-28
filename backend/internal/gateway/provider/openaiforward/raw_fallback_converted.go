@@ -206,6 +206,7 @@ func RunConvertedRawChat(
 		p.SourceError(source, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, fmt.Errorf("encode converted chat completions request: %w", err)
 	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	var deleteFields []string
 	// Grok Chat Completions endpoints reject Responses-only prompt_cache_key

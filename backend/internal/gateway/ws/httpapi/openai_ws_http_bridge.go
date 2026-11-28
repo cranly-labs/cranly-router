@@ -616,6 +616,8 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	var (
 		clientToolMap           *convert.ToolMap
 		sessionToolMap          *convert.ToolMap
+		bridgeToolDialect       convert.Dialect
+		bridgeToolLosses        []ir.Loss
 		commitSessionToolMap    bool
 		sessionToolMapCommitted bool
 	)
@@ -631,6 +633,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		// tools[] was omitted so replayed warmup carriers cannot shadow inherited session tools.
 		inheritedMap, _ := gatewayhttp.OpenAIWSHTTPBridgeToolMapFromContext(c)
 		dialect := s.resolveWSHTTPBridgeDialect(ctx, provider, body, routingModel, originalModel)
+		bridgeToolDialect = dialect
 		if convert.NeedsResponsesToolAdaptation(dialect, body, inheritedMap) {
 			var losses []ir.Loss
 			body, clientToolMap, losses, err = convert.AdaptResponsesTools(body, dialect, inheritedMap)
@@ -638,6 +641,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 				wrapped := fmt.Errorf("adapt %s client tools: %w", openAIWSHTTPBridgeToolUpstreamName(provider), err)
 				return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", wrapped.Error()).WithCause(wrapped)
 			}
+			bridgeToolLosses = losses
 			if len(losses) > 0 {
 				logging.FromContext(ctx).Debug(
 					"gateway.ws_http_bridge_tool_adaptation_losses",
@@ -673,6 +677,16 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			publishSessionToolMap()
 		}
 		return warmupResult, warmupErr
+	}
+	if functionToolUpstream {
+		upstream.ObserveToolAdaptedConversion(
+			ctx,
+			protocolcore.ProtocolResponsesWebSocket,
+			protocolcore.ProtocolOpenAIResponses,
+			bridgeToolDialect,
+			clientToolMap,
+			bridgeToolLosses,
+		)
 	}
 	if s.Requests == nil || s.Requests.Transport == nil {
 		return nil, errors.New("openai http upstream is nil")
@@ -806,7 +820,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			safeErr := logredact.SanitizeUpstreamQueries(err.Error())
 			clientError := buildOpenAIWSHTTPBridgeErrorEvent(http.StatusBadGateway, "Upstream request failed")
 			if writeErr := writeClientMessage(clientError); writeErr == nil {
-				markOpenAIWSClientVisibleFailure(c, "error", clientError)
+				markOpenAIWSClientVisibleFailure(c, "error", clientError, 0)
 			}
 			return nil, fmt.Errorf("upstream http bridge request failed: %s", safeErr)
 		}
@@ -877,7 +891,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		clientError := buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, upstreamMsg)
 		if writeErr := writeClientMessage(clientError); writeErr == nil {
-			markOpenAIWSClientVisibleFailure(c, "error", clientError)
+			markOpenAIWSClientVisibleFailure(c, "error", clientError, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("upstream http bridge error: status=%d message=%s", resp.StatusCode, upstreamMsg)
 	}
@@ -1005,7 +1019,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			wroteDownstream = true
 			publishSessionToolMap()
 		}
-		markOpenAIWSClientVisibleFailure(c, "response.failed", clientMessage)
+		markOpenAIWSClientVisibleFailure(c, "response.failed", clientMessage, resp.StatusCode)
 		return nil
 	}
 
@@ -1070,7 +1084,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			openai.ParseWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
 		}
 		if eventType == "error" || eventType == "response.failed" {
-			gatewayhttp.MarkOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
+			gatewayhttp.MarkOpenAICyberPolicyEvent(c, upstreamMessage, resp.StatusCode, &usage)
 		}
 		if err := openai.ValidateGIFImageOutputs(upstreamMessage); err != nil {
 			return resultWithUsage(), err
@@ -1305,7 +1319,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			}
 		}
 		if !clientDisconnected && !suppressClientMessage {
-			markOpenAIWSClientVisibleFailure(c, eventType, upstreamMessage)
+			markOpenAIWSClientVisibleFailure(c, eventType, upstreamMessage, resp.StatusCode)
 		}
 
 		if upstreamEventErr != nil {

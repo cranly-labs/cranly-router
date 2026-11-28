@@ -467,9 +467,9 @@ func ResolveSubscription(ctx context.Context, current *billing.UserSubscription,
 // default settings when no effective source is available.
 //
 // Captured IDs, actor identity, funding mode, and base group rate stay in that
-// copy. Peak policy, free-Fast, search, and audio prices are replaced from the
-// current settings read for the group's ID; the timezone pointer remains shared
-// as immutable data. This lets completion keep request ownership while applying
+// copy. Peak policy, search, and audio prices are replaced from the current
+// settings read for the group's ID; the timezone pointer remains shared as
+// immutable data. This lets completion keep request ownership while applying
 // settlement-time charge policy without mutating the captured input.
 func (s *Recorder) keyWithBillingSettings(ctx context.Context, key *KeySnapshot) *KeySnapshot {
 	key = SnapshotKey(key)
@@ -479,7 +479,6 @@ func (s *Recorder) keyWithBillingSettings(ctx context.Context, key *KeySnapshot)
 	g := key.Group
 	settings := s.resolver.BillingSettings(ctx, &g.ID)
 	g.PeakRateEnabled, g.PeakStart, g.PeakEnd, g.PeakRateMultiplier = settings.PeakRateEnabled, settings.PeakStart, settings.PeakEnd, settings.PeakRateMultiplier
-	g.FreeOpenAIFast = settings.FreeOpenAIFast
 	g.WebSearchPricePerCall, g.SearchPricePer1k = settings.WebSearchPricePerCall, settings.SearchPricePer1k
 	g.AudioPrice = &pricing.AudioPriceConfig{RealtimePerMin: settings.AudioRealtimePricePerMin, TTSPerMChars: settings.AudioTTSPricePerMillionChars, STTPerHour: settings.AudioSTTPricePerHour}
 	return key

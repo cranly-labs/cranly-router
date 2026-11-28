@@ -16,6 +16,7 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
@@ -117,9 +118,10 @@ type Result struct {
 	Duration                     time.Duration // elapsed request duration
 	// Timings is captured from the shared observer after response processing.
 	// Callers retain this immutable exchange snapshot until completion copies it for persistence.
-	Timings         *timing.Performance
-	ImageCount      int // observed generated images
-	ImageFrameCount int // encoded output frame billing units
+	Timings            *timing.Performance
+	ProtocolConversion *telemetry.ProtocolConversion // bounded protocol transformation diagnostics
+	ImageCount         int                           // observed generated images
+	ImageFrameCount    int                           // encoded output frame billing units
 	// ImageSize is the generated-image tier; ImageInputSize is the input-image
 	// tier.
 	ImageSize, ImageInputSize string

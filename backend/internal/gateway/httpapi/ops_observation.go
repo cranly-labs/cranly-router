@@ -97,9 +97,12 @@ type OpsStreamError struct {
 	// later WebSocket turns can reuse context keys without altering prior turns.
 	ProviderID      int64  // captured selected provider identity
 	UpstreamModel   string // captured effective upstream model
-	UpstreamStatus  int    // captured upstream HTTP status
+	UpstreamStatus  int    // provider error classification snapshot
 	UpstreamMessage string // captured upstream diagnostic message
 	UpstreamDetail  string // captured upstream diagnostic detail
+	// WireUpstreamStatus snapshots observed response headers for a WebSocket turn
+	// bridged to HTTP. A native upstream WebSocket frame has no per-turn HTTP status.
+	WireUpstreamStatus *int
 	// UpstreamErrors owns copied event structs at capture time; consumers treat
 	// retrieved slices and pointers as immutable.
 	UpstreamErrors []*ops.OpsUpstreamErrorEvent
@@ -411,7 +414,7 @@ func BeginOpsStreamTurn(c *gin.Context, turn int) {
 // MarkOpsStreamError records the first ordinary in-band failure for the current
 // HTTP request or WebSocket turn without forcing SLA failure status.
 func MarkOpsStreamError(c *gin.Context, errType, message string, intendedStatus int) {
-	markOpsStreamError(c, OpsStreamError{
+	RecordOpsStreamError(c, OpsStreamError{
 		ErrType:        errType,
 		Message:        message,
 		IntendedStatus: intendedStatus,
@@ -421,7 +424,7 @@ func MarkOpsStreamError(c *gin.Context, errType, message string, intendedStatus 
 // MarkOpsStreamFailure records an in-band failure with an explicit error code
 // and SLA failure status promotion.
 func MarkOpsStreamFailure(c *gin.Context, errType, code, message string, intendedStatus int) {
-	markOpsStreamError(c, OpsStreamError{
+	RecordOpsStreamError(c, OpsStreamError{
 		ErrType:         errType,
 		Code:            code,
 		Message:         message,
@@ -430,13 +433,16 @@ func MarkOpsStreamFailure(c *gin.Context, errType, code, message string, intende
 	})
 }
 
-// markOpsStreamError snapshots upstream attribution and retains the first
+// RecordOpsStreamError snapshots upstream attribution and retains the first
 // marker for HTTP or each distinct WebSocket turn on opsRequestState.
 //
 // SLA-counted observations mark request failure telemetry before deduplication
 // so a later SLA failure still updates telemetry even when an earlier client
-// marker was already retained for the same request or turn.
-func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
+// marker was already retained for the same request or turn. Bridge callers
+// supply the HTTP status from the response that produced this message. They
+// leave that scalar unchanged after submitting it so delayed session teardown
+// can persist the same evidence. Native WebSocket frames omit the pointer.
+func RecordOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 	if c == nil {
 		return
 	}

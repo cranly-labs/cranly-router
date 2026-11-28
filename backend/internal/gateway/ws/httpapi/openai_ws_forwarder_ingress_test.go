@@ -7378,7 +7378,7 @@ func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn(t *
 			case mark := <-markCh:
 				require.NotNil(t, mark)
 				require.Equal(t, "cyber_policy", mark.Code)
-				require.Equal(t, http.StatusOK, mark.UpstreamStatus)
+				require.Zero(t, mark.UpstreamStatus)
 				require.JSONEq(t, string(tt.upstreamEvent), mark.Body)
 				require.Equal(t, tt.wantInput, mark.UpstreamInTok)
 				require.Equal(t, tt.wantOutput, mark.UpstreamOutTok)
@@ -8131,7 +8131,7 @@ func TestPassthroughLifecycle_CyberTerminalEventsMarkBeforeAfterTurn(t *testing.
 				require.Equal(t, "cyber_policy", mark.Code)
 				require.Equal(t, tt.wantMessage, mark.Message)
 				require.Contains(t, mark.Body, tt.wantBody)
-				require.Equal(t, http.StatusOK, mark.UpstreamStatus)
+				require.Zero(t, mark.UpstreamStatus)
 				require.Equal(t, tt.wantInput, mark.UpstreamInTok)
 				require.Equal(t, tt.wantOutput, mark.UpstreamOutTok)
 			case <-time.After(3 * time.Second):

@@ -768,8 +768,11 @@ func (s *OpsService) prepareErrorLogInput(ctx context.Context, entry *OpsInsertE
 	}
 
 	// Keep explicit upstream zero for credential acquisition while clearing
-	// nonpositive ordinary status. Prepare selected message queries and JSON
-	// details independently of the final client status.
+	// nonpositive ordinary upstream and client wire statuses. Prepare selected
+	// message queries and JSON details independently of the final client status.
+	if entry.ClientStatusCode != nil && *entry.ClientStatusCode <= 0 {
+		entry.ClientStatusCode = nil
+	}
 	if entry.UpstreamStatusCode != nil && *entry.UpstreamStatusCode <= 0 && entry.ErrorPhase != string("provider_auth") {
 		entry.UpstreamStatusCode = nil
 	}

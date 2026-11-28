@@ -385,7 +385,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		ReadOnly:    true,
 		Response:    "json",
 		BrowserPath: "/admin/ops",
-		Input:       adminapi.Arguments("/api/v1/admin/ops/errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "time_range", "user_id", "user_query", "view"}, nil),
+		Input:       adminapi.Arguments("/api/v1/admin/ops/errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "status_codes_other", "time_range", "upstream_status_codes", "upstream_status_codes_other", "user_id", "user_query", "view"}, nil),
 	}),
 	"ops.errors.resolve.update": adminapi.Define(adminapi.Operation{
 		ID:     "ops.errors.resolve.update",
@@ -493,7 +493,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		ReadOnly:    true,
 		Response:    "json",
 		BrowserPath: "/admin/ops",
-		Input:       adminapi.Arguments("/api/v1/admin/ops/request-errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "time_range", "user_id", "user_query", "view"}, nil),
+		Input:       adminapi.Arguments("/api/v1/admin/ops/request-errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "status_codes_other", "time_range", "upstream_status_codes", "upstream_status_codes_other", "user_id", "user_query", "view"}, nil),
 	}),
 	"ops.request_errors.resolve.update": adminapi.Define(adminapi.Operation{
 		ID:     "ops.request_errors.resolve.update",
@@ -531,7 +531,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		ReadOnly:    true,
 		Response:    "json",
 		BrowserPath: "/admin/ops",
-		Input:       adminapi.Arguments("/api/v1/admin/ops/request-errors/:id/upstream-errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "include_detail", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "time_range", "user_id", "user_query", "view"}, nil),
+		Input:       adminapi.Arguments("/api/v1/admin/ops/request-errors/:id/upstream-errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "include_detail", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "status_codes_other", "time_range", "upstream_status_codes", "upstream_status_codes_other", "user_id", "user_query", "view"}, nil),
 	}),
 	"ops.requests.list": adminapi.Define(adminapi.Operation{
 		ID:     "ops.requests.list",
@@ -727,7 +727,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		ReadOnly:    true,
 		Response:    "json",
 		BrowserPath: "/admin/ops",
-		Input:       adminapi.Arguments("/api/v1/admin/ops/upstream-errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "time_range", "user_id", "user_query", "view"}, nil),
+		Input:       adminapi.Arguments("/api/v1/admin/ops/upstream-errors", []string{"api_key_id", "category", "end_time", "error_owner", "error_source", "group_id", "model", "page", "page_size", "phase", "platform", "provider_id", "q", "request_id", "resolved", "sort_by", "sort_order", "start_time", "status_codes", "status_codes_other", "time_range", "upstream_status_codes", "upstream_status_codes_other", "user_id", "user_query", "view"}, nil),
 	}),
 	"ops.upstream_errors.resolve.update": adminapi.Define(adminapi.Operation{
 		ID:     "ops.upstream_errors.resolve.update",

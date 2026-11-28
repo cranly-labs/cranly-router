@@ -131,7 +131,7 @@
 
 - 下拉容器：菜单和搜索建议列表用 `.dropdown`（含圆角、边框、阴影、深色背景，默认绝对定位与 `py-1`；需固定定位补 `fixed`，自带留白补 `py-0`）。行内 4 个 `*ActionMenu` 用 `.action-menu`（fixed 定位与面板样式），宽度类（`w-48`/`w-52`）与 `action-menu-content` 写在调用处。
 - 菜单项与导航浮层：常规项分 `.dropdown-item`（`px-4`）和 `.dropdown-item-sm`（`px-3`）。用户菜单、联系我们、语言切换等导航浮层用内缩结构：`.dropdown py-0`、`.menu-section`（`p-1.5` 带自动分隔线）、`.menu-heading`、`.menu-item`（`rounded-control` 悬停色同 `.sidebar-link`）与 `.menu-item-danger`。
-- 顶栏导航按钮：文字入口用 `.header-nav-link`（`md` 起显文字，配色同 `.text-link` 无下划线，悬停/聚焦/展开变品牌色且无底色；`md` 以下收为 36px 图标按钮）。侧栏开关 `lg` 以下保持 36px 方形点击区；纯图标按钮用 `.header-status-icon-button`。
+- 顶栏导航按钮：文字入口用 `.header-nav-link`（`md` 起显文字，常态字重与配色同 `.menu-item`（`font-medium`，浅色 `primary-900` / 深色 `dark-100`，与顶栏图标和余额同色），悬停/聚焦/展开变品牌色且无底色；`md` 以下收为 36px 图标按钮）。侧栏开关 `lg` 以下保持 36px 方形点击区；纯图标按钮用 `.header-status-icon-button`。
 - 信息提示浮层：深底提示（`HelpTooltip`、表格悬停明细等）统一用 `.tooltip-panel`（浅色 `gray-900` 白字；深色 `dark-900` 底、`dark-100` 字、`dark-600` 描边），内部分隔线用 `dark-600`。
 - 提示箭头：箭头用 `.tooltip-caret` 旋转方块，调用处补定位与朝外两边（向下 `border-b border-r`、向上 `border-l border-t`、向左 `border-b border-l`、向右 `border-r border-t`）。
 - 创作台画布浮层：顶部工具条、设置、历史、输入框和空画布胶囊用 `.canvas-island`（85% 不透明白底或 `dark-900`、淡描边、背景模糊、柔和阴影）；32px 按钮用 `.canvas-tool-btn` / `.canvas-tool-btn-active`，分隔线 `.canvas-tool-divider`；展开菜单用实底 `.dropdown`。

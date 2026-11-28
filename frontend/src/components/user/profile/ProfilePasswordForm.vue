@@ -37,10 +37,8 @@
             required
             autocomplete="new-password"
             class="input"
+            :placeholder="t('profile.passwordHint')"
           />
-          <p class="input-hint">
-            {{ t('profile.passwordHint') }}
-          </p>
         </div>
 
         <div>
@@ -57,7 +55,7 @@
           />
         </div>
 
-        <div class="flex justify-end pt-4">
+        <div class="flex justify-end">
           <button type="submit" :disabled="loading" class="btn btn-primary">
             {{ loading ? t('profile.changingPassword') : t('profile.changePasswordButton') }}
           </button>

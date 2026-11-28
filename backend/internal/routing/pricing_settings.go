@@ -46,11 +46,10 @@ type BillingSettingsPatch struct {
 	PeakStart          *string  // peak window start clock
 	PeakEnd            *string  // peak window end clock
 	PeakRateMultiplier *float64 // peak-window amount scaling factor
-	// LongContextPricingEnabled, FreeOpenAIFast, BatchImageDiscountMultiplier, and
+	// LongContextPricingEnabled, BatchImageDiscountMultiplier, and
 	// BatchImageHoldMultiplier retain omitted pointer values. Supplied false and
 	// zero remain present, and Apply checks discount and hold factors together.
 	LongContextPricingEnabled    *bool    // enable built-in long-context pricing
-	FreeOpenAIFast               *bool    // charge eligible Fast at Standard
 	BatchImageDiscountMultiplier *float64 // batch image settlement scaling factor
 	// BatchImageHoldMultiplier cannot be below the merged discount factor. A
 	// smaller value rejects Apply even when the patch did not supply the existing
@@ -91,9 +90,6 @@ func (p BillingSettingsPatch) Apply(s *pricing.BillingSettings) error {
 	}
 	if p.LongContextPricingEnabled != nil {
 		s.LongContextPricingEnabled = *p.LongContextPricingEnabled
-	}
-	if p.FreeOpenAIFast != nil {
-		s.FreeOpenAIFast = *p.FreeOpenAIFast
 	}
 	if p.BatchImageDiscountMultiplier != nil {
 		s.BatchImageDiscountMultiplier = *p.BatchImageDiscountMultiplier

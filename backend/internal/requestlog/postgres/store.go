@@ -49,7 +49,8 @@ const findUsageSQL = `WITH selected_usage AS MATERIALIZED (
 )
 SELECT u.id,COALESCE(u.request_id,''),u.created_at,COALESCE(u.user_id,0),COALESCE(u.team_id,0),COALESCE(u.api_key_id,0),
  COALESCE(u.requested_model,u.model),u.input_tokens,u.output_tokens,u.actual_cost,u.duration_ms,u.timings,u.request_source,u.system_usage,
- CASE WHEN u.system_usage->>'cost_state' = 'unknown' THEN NULL ELSE COALESCE(u.provider_stats_cost,u.total_cost)*COALESCE(u.provider_rate_multiplier,1) END
+ CASE WHEN u.system_usage->>'cost_state' = 'unknown' THEN NULL ELSE COALESCE(u.provider_stats_cost,u.total_cost)*COALESCE(u.provider_rate_multiplier,1) END,
+ u.protocol_conversion
  FROM selected_usage JOIN usage_logs u ON u.id=selected_usage.id
  ORDER BY selected_usage.created_at DESC`
 
@@ -276,12 +277,19 @@ func (s *Store) findUsage(ctx context.Context, ids []string, searchID string, us
 		var usageDuration sql.NullInt64
 		var systemJSON []byte
 		var providerCost sql.NullFloat64
+		var conversionJSON []byte
 		if err = rows.Scan(&usage.ID, &record.RequestID, &record.StartedAt, &record.UserID, &record.TeamID, &record.APIKeyID,
-			&usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ActualCost, &usageDuration, &timingsJSON, &usage.RequestSource, &systemJSON, &providerCost); err != nil {
+			&usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ActualCost, &usageDuration, &timingsJSON, &usage.RequestSource, &systemJSON, &providerCost, &conversionJSON); err != nil {
 			return err
 		}
 		if admin && providerCost.Valid {
 			usage.ProviderCost = &providerCost.Float64
+		}
+		if admin && len(conversionJSON) > 0 && string(conversionJSON) != "null" {
+			var decoded telemetry.ProtocolConversion
+			if err := json.Unmarshal(conversionJSON, &decoded); err == nil {
+				usage.ProtocolConversion = telemetry.NormalizeProtocolConversion(&decoded)
+			}
 		}
 		if len(systemJSON) > 0 {
 			if err := json.Unmarshal(systemJSON, &usage.SystemUsage); err != nil {
@@ -316,13 +324,15 @@ func (s *Store) findUsage(ctx context.Context, ids []string, searchID string, us
 //
 // Rows with a stored indexed summary add references without replacing that
 // summary's state. Missing summaries create Legacy failed details using the
-// saved request ID or client-ID fallback and the error status. The shared index
-// is not extended by ensureDetail, so multiple retained rows for an absent
-// summary can append multiple inferred details. Scan and row iteration errors
-// propagate.
+// saved request ID or client-ID fallback and the client HTTP status. The error
+// reference retains its logical classification even without an HTTP response.
+// With no indexed summary, separate retained rows can append separate inferred
+// details. Scan and row iteration errors propagate.
 func (s *Store) findErrors(ctx context.Context, ids []string, userID int64, admin, exact bool, result *[]requestlog.Detail, index map[string]int) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(NULLIF(request_id,''),client_request_id,''),created_at,
- COALESCE(user_id,0),COALESCE(api_key_id,0),COALESCE(model,''),COALESCE(status_code,0),COALESCE(error_phase,'')
+ COALESCE(user_id,0),COALESCE(api_key_id,0),COALESCE(model,''),
+ COALESCE(ops_client_http_status(client_status_code,status_code,legacy_client_status),0),
+ COALESCE(status_code,0),COALESCE(error_phase,'')
  FROM ops_error_logs WHERE (request_id = ANY($1::text[]) OR (NOT $4 AND client_request_id = ANY($1::text[])))
  AND ($3 OR user_id=$2) ORDER BY created_at DESC LIMIT 101`, pq.Array(ids), userID, admin, exact)
 	if err != nil {
@@ -334,7 +344,11 @@ func (s *Store) findErrors(ctx context.Context, ids []string, userID int64, admi
 	for rows.Next() {
 		var record telemetry.RequestRecord
 		var failure requestlog.Failure
-		if err = rows.Scan(&failure.ID, &record.RequestID, &record.StartedAt, &record.UserID, &record.APIKeyID, &record.Model, &failure.Status, &failure.Phase); err != nil {
+		if err = rows.Scan(
+			&failure.ID, &record.RequestID, &record.StartedAt,
+			&record.UserID, &record.APIKeyID, &record.Model,
+			&failure.Status, &failure.LogicalStatus, &failure.Phase,
+		); err != nil {
 			return err
 		}
 		record.State = "failed"

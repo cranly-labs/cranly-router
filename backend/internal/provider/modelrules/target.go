@@ -62,7 +62,12 @@ type Target struct {
 	// BaseURL supplies the host and path for service recognition. Full route
 	// keys retain it, while attribute keys keep its resolved service identity.
 	BaseURL string `json:"-"`
-	Ollama  bool   `json:"-"` // Ollama output cap policy
+	// FastBetaHeaderSet and FastBetaHeaderEnabled record only whether a provider
+	// fixes the outbound Anthropic beta header and whether that header permits
+	// Fast. Marketplace pricing needs those facts without exposing header values.
+	FastBetaHeaderSet     bool `json:"-"` // provider fixes the beta header
+	FastBetaHeaderEnabled bool `json:"-"` // fixed header includes Fast
+	Ollama                bool `json:"-"` // Ollama output cap policy
 	// OllamaOutputCap supplies a provider token cap when present. Nil selects the
 	// platform default, and a nonpositive value disables output parameter
 	// clamping.
@@ -373,6 +378,10 @@ func (t Target) Key() TargetKey {
 // returning the route itself use the full key to retain its address.
 func (key TargetKey) ForAttributes() TargetKey {
 	key.target.BaseURL = ""
+	// Pricing header overrides do not change model attributes. Reuse an attribute
+	// cache entry across routes that differ only in their advertised service tiers.
+	key.target.FastBetaHeaderSet = false
+	key.target.FastBetaHeaderEnabled = false
 	return key
 }
 

@@ -437,6 +437,12 @@ func (_c *UsageLogCreate) SetCacheWriteAnomaly(v map[string]interface{}) *UsageL
 	return _c
 }
 
+// SetProtocolConversion sets the "protocol_conversion" field.
+func (_c *UsageLogCreate) SetProtocolConversion(v map[string]interface{}) *UsageLogCreate {
+	_c.mutation.SetProtocolConversion(v)
+	return _c
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_c *UsageLogCreate) SetInputCost(v float64) *UsageLogCreate {
 	_c.mutation.SetInputCost(v)
@@ -1303,6 +1309,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldCacheWriteAnomaly, field.TypeJSON, value)
 		_node.CacheWriteAnomaly = value
 	}
+	if value, ok := _c.mutation.ProtocolConversion(); ok {
+		_spec.SetField(usagelog.FieldProtocolConversion, field.TypeJSON, value)
+		_node.ProtocolConversion = value
+	}
 	if value, ok := _c.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
 		_node.InputCost = value
@@ -2140,6 +2150,24 @@ func (u *UsageLogUpsert) UpdateCacheWriteAnomaly() *UsageLogUpsert {
 // ClearCacheWriteAnomaly clears the value of the "cache_write_anomaly" field.
 func (u *UsageLogUpsert) ClearCacheWriteAnomaly() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldCacheWriteAnomaly)
+	return u
+}
+
+// SetProtocolConversion sets the "protocol_conversion" field.
+func (u *UsageLogUpsert) SetProtocolConversion(v map[string]interface{}) *UsageLogUpsert {
+	u.Set(usagelog.FieldProtocolConversion, v)
+	return u
+}
+
+// UpdateProtocolConversion sets the "protocol_conversion" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateProtocolConversion() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldProtocolConversion)
+	return u
+}
+
+// ClearProtocolConversion clears the value of the "protocol_conversion" field.
+func (u *UsageLogUpsert) ClearProtocolConversion() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldProtocolConversion)
 	return u
 }
 
@@ -3354,6 +3382,27 @@ func (u *UsageLogUpsertOne) UpdateCacheWriteAnomaly() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearCacheWriteAnomaly() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearCacheWriteAnomaly()
+	})
+}
+
+// SetProtocolConversion sets the "protocol_conversion" field.
+func (u *UsageLogUpsertOne) SetProtocolConversion(v map[string]interface{}) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetProtocolConversion(v)
+	})
+}
+
+// UpdateProtocolConversion sets the "protocol_conversion" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateProtocolConversion() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateProtocolConversion()
+	})
+}
+
+// ClearProtocolConversion clears the value of the "protocol_conversion" field.
+func (u *UsageLogUpsertOne) ClearProtocolConversion() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearProtocolConversion()
 	})
 }
 
@@ -4818,6 +4867,27 @@ func (u *UsageLogUpsertBulk) UpdateCacheWriteAnomaly() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearCacheWriteAnomaly() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearCacheWriteAnomaly()
+	})
+}
+
+// SetProtocolConversion sets the "protocol_conversion" field.
+func (u *UsageLogUpsertBulk) SetProtocolConversion(v map[string]interface{}) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetProtocolConversion(v)
+	})
+}
+
+// UpdateProtocolConversion sets the "protocol_conversion" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateProtocolConversion() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateProtocolConversion()
+	})
+}
+
+// ClearProtocolConversion clears the value of the "protocol_conversion" field.
+func (u *UsageLogUpsertBulk) ClearProtocolConversion() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearProtocolConversion()
 	})
 }
 

@@ -15,6 +15,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/sse"
@@ -64,11 +65,12 @@ type ConvertedResponseOptions struct {
 // pre-conversion model declarations, and client disconnect evidence from one
 // converted Qoder response read.
 type QoderConvertedResult struct {
-	Usage                 upstream.TokenUsage // normalized native billing token buckets
-	HasUsage              bool                // true when at least one usage envelope arrived
-	Served                bool                // true when semantic output or buffered completion succeeded
-	UpstreamResponseModel string              // first non-empty raw model declared by Qoder before conversion
-	ClientDisconnect      bool                // true when downstream client writes failed during delivery
+	Usage                 upstream.TokenUsage           // normalized native billing token buckets
+	HasUsage              bool                          // true when at least one usage envelope arrived
+	Served                bool                          // true when semantic output or buffered completion succeeded
+	UpstreamResponseModel string                        // first non-empty raw model declared by Qoder before conversion
+	ClientDisconnect      bool                          // true when downstream client writes failed during delivery
+	ProtocolConversion    *telemetry.ProtocolConversion // bounded protocol transformation diagnostics
 }
 
 // wireConvertedSSEWrapper decodes the outer Qoder COSY SSE JSON envelope via
@@ -169,7 +171,7 @@ func ReadConvertedStreaming(
 	c *upstream.OutputContext,
 	resp *http.Response,
 	opts ConvertedResponseOptions,
-) (*QoderConvertedResult, error) {
+) (result *QoderConvertedResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("qoder response body is nil")
 	}
@@ -178,11 +180,21 @@ func ReadConvertedStreaming(
 		return nil, errors.New("qoder conversion exchange is nil")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		if resp.Request != nil {
+			ctx = resp.Request.Context()
+		} else {
+			ctx = context.Background()
+		}
 	}
 
 	scanner := newQoderFrameScanner(resp.Body)
 	defer scanner.close(resp)
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(ctx, opts.Exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
 
 	var headersOnce sync.Once
 	writeStreamHeaders := func() {
@@ -469,7 +481,7 @@ func ReadConvertedBuffered(
 	sink upstream.OutputSink,
 	resp *http.Response,
 	opts ConvertedResponseOptions,
-) (*QoderConvertedResult, error) {
+) (result *QoderConvertedResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("qoder response body is nil")
 	}
@@ -478,11 +490,21 @@ func ReadConvertedBuffered(
 		return nil, errors.New("qoder conversion exchange is nil")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		if resp.Request != nil {
+			ctx = resp.Request.Context()
+		} else {
+			ctx = context.Background()
+		}
 	}
 
 	scanner := newQoderFrameScanner(resp.Body)
 	defer scanner.close(resp)
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(ctx, opts.Exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
 
 	buf := opts.Exchange.Buffer()
 	var rawObs qoderRawFrameObserver

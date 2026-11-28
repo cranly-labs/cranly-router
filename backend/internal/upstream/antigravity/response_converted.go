@@ -145,7 +145,7 @@ func (s *ResponseAdapter) ReadConvertedBuffered(
 	c *upstream.OutputContext,
 	resp *http.Response,
 	conv ConvertedOptions,
-) (*StreamResult, error) {
+) (streamResult *StreamResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("antigravity upstream response body is nil")
 	}
@@ -154,10 +154,27 @@ func (s *ResponseAdapter) ReadConvertedBuffered(
 	}
 	ctx := s.Options.Context
 	if ctx == nil {
-		ctx = context.Background()
+		if resp.Request != nil {
+			ctx = resp.Request.Context()
+		} else {
+			ctx = context.Background()
+		}
 	}
 
 	buf := conv.Exchange.Buffer()
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(ctx, conv.Exchange)
+		if streamResult != nil {
+			streamResult.ProtocolConversion = snap
+		}
+	}()
+	defer func() {
+		if err != nil {
+			// Commit accumulated sealer losses onto conv.Exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = buf.Close(err)
+		}
+	}()
 	sawSemantic := false
 
 	observed, readErr := s.readGeminiStream(resp, unwrapV1InternalConvertedPayload, func(event upstream.GeminiStreamEvent) error {
@@ -219,7 +236,7 @@ func (s *ResponseAdapter) ReadConvertedStreaming(
 	c *upstream.OutputContext,
 	resp *http.Response,
 	conv ConvertedOptions,
-) (*StreamResult, error) {
+) (streamResult *StreamResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("antigravity upstream response body is nil")
 	}
@@ -228,7 +245,11 @@ func (s *ResponseAdapter) ReadConvertedStreaming(
 	}
 	ctx := s.Options.Context
 	if ctx == nil {
-		ctx = context.Background()
+		if resp.Request != nil {
+			ctx = resp.Request.Context()
+		} else {
+			ctx = context.Background()
+		}
 	}
 
 	// Guard SSE header emission with sync.Once so staged preamble flushes, empty
@@ -248,6 +269,19 @@ func (s *ResponseAdapter) ReadConvertedStreaming(
 	}
 
 	stream := conv.Exchange.Stream()
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(ctx, conv.Exchange)
+		if streamResult != nil {
+			streamResult.ProtocolConversion = snap
+		}
+	}()
+	defer func() {
+		if err != nil {
+			// Flush any unclosed stream sealer losses onto conv.Exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = stream.Close(err)
+		}
+	}()
 	var stagedFrames []sse.Frame
 	stagedHasSemantic := false
 	clientOutputStarted := false

@@ -17,8 +17,8 @@ import (
 // absent values separate from configured or catalog free amounts.
 //
 // Media tables expose recognized image sizes and video resolutions with
-// per-unit source labels. Token context intervals use their own price records
-// and service-tier choices, while root catalog presence flags still identify
+// per-unit source labels. Token context intervals inherit root multipliers and
+// use their own absolute prices and directory rules, while root catalog presence flags still identify
 // optional buckets. WithPriceCatalog fixes one clock instant for a catalog
 // query, keeping current-time quotes within that result on the same
 // observation.
@@ -43,8 +43,8 @@ func (s *Calculator) WithPriceCatalog(catalog PriceCatalog) *Calculator {
 //
 // Token display uses the calculation rules for standard, Fast, Flex and
 // long-context amounts, preserving missing optional buckets as absent values
-// and known zero amounts as priced. Context intervals retain their own amounts
-// and tier choices. Valid video tables expose all their dimensions, while
+// and known zero amounts as priced. Context intervals combine their absolute amounts with
+// the root multipliers used by settlement. Valid video tables expose all their dimensions, while
 // conflicting or invalid video tables retain an unpriced result.
 func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.DefaultModelPrice {
 	result := pricing.DefaultModelPrice{Model: model, Platform: platform, BillingMode: "token", PriceStatus: "unpriced", Prices: []pricing.DefaultPriceValue{}}
@@ -121,16 +121,15 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 		return result
 	}
 	result.PriceStatus = "priced"
-	base = s.applyCatalogTimePricing(base, s.options.Now())
-	result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "", "", false)...)
-	hasFast := false
-	if _, ok := pricing.FastModeDisplayPricing(base); ok {
-		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "fast_", "priority", false)...)
-		hasFast = true
+	at := s.options.Now()
+	base = s.applyCatalogTimePricing(base, at)
+	result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "", "", false, at)...)
+	tiers := pricing.DisplayServiceTiersAt(base, at)
+	if tiers.Fast {
+		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "fast_", "priority", false, at)...)
 	}
-	hasFlex := base.FlexMultiplier != nil
-	if hasFlex {
-		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "flex_", "flex", false)...)
+	if tiers.Flex {
+		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "flex_", "flex", false, at)...)
 	}
 	if base.MaxReasoningEffortMultiplier != nil {
 		add("max_reasoning", *base.MaxReasoningEffortMultiplier, "multiplier")
@@ -141,12 +140,12 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	if base.LongContextInputThreshold > 0 && (base.LongContextInputMultiplier > 1 || base.LongContextOutputMultiplier > 1) {
 		result.LongContextThreshold = base.LongContextInputThreshold
 		result.LongContextThresholdInclusive = base.LongContextThresholdInclusive
-		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_", "", true)...)
-		if hasFast {
-			result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_fast_", "priority", true)...)
+		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_", "", true, at)...)
+		if tiers.Fast {
+			result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_fast_", "priority", true, at)...)
 		}
-		if hasFlex {
-			result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_flex_", "flex", true)...)
+		if tiers.Flex {
+			result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_flex_", "flex", true, at)...)
 		}
 	}
 
@@ -160,14 +159,15 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 			}
 			intervalPricing := base
 			if i > 0 {
-				intervalPricing = base.ContextPrices[i-1].Pricing
+				intervalPricing = base.ContextTierPricing(base.ContextPrices[i-1].Pricing)
 			}
-			prices := defaultTokenPrices(intervalPricing, raw, "", "", false)
-			if _, ok := pricing.FastModeDisplayPricing(intervalPricing); ok {
-				prices = append(prices, defaultTokenPrices(intervalPricing, raw, "fast_", "priority", false)...)
+			prices := defaultTokenPrices(intervalPricing, raw, "", "", false, at)
+			bandTiers := pricing.DisplayServiceTiersAt(intervalPricing, at)
+			if bandTiers.Fast {
+				prices = append(prices, defaultTokenPrices(intervalPricing, raw, "fast_", "priority", false, at)...)
 			}
-			if intervalPricing.SupportsServiceTier {
-				prices = append(prices, defaultTokenPrices(intervalPricing, raw, "flex_", "flex", false)...)
+			if bandTiers.Flex {
+				prices = append(prices, defaultTokenPrices(intervalPricing, raw, "flex_", "flex", false, at)...)
 			}
 			result.ContextIntervals = append(result.ContextIntervals, pricing.DefaultPriceInterval{MinTokens: start, MaxTokens: end, Prices: prices})
 			if end != nil {
@@ -180,7 +180,8 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 
 // defaultTokenPrices returns token-unit display amounts from a non-nil
 // normalized price record. raw supplies root presence and modality hints,
-// prefix labels the returned keys, and tier selects service pricing. Caller
+// prefix labels the returned keys, and tier selects service pricing at the
+// supplied quote instant. Caller
 // thresholds and synthetic token sums must fit int.
 //
 // For long-context quotes, synthetic input reaches the configured threshold
@@ -188,7 +189,7 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 // by the complete synthetic count before conversion to USD per million tokens.
 // Optional cache/image buckets retain absent versus known-zero amounts using
 // both calculated rates and raw presence hints.
-func defaultTokenPrices(base *pricing.ModelPricing, raw *pricing.CatalogModelPricing, prefix, tier string, applyLongCtx bool) []pricing.DefaultPriceValue {
+func defaultTokenPrices(base *pricing.ModelPricing, raw *pricing.CatalogModelPricing, prefix, tier string, applyLongCtx bool, at time.Time) []pricing.DefaultPriceValue {
 	prices := make([]pricing.DefaultPriceValue, 0, 7)
 	add := func(key string, value float64, unit string) {
 		prices = append(prices, pricing.DefaultPriceValue{Key: key, Value: &value, Unit: unit})
@@ -205,7 +206,7 @@ func defaultTokenPrices(base *pricing.ModelPricing, raw *pricing.CatalogModelPri
 	}
 	quote := func(tokens UsageTokens) *CostBreakdown {
 		tokens.InputTokens += gate
-		return pricing.ComputeTokenBreakdown(base, tokens, 1, tier, applyLongCtx)
+		return pricing.ComputeTokenBreakdownAt(base, tokens, 1, tier, applyLongCtx, at)
 	}
 	perMTok := func(cost float64, tokens int) float64 {
 		// Average the synthetic input charge before million-token display

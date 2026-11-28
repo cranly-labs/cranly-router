@@ -1,4 +1,4 @@
-import type { UsageRequestType } from '@/api/usage.types'
+import type { UsageRequestType, UserErrorRequest } from '@/api/usage.types'
 
 /**
  * errorBadges.ts maps request failures to badge classes, translation keys, and
@@ -18,6 +18,17 @@ import type { UsageRequestType } from '@/api/usage.types'
  * UsageRequestKind names the request categories shared with usage API rows.
  */
 export type UsageRequestKind = UsageRequestType
+
+/**
+ * showsLegacyStreamStatus identifies streamed errors displaying a historical fallback.
+ * A positive display code with no independently recorded client status comes from
+ * the older writer's classification, including a 200 stored for a policy event.
+ */
+export function showsLegacyStreamStatus(
+  row: Pick<UserErrorRequest, 'stream' | 'status_code' | 'client_status_code'>,
+): boolean {
+  return row.stream === true && row.status_code > 0 && row.client_status_code == null
+}
 
 /**
  * statusCodeBadgeClass selects severity colors from an HTTP status number. Server
@@ -89,12 +100,14 @@ export function numericRequestTypeKind(
 }
 
 /**
- * mapErrorSortKey converts the status column key into status_code. Every other key is
- * returned unchanged, allowing the table's remaining column names to pass directly to
- * its sort request.
+ * mapErrorSortKey converts table status column keys into their backend sort fields.
+ * Every other key is returned unchanged, allowing the table's remaining column names
+ * to pass directly to its sort request.
  */
 export function mapErrorSortKey(key: string): string {
-  return key === 'status' ? 'status_code' : key
+  if (key === 'status') return 'status_code'
+  if (key === 'upstream_status') return 'upstream_status_code'
+  return key
 }
 
 /**

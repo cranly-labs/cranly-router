@@ -1091,6 +1091,18 @@ func AdaptResponsesTools(
 	return outBytes, tm, losses, nil
 }
 
+// HasResponsesToolAdaptation reports whether AdaptResponsesTools lowered any
+// custom, namespace, or client tool_search declaration or rewrote historical
+// input/tool_choice items. Plain function declarations carried across WebSocket
+// HTTP bridge turns solely via ToolMap.LoweredTools return false so ordinary
+// function-only continuations are not misclassified as tool adaptations.
+func HasResponsesToolAdaptation(tools *ToolMap, losses []ir.Loss) bool {
+	if len(losses) > 0 || tools.HasRestorations() {
+		return true
+	}
+	return tools != nil && len(tools.DeclaredNamespaces) > 0
+}
+
 // RestoreResponsesTools restores lowered custom, search, and namespaced tool
 // calls inside a buffered Responses JSON response body without re-parsing
 // unrelated numeric or extension fields through float64. Empty bodies, nil

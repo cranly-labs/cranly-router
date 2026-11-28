@@ -193,4 +193,92 @@ describe('RequestDetailCard identifiers', () => {
     expect(wrapper.text()).toContain('Failure timing')
     expect(wrapper.text()).toContain('model-a · Attempt #2')
   })
+
+  // Failover requests can convert on a failed attempt and succeed via native
+  // passthrough, while expired historical records retain conversion metadata only
+  // on usage_logs. The card must show per-attempt conversion details without
+  // duplicating identical snapshots in Usage, and fall back to Usage on legacy rows.
+  it('renders per-attempt protocol conversion without duplicating matched usage and falls back on legacy rows', () => {
+    const item = detail()
+    const conversion = {
+      mode: 'ir_converted' as const,
+      client_protocol: 'anthropic_messages',
+      upstream_protocol: 'gemini_generate_content',
+      dialect: 'gemini',
+      replay_scheme: 'gemini',
+      loss_counts: {
+        cache_mark_dropped: 2,
+        replay_token_dropped: 1,
+      },
+    }
+    item.attempts = [
+      {
+        number: 1,
+        provider_id: 7,
+        outcome: 'completed',
+        status_code: 200,
+        protocol_conversion: conversion,
+      },
+      {
+        number: 2,
+        provider_id: 8,
+        outcome: 'completed',
+        status_code: 200,
+      },
+    ]
+    item.usage = [
+      {
+        id: 11,
+        model: 'claude-sonnet-4-5',
+        input_tokens: 100,
+        output_tokens: 20,
+        actual_cost: 0.01,
+        protocol_conversion: conversion,
+        timings: {
+          ttft_mode: 'first_output',
+          upstream_stream: true,
+          values: { attempt_number: 1, upstream_started_ms: 10 },
+        },
+      },
+    ]
+
+    const wrapper = renderDetail(item)
+    const attemptConversions = wrapper.findAll('[data-testid="attempt-protocol-conversion"]')
+    expect(attemptConversions).toHaveLength(1)
+    expect(attemptConversions[0].text()).toContain('IR converted')
+    expect(attemptConversions[0].text()).toContain('Anthropic Messages -> Gemini GenerateContent')
+    expect(attemptConversions[0].text()).toContain('Cache breakpoint dropped')
+    expect(attemptConversions[0].text()).toContain('×2')
+    expect(attemptConversions[0].text()).toContain('Replay token dropped')
+    expect(attemptConversions[0].text()).toContain('×1')
+    // Matched attempt #1 already displays the identical snapshot, so Usage omits a duplicate block.
+    expect(wrapper.find('[data-testid="usage-protocol-conversion"]').exists()).toBe(false)
+
+    // Legacy summary records have no retained attempts, so Usage renders the fallback block.
+    const legacyItem = detail()
+    legacyItem.legacy = true
+    legacyItem.attempts = []
+    legacyItem.usage = [
+      {
+        id: 12,
+        model: 'gpt-5.4',
+        input_tokens: 50,
+        output_tokens: 10,
+        actual_cost: 0.005,
+        protocol_conversion: {
+          mode: 'tool_adapted',
+          client_protocol: 'openai_responses',
+          upstream_protocol: 'openai_responses',
+          dialect: 'openai',
+          loss_counts: { tool_lowered: 1 },
+        },
+      },
+    ]
+    const legacyWrapper = renderDetail(legacyItem)
+    const usageConv = legacyWrapper.get('[data-testid="usage-protocol-conversion"]')
+    expect(usageConv.text()).toContain('Tool adapted')
+    expect(usageConv.text()).toContain('OpenAI Responses -> OpenAI Responses')
+    expect(usageConv.text()).toContain('Client tool lowered')
+    expect(usageConv.text()).toContain('×1')
+  })
 })

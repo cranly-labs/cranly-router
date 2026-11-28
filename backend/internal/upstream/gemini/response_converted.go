@@ -148,8 +148,18 @@ func (s *ResponseAdapter) readConvertedBufferedSSE(
 	resp *http.Response,
 	conv ConvertedOptions,
 	isOAuth bool,
-) (*upstream.TokenUsage, error) {
+) (usage *upstream.TokenUsage, err error) {
 	buf := conv.Exchange.Buffer()
+	defer func() {
+		upstream.FinalizeExchangeConversion(ctx, conv.Exchange)
+	}()
+	defer func() {
+		if err != nil {
+			// Commit accumulated sealer losses onto conv.Exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = buf.Close(err)
+		}
+	}()
 	sawSemantic := false
 
 	observed, readErr := s.readStream(resp, isOAuth, func(event upstream.GeminiStreamEvent) error {
@@ -208,6 +218,9 @@ func (s *ResponseAdapter) readConvertedBufferedJSON(
 	conv ConvertedOptions,
 	isOAuth bool,
 ) (*upstream.TokenUsage, error) {
+	defer func() {
+		upstream.FinalizeExchangeConversion(ctx, conv.Exchange)
+	}()
 	respBody, alreadyPresented, err := s.readBoundedUnaryBody(resp.Body, conv)
 	if err != nil {
 		if alreadyPresented || ctx.Err() != nil || errors.Is(err, context.Canceled) {
@@ -272,7 +285,7 @@ func (s *ResponseAdapter) ReadConvertedStreaming(
 	resp *http.Response,
 	conv ConvertedOptions,
 	isOAuth bool,
-) (*upstream.TokenUsage, error) {
+) (usage *upstream.TokenUsage, readFinalErr error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("gemini upstream response body is nil")
 	}
@@ -304,6 +317,16 @@ func (s *ResponseAdapter) ReadConvertedStreaming(
 	}
 
 	stream := conv.Exchange.Stream()
+	defer func() {
+		upstream.FinalizeExchangeConversion(ctx, conv.Exchange)
+	}()
+	defer func() {
+		if readFinalErr != nil {
+			// Flush unclosed stream sealer losses onto conv.Exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = stream.Close(readFinalErr)
+		}
+	}()
 	var stagedFrames []sse.Frame
 	stagedHasSemantic := false
 	clientOutputStarted := false

@@ -102,7 +102,7 @@ func (s *OpenAIWebSocketExecutor) proxyResponsesWebSocketV2Passthrough(
 	port := &wsPassthroughAdapter{service: s, request: c, provider: provider, token: token, hooks: hooks, decision: wsDecision, router: tlsRouterMatch}
 	var coreHooks *gatewayws.PassthroughHooks
 	if hooks != nil {
-		coreHooks = &gatewayws.PassthroughHooks{IngressHooks: wsIngressHooks(hooks), InitialRequestModel: hooks.InitialRequestModel, InitialTurnStartedAt: hooks.InitialTurnStartedAt, OnUpstreamError: hooks.OnUpstreamError}
+		coreHooks = &gatewayws.PassthroughHooks{ContextForTurn: hooks.ContextForTurn, IngressHooks: wsIngressHooks(hooks), InitialRequestModel: hooks.InitialRequestModel, InitialTurnStartedAt: hooks.InitialTurnStartedAt, OnUpstreamError: hooks.OnUpstreamError}
 		coreHooks.BeginPerformance = func(turn int, started time.Time) *timing.Performance {
 			turnCtx := ctx
 			if hooks.ContextForTurn != nil {
@@ -162,8 +162,8 @@ func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTur
 
 // markOpenAIWSV2PassthroughCyberPolicy records detected Cyber error evidence
 // with any completed-event usage. Unmatched payloads return false; matches
-// store code, message and a UTF-8-limited body under HTTP 200 because the
-// failure arrived inside an accepted WS event stream.
+// retain the code, message and a UTF-8-limited body. The upstream WebSocket
+// delivered a frame, so its per-turn HTTP status stays absent.
 func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
 	hit, code, message := upstreamopenai.DetectOpenAICyberPolicy(payload)
 	if !hit {
@@ -177,7 +177,6 @@ func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
 		// Limit the policy diagnostic excerpt at a UTF-8 boundary while retaining
 		// parsed usage separately for Cyber observation of the failed WS turn.
 		Body:           logredact.TruncateUTF8(string(payload), 4096),
-		UpstreamStatus: http.StatusOK,
 		UpstreamInTok:  usage.InputTokens,
 		UpstreamOutTok: usage.OutputTokens,
 	})

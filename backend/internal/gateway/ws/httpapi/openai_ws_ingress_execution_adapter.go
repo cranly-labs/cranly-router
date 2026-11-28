@@ -440,6 +440,12 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 			return &wsIngressLease{lease}, nil
 		},
 		RelayFn: func(turn int, lease gatewayws.ConnLease, input gatewayws.ClientPayload) (*gatewayws.ForwardResult, error) {
+			turnCtx := ctx
+			if hooks != nil && hooks.ContextForTurn != nil {
+				if resolved := hooks.ContextForTurn(turn); resolved != nil {
+					turnCtx = resolved
+				}
+			}
 			streamPort := &wsStreamAdapter{
 				wsPassthroughAdapter: &wsPassthroughAdapter{service: s, request: c, provider: provider, hooks: hooks},
 				state:                state,
@@ -457,7 +463,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 			if !ok {
 				panic("unexpected websocket ingress lease type")
 			}
-			return gatewayws.RelayTurn(ctx, streamPort, typedLease, input, turn, gatewayws.StreamOptions{ProviderID: provider.Record.ID, WriteTimeout: s.openAIWSWriteTimeout(), ReadTimeout: s.openAIWSReadTimeout(), PreviousRecovery: s.openAIWSIngressPreviousResponseRecoveryEnabled(), Debug: debugEnabled}, streamHooks)
+			return gatewayws.RelayTurn(turnCtx, streamPort, typedLease, input, turn, gatewayws.StreamOptions{ProviderID: provider.Record.ID, WriteTimeout: s.openAIWSWriteTimeout(), ReadTimeout: s.openAIWSReadTimeout(), PreviousRecovery: s.openAIWSIngressPreviousResponseRecoveryEnabled(), Debug: debugEnabled}, streamHooks)
 		},
 
 		PinFn:       func(id int64, conn string) bool { return pool.PinConn(id, conn) },

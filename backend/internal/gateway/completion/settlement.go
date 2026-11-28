@@ -44,9 +44,6 @@ type SettlementInput struct {
 	// key total/window costs and exhausted-key invalidation, while provider quota
 	// eligibility is decided independently from the provider snapshot.
 	QuotaUpdates bool
-	// BillingBaseAmountUSD overrides TotalCost for user allocation, including
-	// an explicitly zero standard-price amount when free Fast retains premium costs.
-	BillingBaseAmountUSD *float64
 }
 
 // usageBillingParams names the settlement inputs used by recorder implementation
@@ -83,8 +80,6 @@ func (p *SettlementInput) shouldUpdateProviderQuota(cost float64) bool {
 // retains PreferredSubscriptionID for locked subscription funding and clears it for
 // other modes. User quota/window costs use positive ActualCost and captured
 // capability, while provider quota uses its separate statistics basis and rate.
-// A present billing-base override drives funding allocation independently of the
-// provider cost retained in the analysis row.
 func BuildCommand(requestID string, usageLog *UsageLog, p *usageBillingParams) *billing.UsageBillingCommand {
 	if p == nil || p.Cost == nil || p.APIKey == nil || p.User == nil || p.Provider == nil {
 		return nil
@@ -138,14 +133,8 @@ func BuildCommand(requestID string, usageLog *UsageLog, p *usageBillingParams) *
 	if p.Cost.ActualCost > 0 {
 		cmd.BillableAmountUSD = p.Cost.ActualCost
 	}
-	baseAmount := p.Cost.TotalCost
-	if p.BillingBaseAmountUSD != nil {
-		baseAmount = *p.BillingBaseAmountUSD
-	}
-	// The chosen user base can be standard-priced Fast while TotalCost retains
-	// premium provider cost; allocate funding from this base and its separate factors.
-	if baseAmount > 0 {
-		cmd.BaseAmountUSD = baseAmount
+	if p.Cost.TotalCost > 0 {
+		cmd.BaseAmountUSD = p.Cost.TotalCost
 		ApplyRateMultipliers(cmd, p)
 	}
 	if p.shouldDeductAPIKeyQuota() {
@@ -188,26 +177,19 @@ func ProviderQuotaCost(usageLog *UsageLog, p *usageBillingParams) float64 {
 
 // ApplyRateMultipliers writes the factors billing uses when splitting funding.
 // Missing command, parameters, cost, or a positive base leaves the command
-// unchanged; a present billing-base override replaces TotalCost for this decision.
+// unchanged.
 //
-// ActualCost divided by the chosen base supplies an inferred factor when captured
+// ActualCost divided by TotalCost supplies an inferred factor when captured
 // subscription or balance factors are unusable. RateOrFallback retains supplied
 // values when that inferred factor is zero, including supplied zero. The
 // subscription scale defaults to one when nonpositive, allowing the transaction
 // to apply the chosen peak factor to a plan rate it reloads.
 func ApplyRateMultipliers(cmd *billing.UsageBillingCommand, p *usageBillingParams) {
-	if cmd == nil || p == nil || p.Cost == nil {
-		return
-	}
-	baseAmount := p.Cost.TotalCost
-	if p.BillingBaseAmountUSD != nil {
-		baseAmount = *p.BillingBaseAmountUSD
-	}
-	if baseAmount <= 0 {
+	if cmd == nil || p == nil || p.Cost == nil || p.Cost.TotalCost <= 0 {
 		return
 	}
 
-	effectiveRate := p.Cost.ActualCost / baseAmount
+	effectiveRate := p.Cost.ActualCost / p.Cost.TotalCost
 
 	cmd.SubscriptionRateMultiplier = RateOrFallback(p.SubscriptionRateMultiplier, effectiveRate)
 	cmd.SubscriptionRateMultiplierScale = p.SubscriptionRateMultiplierScale

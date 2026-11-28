@@ -73,6 +73,20 @@ Responses 的平铺条目在解码时按角色归并成消息，Messages 的 `to
 
 请求变换若增删或移动了顶层工具与消息片段，`convert` 会把目标编码器产出的 `Loss.Path` 映射回原始客户端请求坐标。定律测试（Q4 与 S4）将上报的每条 `Loss` 依次作用到源端 `ir.Essence` 语义摘要上，验证变换结果与目标端重解码摘要完全一致，确保不存在未申报的静默丢弃或篡改。
 
+跨协议请求在同一提供商重试时，每次派发单独计数。Claude 签名、Gemini 思考签名和 Grok 密文被拒后，重试请求按实际删除或替换的非空令牌记录 `replay_token_dropped`。首次失败的尝试保留原计数。
+
+Antigravity 恢复重试把工具历史转为文本时记录 `tool_history_inlined`。工具结果中的文本合并进用户消息，附件按原顺序保留。每个子块丢弃的缓存标记按原始 `result.content[i]` 单独计数。
+
+网关按单次上游尝试采集有界、不含提示词或令牌原文的 `protocol_conversion` 诊断快照，覆盖以下三类触发模式：
+
+| `mode` | 触发条件 | 记录内容 |
+| --- | --- | --- |
+| `ir_converted` | 跨协议 `convert.Exchange` 请求与流式、缓冲或非流式响应转换 | `client_protocol`、`upstream_protocol`、`dialect`、`replay_scheme` 及请求加响应合并的 `loss_counts` |
+| `tool_adapted` | 同协议 Responses 实际降级了 `custom`、`namespace` 或 `tool_search` 客户端工具（排除 WS 桥普通函数跨轮继承） | 同协议对、方言与实际改写的计数。OpenAI OAuth 展平命名空间时，原样保留的命名空间不计入损失 |
+| `native_replay` | 原生 Messages 或 Responses（HTTP 与 WS）在协议令牌路径实际解封或剥离了 `trc1:` 信封（正文字面量不触发） | 原生协议对、方言、`replay_scheme` 及异源剥离时的 `loss_counts` |
+
+纯无损原生透传请求的 `usage_logs.protocol_conversion` 写 SQL `NULL`，`request_records.record.attempts[*]` 省略该字段，保持零额外存储开销。同一尝试叠加工具适配与信封重放时按 `ir_converted` > `tool_adapted` > `native_replay` 选择 `mode` 并累加 `loss_counts`。同提供商恢复重试（如 Gemini 签名修复与 Antigravity 重编码）以实际发出的重试载荷损失替换被拒草稿，流式或缓冲中途异常关闭仍刷入已产生的封装损失，且该字段仅向管理员接口暴露。
+
 <a id="dialect_capabilities"></a>
 ## 上游方言能力
 

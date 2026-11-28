@@ -1943,3 +1943,194 @@ func TestExchange_MapUpstreamToolNameComposesWithLoweredTools(t *testing.T) {
 	require.Contains(t, string(unaryJSON), `"type":"custom_tool_call","status":"completed","call_id":"call_bash_1","name":"bash","input":"pwd"`)
 	require.Contains(t, string(unaryJSON), `"type":"function_call","status":"completed","call_id":"call_ns_fn_1","namespace":"ops","name":"read_log"`)
 }
+
+// TestExchange_DiagnosticRouteLossCountsAndAbnormalClose verifies that Exchange
+// exposes detached Route copies, aggregates request and response losses by
+// LossKind, replaces request losses cleanly on retry adoption, and retains
+// response-side losses when Stream.Close or Buffer.Close terminates with an error.
+func TestExchange_DiagnosticRouteLossCountsAndAbnormalClose(t *testing.T) {
+	var nilEx *Exchange
+	require.Equal(t, Route{}, nilEx.Route())
+	require.Nil(t, nilEx.LossCounts())
+	require.Nil(t, nilEx.Losses())
+
+	reqBody := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"max_tokens":256,
+		"temperature":0.7,
+		"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]
+	}`)
+	ex, err := NewExchange(reqBody, Options{
+		Route: Route{
+			Client:   protocol.ProtocolOpenAIChatCompletions,
+			Upstream: protocol.ProtocolOpenAIChatCompletions,
+		},
+	})
+	require.NoError(t, err)
+	require.Nil(t, ex.LossCounts())
+
+	msgToChat, err := NewExchange(reqBody, Options{
+		Route: Route{
+			Client:   protocol.ProtocolAnthropicMessages,
+			Upstream: protocol.ProtocolOpenAIChatCompletions,
+			Dialect: Dialect{
+				Name:            "openai",
+				DropTemperature: true,
+			},
+		},
+		ClientModel: "claude-sonnet-4-5",
+		Runtime:     newDeterministicRuntime(),
+	})
+	require.NoError(t, err)
+
+	gotRoute := msgToChat.Route()
+	require.Equal(t, protocol.ProtocolAnthropicMessages, gotRoute.Client)
+	require.Equal(t, protocol.ProtocolOpenAIChatCompletions, gotRoute.Upstream)
+	require.Equal(t, "openai", gotRoute.Dialect.Name)
+
+	_, err = msgToChat.UpstreamRequest()
+	require.NoError(t, err)
+	reqCounts := msgToChat.LossCounts()
+	require.Equal(t, 1, reqCounts[string(ir.LossSamplingDropped)])
+	require.Equal(t, 1, reqCounts[string(ir.LossCacheMarkDropped)])
+
+	// ReplaceRequestLosses swaps request-stage losses without dropping subsequent response losses.
+	msgToChat.ReplaceRequestLosses([]ir.Loss{{Kind: ir.LossReplayTokenDropped, Path: "messages[0]"}})
+	require.Equal(t, map[string]int{string(ir.LossReplayTokenDropped): 1}, msgToChat.LossCounts())
+
+	// Abnormal Stream.Close(cause) and Buffer.Close(cause) commit sealer losses onto Exchange.
+	geminiStreamFrames := []sse.Frame{
+		{Data: []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"answer","thoughtSignature":"sig_gem_1"}]}}]}`)},
+	}
+	chatToGem, err := NewExchange([]byte(`{"model":"gpt-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`), Options{
+		Route: Route{
+			Client:   protocol.ProtocolOpenAIChatCompletions,
+			Upstream: protocol.ProtocolGeminiGenerateContent,
+			Dialect: Dialect{
+				Name:         "gemini",
+				ReplayScheme: ir.SchemeGemini,
+			},
+		},
+		Runtime: newDeterministicRuntime(),
+	})
+	require.NoError(t, err)
+	st := chatToGem.Stream()
+	for _, f := range geminiStreamFrames {
+		_, wErr := st.Write(f)
+		require.NoError(t, wErr)
+	}
+	_, closeErr := st.Close(errors.New("upstream transport reset"))
+	require.NoError(t, closeErr)
+	require.GreaterOrEqual(t, chatToGem.LossCounts()[string(ir.LossReplayTokenDropped)], 1)
+
+	// Re-observing the same wire retry must preserve the response-side loss
+	// exactly once. An independently re-encoded request replaces all wire counts.
+	beforeRetry := chatToGem.LossCounts()[string(ir.LossReplayTokenDropped)]
+	chatToGem.SetSignatureRetryLosses(2, 1)
+	chatToGem.SetSignatureRetryLosses(2, 1)
+	require.Equal(t, beforeRetry+2, chatToGem.LossCounts()[string(ir.LossReplayTokenDropped)])
+	require.Equal(t, 1, chatToGem.LossCounts()[string(ir.LossReasoningTextDropped)])
+	chatToGem.ReplaceRequestLosses(nil)
+	require.Equal(t, beforeRetry, chatToGem.LossCounts()[string(ir.LossReplayTokenDropped)])
+	require.Zero(t, chatToGem.LossCounts()[string(ir.LossReasoningTextDropped)])
+
+	// Abnormal Buffer.Close(cause) returns cause while still committing response-side losses.
+	chatToGemBuf, err := NewExchange([]byte(`{"model":"gpt-5","stream":false,"messages":[{"role":"user","content":"hi"}]}`), Options{
+		Route: Route{
+			Client:   protocol.ProtocolOpenAIChatCompletions,
+			Upstream: protocol.ProtocolGeminiGenerateContent,
+			Dialect: Dialect{
+				Name:         "gemini",
+				ReplayScheme: ir.SchemeGemini,
+			},
+		},
+		Runtime: newDeterministicRuntime(),
+	})
+	require.NoError(t, err)
+	buf := chatToGemBuf.Buffer()
+	for _, f := range geminiStreamFrames {
+		require.NoError(t, buf.Write(f))
+	}
+	_, bufErr := buf.Close(errors.New("upstream read timeout"))
+	require.Error(t, bufErr)
+	require.GreaterOrEqual(t, chatToGemBuf.LossCounts()[string(ir.LossReplayTokenDropped)], 1)
+
+	// ReencodeUpstreamLosses remaps recovery losses via ReencodeEditor and
+	// updates source coordinates when parts are removed or replaced before encoding.
+	reBytes, reLosses, changed, reErr := chatToGemBuf.ReencodeUpstreamLosses(func(req *ir.Request, _ *Dialect, edit *ReencodeEditor) (bool, error) {
+		req.Messages[0].Parts[0].Cache = &ir.CacheMark{}
+		edit.RecordPartLoss(0, 0, ir.LossReplayTokenDropped)
+		return true, nil
+	})
+	require.NoError(t, reErr)
+	require.True(t, changed)
+	require.NotEmpty(t, reBytes)
+	require.Contains(t, reLosses, ir.Loss{Kind: ir.LossReplayTokenDropped, Path: "messages[0].parts[0]"})
+	require.Contains(t, reLosses, ir.Loss{Kind: ir.LossCacheMarkDropped, Path: "messages[0].parts[0]"})
+
+	// Removing parts[0] during recovery must shift coordinates so post-mutation
+	// encoder losses on the surviving part still point to original parts[1],
+	// while synthetic placeholder parts omit synthetic encoder losses.
+	encOnlyCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAntigravityClaude,
+		Data:   "enc_secret_sig",
+	})
+	require.NoError(t, err)
+	msgWithEncryptedAndCachedText := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"max_tokens":256,
+		"messages":[
+			{"role":"user","content":"continue"},
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"","signature":"` + encOnlyCarrier + `"},
+				{"type":"text","text":"cached answer","cache_control":{"type":"ephemeral"}}
+			]},
+			{"role":"user","content":"next"}
+		]
+	}`)
+	shiftedEx, err := NewExchange(msgWithEncryptedAndCachedText, Options{
+		Route: Route{
+			Client:   protocol.ProtocolAnthropicMessages,
+			Upstream: protocol.ProtocolGeminiGenerateContent,
+			Dialect: Dialect{
+				Name:          "antigravity",
+				ReplayScheme:  ir.SchemeAntigravityClaude,
+				SchemaDialect: SchemaAntigravity,
+			},
+		},
+		Runtime: newDeterministicRuntime(),
+	})
+	require.NoError(t, err)
+	shiftedBytes, shiftedLosses, shiftedChanged, shiftedErr := shiftedEx.ReencodeUpstreamLosses(func(req *ir.Request, _ *Dialect, edit *ReencodeEditor) (bool, error) {
+		edit.RecordPartLoss(1, 0, ir.LossReplayTokenDropped)
+		edit.SetMessageParts(1, []ir.Part{req.Messages[1].Parts[1]}, []ReencodePartSource{{Part: 1}})
+		return true, nil
+	})
+	require.NoError(t, shiftedErr)
+	require.True(t, shiftedChanged)
+	require.NotEmpty(t, shiftedBytes)
+	require.Contains(t, shiftedLosses, ir.Loss{Kind: ir.LossReplayTokenDropped, Path: "messages[1].parts[0]"})
+	foundShiftedCache := false
+	for _, loss := range shiftedLosses {
+		if loss.Kind == ir.LossCacheMarkDropped {
+			require.True(t, strings.HasPrefix(loss.Path, "messages[1].parts[1]"), "expected shifted cache_mark_dropped on messages[1].parts[1], got %q", loss.Path)
+			foundShiftedCache = true
+		}
+	}
+	require.True(t, foundShiftedCache, "expected cache_mark_dropped loss on surviving cached text part")
+
+	// Synthetic replacement parts tagged with source index -1 must suppress
+	// encoder losses rather than emitting negative indices.
+	synthBytes, synthLosses, synthChanged, synthErr := shiftedEx.ReencodeUpstreamLosses(func(_ *ir.Request, _ *Dialect, edit *ReencodeEditor) (bool, error) {
+		edit.RecordPartLoss(1, 0, ir.LossReplayTokenDropped)
+		edit.SetMessageParts(1, []ir.Part{{Kind: ir.PartText, Text: "(content removed)", Cache: &ir.CacheMark{}}}, []ReencodePartSource{{Part: -1}})
+		return true, nil
+	})
+	require.NoError(t, synthErr)
+	require.True(t, synthChanged)
+	require.NotEmpty(t, synthBytes)
+	for _, loss := range synthLosses {
+		require.NotContains(t, loss.Path, "[-1]")
+		require.NotEqual(t, ir.LossCacheMarkDropped, loss.Kind)
+	}
+}

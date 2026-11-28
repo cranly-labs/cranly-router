@@ -61,6 +61,14 @@ type NamespacedToolName struct {
 // flattening and call restoration maps.
 type ResponsesNamespaceName = NamespacedToolName
 
+// NamespaceFlattening describes the edits committed by the OAuth Responses
+// namespace adapter. An empty Names map means that no declarations were changed.
+type NamespaceFlattening struct {
+	Names              map[string]ResponsesNamespaceName // response restoration lookup
+	Lowered            int                               // rewritten declarations and historical calls
+	ApproximatedChoice bool                              // original choice adapted to the flattened declarations
+}
+
 // FlattenResponsesNamespaces flattens all namespace function declarations in
 // req without preserving any exempt namespace groups. The request map and its
 // nested history maps may be mutated in place; callers retain the returned map
@@ -80,12 +88,21 @@ func FlattenResponsesNamespaces(req map[string]any) (map[string]ResponsesNamespa
 // input function_call items and tool_choice maps are rewritten in place, and a
 // flattened namespace-level tool_choice falls back to "auto".
 func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]bool) (map[string]ResponsesNamespaceName, bool, error) {
+	report, err := FlattenResponsesNamespacesWithReport(req, preserved)
+	return report.Names, len(report.Names) != 0, err
+}
+
+// FlattenResponsesNamespacesWithReport rewrites eligible tool declarations
+// and matching historical references in one pass after collision validation.
+// Its counts describe actual edits to this request, excluding preserved groups
+// and top-level functions that do not change during namespace flattening.
+func FlattenResponsesNamespacesWithReport(req map[string]any, preserved map[string]bool) (NamespaceFlattening, error) {
 	if req == nil {
-		return nil, false, nil
+		return NamespaceFlattening{}, nil
 	}
 	tools, ok := req["tools"].([]any)
 	if !ok || len(tools) == 0 {
-		return nil, false, nil
+		return NamespaceFlattening{}, nil
 	}
 
 	topLevel := make(map[string]bool)
@@ -128,16 +145,16 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 			// Reject collisions before mutating declarations or history so every
 			// flattened upstream function name maps back to a unique client tool.
 			if topLevel[flat] {
-				return nil, false, fmt.Errorf("namespace tool %q/%q flattens to %q which conflicts with a top-level tool of the same name; this upstream cannot disambiguate them, rename one of the tools", namespace, name, flat)
+				return NamespaceFlattening{}, fmt.Errorf("namespace tool %q/%q flattens to %q which conflicts with a top-level tool of the same name; this upstream cannot disambiguate them, rename one of the tools", namespace, name, flat)
 			}
 			if prev, exists := names[flat]; exists && prev != entry {
-				return nil, false, fmt.Errorf("namespace tools %q/%q and %q/%q both flatten to %q; this upstream cannot disambiguate them, rename one of the tools", prev.Namespace, prev.Name, namespace, name, flat)
+				return NamespaceFlattening{}, fmt.Errorf("namespace tools %q/%q and %q/%q both flatten to %q; this upstream cannot disambiguate them, rename one of the tools", prev.Namespace, prev.Name, namespace, name, flat)
 			}
 			names[flat] = entry
 		}
 	}
 	if len(names) == 0 {
-		return nil, false, nil
+		return NamespaceFlattening{}, nil
 	}
 
 	flattened := make([]any, 0, len(tools)+len(names))
@@ -174,18 +191,19 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		}
 	}
 	req["tools"] = flattened
-	rewriteNamespaceQualifiedCalls(req["input"], names)
+	report := NamespaceFlattening{Names: names, Lowered: len(seen) + rewriteNamespaceQualifiedCalls(req["input"], names)}
 	if choice, ok := req["tool_choice"].(map[string]any); ok {
 		choiceNamespace := strings.TrimSpace(stringValue(choice["name"]))
 		if strings.TrimSpace(stringValue(choice["type"])) == "namespace" && !preserved[choiceNamespace] {
 			// Replace a flattened group selector with "auto" because flat function
 			// declarations can no longer be targeted as a single namespace group.
 			req["tool_choice"] = "auto"
-		} else {
-			rewriteNamespaceQualifiedCall(choice, names)
+			report.ApproximatedChoice = true
+		} else if rewriteNamespaceQualifiedCall(choice, names) {
+			report.ApproximatedChoice = true
 		}
 	}
-	return names, true, nil
+	return report, nil
 }
 
 // RestoreResponsesNamespaceCalls rewrites flattened function_call names across
@@ -309,20 +327,22 @@ func namespaceChildren(tool map[string]any) []any {
 // rewriteNamespaceQualifiedCalls recursively visits decoded slices and maps,
 // rewriting matching function_call objects in place against names. Callers
 // pass acyclic JSON-decoded values and the mapping produced by flattening.
-func rewriteNamespaceQualifiedCalls(value any, names map[string]ResponsesNamespaceName) {
+func rewriteNamespaceQualifiedCalls(value any, names map[string]ResponsesNamespaceName) int {
+	count := 0
 	switch typed := value.(type) {
 	case []any:
 		for _, item := range typed {
-			rewriteNamespaceQualifiedCalls(item, names)
+			count += rewriteNamespaceQualifiedCalls(item, names)
 		}
 	case map[string]any:
-		if strings.TrimSpace(stringValue(typed["type"])) == "function_call" {
-			rewriteNamespaceQualifiedCall(typed, names)
+		if strings.TrimSpace(stringValue(typed["type"])) == "function_call" && rewriteNamespaceQualifiedCall(typed, names) {
+			count++
 		}
 		for _, child := range typed {
-			rewriteNamespaceQualifiedCalls(child, names)
+			count += rewriteNamespaceQualifiedCalls(child, names)
 		}
 	}
+	return count
 }
 
 // rewriteNamespaceQualifiedCall replaces a matched (namespace, name) pair on

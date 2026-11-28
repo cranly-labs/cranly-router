@@ -1062,13 +1062,14 @@
   /*
    * Header navigation entries show text labels from md upward and collapse to the
    * 36px icon-button square below md, so callers swap label and icon with md
-   * utilities. They follow the .text-link colors without its underline: black or white
-   * at rest, and the brand color while hovered, keyboard focused, or holding an open
+   * utilities. At rest they use the medium weight and primary-900 / dark-100 text color
+   * of the account menu items, matching the header icon buttons and balance color. They
+   * switch to the brand color while hovered, keyboard focused, or holding an open
    * dropdown. No background is painted in any state.
    */
   .header-nav-link {
     @apply flex h-9 w-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-control text-sm font-medium transition-colors duration-fast;
-    @apply text-black dark:text-white;
+    @apply text-primary-900 dark:text-dark-100;
     @apply md:w-auto md:px-3;
     @apply disabled:cursor-not-allowed disabled:opacity-60;
   }

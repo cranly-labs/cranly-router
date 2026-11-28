@@ -198,10 +198,14 @@ func (g marketplaceFixtureGroups) ListActive(ctx context.Context) ([]routing.Gro
 	return out, err
 }
 
+// ServiceTierPolicy uses the gateway's default public rules for offline quotes.
+func (p marketplaceFixturePrices) ServiceTierPolicy(context.Context) routing.MarketplaceTierPolicy {
+	return gatewayprovider.MarketplaceTierPolicy(nil, nil)
+}
+
 // Quote resolves a marketplace model quote using the fixture's resolver and
 // group rate. An absent resolver creates a calculator-backed resolver with
-// production identity lookup; FreeFastApplicable is forwarded
-// to public quoting.
+// production identity lookup; ServiceTiers is forwarded to public quoting.
 func (p marketplaceFixturePrices) Quote(ctx context.Context, req routing.MarketplaceQuoteRequest) pricing.ModelDisplayPricing {
 	resolver := p.resolver
 	// An omitted quote resolver still uses the supplied calculator's catalog.
@@ -212,7 +216,7 @@ func (p marketplaceFixturePrices) Quote(ctx context.Context, req routing.Marketp
 			slog.Debug("failed to get model pricing from model catalog, using fallback", "model", model, "error", err)
 		})
 	}
-	return resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{Model: req.Model, GroupID: &req.GroupID}, RateMultiplier: req.RateMultiplier, FreeFastApplicable: req.FreeFastApplicable})
+	return resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{Model: req.Model, GroupID: &req.GroupID}, RateMultiplier: req.RateMultiplier, ServiceTiers: req.ServiceTiers})
 }
 
 // GetModelModalities reads input and output modalities through the fixture

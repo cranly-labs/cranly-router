@@ -367,12 +367,8 @@ func ComputeTokenBreakdownAtWithFamily(
 		// Fast, Flex and effort choices. Copy that selected tier before recursive
 		// calculation and comparison with the base charge.
 		if selected != pricing {
-			value := *selected
-			value.FastModeMultiplier = pricing.FastModeMultiplier
-			value.FastMultiplier = pricing.FastMultiplier
-			value.FlexMultiplier = pricing.FlexMultiplier
-			value.MaxReasoningEffortMultiplier = pricing.MaxReasoningEffortMultiplier
-			cost := ComputeTokenBreakdownAtWithFamily(&value, tokens, rateMultiplier, serviceTier, false, at, defaultFamily)
+			value := pricing.ContextTierPricing(selected)
+			cost := ComputeTokenBreakdownAtWithFamily(value, tokens, rateMultiplier, serviceTier, false, at, defaultFamily)
 			cost.LongContextBillingApplied = cost.ActualCost > ComputeTokenBreakdownAtWithFamily(pricing, tokens, rateMultiplier, serviceTier, false, at, defaultFamily).ActualCost
 			return cost
 		}
@@ -604,7 +600,14 @@ func ShouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPric
 	return totalInputTokens > pricing.LongContextInputThreshold
 }
 
-// DisplayPricingFromResolved returns a priced display snapshot and whether it
+// DisplayPricingFromResolved uses the current time for all service and calendar
+// rules in one quote. The supplied prices and resulting display use the same
+// availability and ownership rules as DisplayPricingFromResolvedAt.
+func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
+	return DisplayPricingFromResolvedAt(model, rateMultiplier, resolved, time.Now())
+}
+
+// DisplayPricingFromResolvedAt returns a priced display snapshot and whether it
 // is usable. Token mode tries one complete uniform price first, then separate
 // priced intervals; disabled built-in context rules are removed from the
 // displayed base copy. Unpriced gaps are omitted, and configured effort and
@@ -614,7 +617,7 @@ func ShouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPric
 // Per-request mode also needs explicitly labeled image dimensions, then quotes
 // only fixed available 1K, 2K, and 4K amounts. Video mode exposes configured
 // per-second labels and its optional default; unsupported modes return false. Callers supply a finite rate already normalized for display.
-func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
+func DisplayPricingFromResolvedAt(model string, rateMultiplier float64, resolved *ResolvedPricing, at time.Time) (ModelDisplayPricing, bool) {
 	if resolved == nil {
 		return ModelDisplayPricing{}, false
 	}
@@ -623,14 +626,14 @@ func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *
 	case BillingModeVideo:
 		return BuildVideoDisplayPricing(resolved, nil, rateMultiplier)
 	case BillingModeToken:
-		pricing := ResolvedDisplayTokenPricing(resolved)
+		pricing := ResolvedDisplayTokenPricing(resolved, at)
 		if pricing != nil && !resolved.LongContextPricingEnabled {
 			pricing = WithoutLongContextDisplayPricing(pricing)
 		}
 		if pricing != nil && (HasAnyDisplayTokenPricing(pricing) || resolved.HasEffectiveOverridePricing()) {
-			return withTokenDisplayModifiers(BuildTokenDisplayPricing(pricing, rateMultiplier), resolved), true
+			return withTokenDisplayModifiers(BuildTokenDisplayPricingAt(pricing, rateMultiplier, at), resolved), true
 		}
-		intervals := ResolvedDisplayPricingIntervals(resolved, rateMultiplier)
+		intervals := ResolvedDisplayPricingIntervals(resolved, rateMultiplier, at)
 		if len(intervals) > 0 {
 			return withTokenDisplayModifiers(BuildTokenIntervalDisplayPricing(intervals), resolved), true
 		}
@@ -748,14 +751,14 @@ func ResolvedTokenPriceRanges(resolved *ResolvedPricing) []ResolvedTokenPriceRan
 
 // ResolvedDisplayTokenPricing returns one token price when every positive range
 // is equally priced. Absent intervals use available base pricing directly. With
-// intervals, any unpriced gap or unequal standard or Fast display bucket
+// intervals, any unpriced gap or unequal displayed service-tier bucket
 // prevents a uniform result.
 //
 // Comparison uses unit-rate display intervals, so separate TTL cache prices
 // participate together with text and image buckets. The result is the first
 // range's price reference and may remain shared with resolution; callers treat
 // it as read-only or copy it before mutation.
-func ResolvedDisplayTokenPricing(resolved *ResolvedPricing) *ModelPricing {
+func ResolvedDisplayTokenPricing(resolved *ResolvedPricing, at time.Time) *ModelPricing {
 	if resolved == nil {
 		return nil
 	}
@@ -765,10 +768,10 @@ func ResolvedDisplayTokenPricing(resolved *ResolvedPricing) *ModelPricing {
 	ranges := ResolvedTokenPriceRanges(resolved)
 	pricing := ranges[0].pricing
 	// A flat display promises one amount across every positive context; an
-	// unpriced gap or unequal standard/Fast bucket prevents that promise from
+	// unpriced gap or unequal service-tier bucket prevents that promise from
 	// covering all ranges.
 	for _, priceRange := range ranges {
-		if priceRange.pricing == nil || !SameDisplayTokenPricing(pricing, priceRange.pricing) {
+		if priceRange.pricing == nil || !SameDisplayTokenPricing(pricing, priceRange.pricing, at) {
 			return nil
 		}
 	}
@@ -779,11 +782,11 @@ func ResolvedDisplayTokenPricing(resolved *ResolvedPricing) *ModelPricing {
 // into display records. Unpriced ranges are omitted, retaining their absence
 // rather than inventing zero prices. Amounts include rateMultiplier, and
 // upper-endpoint pointers can remain shared with resolution.
-func ResolvedDisplayPricingIntervals(resolved *ResolvedPricing, rateMultiplier float64) []ModelDisplayPricingInterval {
+func ResolvedDisplayPricingIntervals(resolved *ResolvedPricing, rateMultiplier float64, at time.Time) []ModelDisplayPricingInterval {
 	var intervals []ModelDisplayPricingInterval
 	for _, priceRange := range ResolvedTokenPriceRanges(resolved) {
 		if priceRange.pricing != nil {
-			intervals = append(intervals, ModelPricingDisplayInterval(priceRange.minTokens, priceRange.maxTokens, priceRange.pricing, rateMultiplier))
+			intervals = append(intervals, ModelPricingDisplayInterval(priceRange.minTokens, priceRange.maxTokens, priceRange.pricing, rateMultiplier, at))
 		}
 	}
 	return intervals
@@ -799,30 +802,36 @@ func PricingIntervalHasEffectiveTokenPricing(interval PricingInterval) bool {
 		interval.CacheReadPrice != nil
 }
 
-// SameDisplayTokenPricing compares all standard and Fast display amount fields.
+// SameDisplayTokenPricing compares all token rates visible at the quote instant.
 // Two nil inputs are equal and one nil input differs. It compares unit-rate
 // intervals, including displayed TTL cache rates, rather than their underlying
 // metadata or context rules.
-func SameDisplayTokenPricing(a *ModelPricing, b *ModelPricing) bool {
+func SameDisplayTokenPricing(a *ModelPricing, b *ModelPricing, at time.Time) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	// Uniform ranges must agree in both standard and Fast amounts, so equality
+	// Uniform ranges must agree across all displayed service tiers, so equality
 	// includes their displayed TTL buckets and cannot hide a tier-specific
 	// difference.
-	return reflect.DeepEqual(ModelPricingDisplayInterval(0, nil, a, 1), ModelPricingDisplayInterval(0, nil, b, 1))
+	return reflect.DeepEqual(ModelPricingDisplayInterval(0, nil, a, 1, at), ModelPricingDisplayInterval(0, nil, b, 1, at))
 }
 
-// BuildTokenDisplayPricing returns standard and Fast token amounts scaled by
+// BuildTokenDisplayPricing uses the current time for all service and calendar
+// rules in one quote. The supplied prices and resulting display use the same
+// availability and ownership rules as BuildTokenDisplayPricingAt.
+func BuildTokenDisplayPricing(pricing *ModelPricing, rateMultiplier float64) ModelDisplayPricing {
+	return BuildTokenDisplayPricingAt(pricing, rateMultiplier, time.Now())
+}
+
+// BuildTokenDisplayPricingAt returns active service-tier token amounts scaled by
 // rateMultiplier. Built-in absolute tiers or eligible long-context multipliers
 // produce interval display instead of flat amounts. Callers supply non-nil
 // prices, valid ordered tier records, and a finite normalized rate.
-func BuildTokenDisplayPricing(pricing *ModelPricing, rateMultiplier float64) ModelDisplayPricing {
-	if intervals := LongContextDisplayPricingIntervals(pricing, rateMultiplier); len(intervals) > 0 {
+func BuildTokenDisplayPricingAt(pricing *ModelPricing, rateMultiplier float64, at time.Time) ModelDisplayPricing {
+	if intervals := longContextDisplayPricingIntervalsAt(pricing, rateMultiplier, at); len(intervals) > 0 {
 		return BuildTokenIntervalDisplayPricing(intervals)
 	}
 
-	at := time.Now()
 	standard := applyCatalogCalendarPricing(pricing, at)
 	cacheWritePrice, _ := CacheCreationDisplayPrices(standard)
 	displayPricing := ModelDisplayPricing{
@@ -880,7 +889,14 @@ func CacheCreationDisplayPrices(pricing *ModelPricing) (float64, float64) {
 	return short, pricing.CacheCreation1hPrice
 }
 
-// LongContextDisplayPricingIntervals builds displayed ranges for built-in
+// LongContextDisplayPricingIntervals quotes built-in context bands at the
+// current instant. A model with no absolute bands or eligible long-context
+// multiplier returns an empty slice so the caller can display a flat rate.
+func LongContextDisplayPricingIntervals(pricing *ModelPricing, rateMultiplier float64) []ModelDisplayPricingInterval {
+	return longContextDisplayPricingIntervalsAt(pricing, rateMultiplier, time.Now())
+}
+
+// longContextDisplayPricingIntervalsAt builds displayed ranges for built-in
 // catalog context pricing. Absolute tiers use their ordered thresholds and
 // complete price records, with the final range unbounded. Base service-tier
 // modifier pointers are applied to each selected tier's shallow copy.
@@ -890,22 +906,17 @@ func CacheCreationDisplayPrices(pricing *ModelPricing) (float64, float64) {
 // the stored threshold as the range endpoint; it does not shift inclusive
 // thresholds here. Callers provide non-nil tier records and a finite normalized
 // rate.
-func LongContextDisplayPricingIntervals(pricing *ModelPricing, rateMultiplier float64) []ModelDisplayPricingInterval {
+func longContextDisplayPricingIntervalsAt(pricing *ModelPricing, rateMultiplier float64, at time.Time) []ModelDisplayPricingInterval {
 	if pricing != nil && len(pricing.ContextPrices) > 0 {
 		var intervals []ModelDisplayPricingInterval
 		start := 0
 		current := pricing
 		for _, tier := range pricing.ContextPrices {
 			end := tier.Threshold
-			intervals = append(intervals, ModelPricingDisplayInterval(start, &end, current, rateMultiplier))
-			next := *tier.Pricing
-			next.FastModeMultiplier = pricing.FastModeMultiplier
-			next.FastMultiplier = pricing.FastMultiplier
-			next.FlexMultiplier = pricing.FlexMultiplier
-			next.MaxReasoningEffortMultiplier = pricing.MaxReasoningEffortMultiplier
-			start, current = end, &next
+			intervals = append(intervals, ModelPricingDisplayInterval(start, &end, current, rateMultiplier, at))
+			start, current = end, pricing.ContextTierPricing(tier.Pricing)
 		}
-		return append(intervals, ModelPricingDisplayInterval(start, nil, current, rateMultiplier))
+		return append(intervals, ModelPricingDisplayInterval(start, nil, current, rateMultiplier, at))
 	}
 	if !HasLongContextDisplayPricing(pricing) {
 		return nil
@@ -913,12 +924,26 @@ func LongContextDisplayPricingIntervals(pricing *ModelPricing, rateMultiplier fl
 
 	// Use the stored multiplier threshold as this display endpoint.
 	maxTokens := pricing.LongContextInputThreshold
-	baseInterval := ModelPricingDisplayInterval(0, &maxTokens, pricing, rateMultiplier)
+	baseInterval := ModelPricingDisplayInterval(0, &maxTokens, pricing, rateMultiplier, at)
 
 	longContextPricing := ApplyLongContextDisplayMultipliers(pricing)
-	longContextInterval := ModelPricingDisplayInterval(pricing.LongContextInputThreshold, nil, longContextPricing, rateMultiplier)
+	longContextInterval := ModelPricingDisplayInterval(pricing.LongContextInputThreshold, nil, longContextPricing, rateMultiplier, at)
 
 	return []ModelDisplayPricingInterval{baseInterval, longContextInterval}
+}
+
+// ContextTierPricing returns a copy of an absolute context band's token rates
+// with the root model's effective service and reasoning multipliers. Callers
+// supply a non-nil root and band. The band's bucket prices and dated directory
+// rules still apply at that context length. Keeping the overlay on a copy lets
+// public quotes, admin prices, and settlement reuse the same catalog snapshot.
+func (root *ModelPricing) ContextTierPricing(band *ModelPricing) *ModelPricing {
+	out := *band
+	out.FastModeMultiplier = root.FastModeMultiplier
+	out.FastMultiplier = root.FastMultiplier
+	out.FlexMultiplier = root.FlexMultiplier
+	out.MaxReasoningEffortMultiplier = root.MaxReasoningEffortMultiplier
+	return &out
 }
 
 // ApplyLongContextDisplayMultipliers returns a shallow copy with text and cache
@@ -961,11 +986,11 @@ func HasLongContextDisplayPricing(pricing *ModelPricing) bool {
 }
 
 // ModelPricingDisplayInterval returns one displayed range with rate-scaled
-// standard and Fast prices. Pricing must be non-nil. The supplied maxTokens
+// all applicable service-tier prices at the supplied instant. Pricing must be
+// non-nil. The supplied maxTokens
 // pointer is retained, and nil marks an unbounded range; callers keep endpoint
 // storage stable.
-func ModelPricingDisplayInterval(minTokens int, maxTokens *int, pricing *ModelPricing, rateMultiplier float64) ModelDisplayPricingInterval {
-	at := time.Now()
+func ModelPricingDisplayInterval(minTokens int, maxTokens *int, pricing *ModelPricing, rateMultiplier float64, at time.Time) ModelDisplayPricingInterval {
 	standard := applyCatalogCalendarPricing(pricing, at)
 	cacheWritePrice, _ := CacheCreationDisplayPrices(standard)
 	interval := ModelDisplayPricingInterval{
@@ -1024,7 +1049,7 @@ func selectFastModeDisplayPricing(pricing *ModelPricing, at time.Time) (*ModelPr
 	if selected, ok := catalogServiceTierPricing(pricing, OpenAIFastTierPriority, at); ok {
 		return selected, true
 	}
-	if !HasFastModeDisplayPricing(pricing) {
+	if !hasLegacyFastDisplayPricing(pricing) {
 		return nil, false
 	}
 	if multiplier, configured := NormalizedFastModeMultiplier(pricing); configured {
@@ -1074,38 +1099,12 @@ func selectFastModeDisplayPricing(pricing *ModelPricing, at time.Time) (*ModelPr
 	return &fastPricing, true
 }
 
-// ResolvedHasFastModeDisplayPricing reports Fast display availability across
-// effective token prices. It checks the available default and then each
-// configured interval, including interval-only cards. Nil resolution and other
-// billing modes return false.
-func ResolvedHasFastModeDisplayPricing(resolved *ResolvedPricing) bool {
-	if resolved == nil || resolved.Mode != BillingModeToken {
-		return false
-	}
-	if HasFastModeDisplayPricing(resolved.tokenPricingForInterval(nil)) {
-		return true
-	}
-	for i := range resolved.Intervals {
-		pricing := resolved.tokenPricingForInterval(&resolved.Intervals[i])
-		if HasFastModeDisplayPricing(pricing) {
-			return true
-		}
-	}
-	return false
-}
-
-// HasFastModeDisplayPricing reports displayable token prices with any Fast
-// pricing indicator. A configured factor, presence flag, or positive legacy
-// priority amount qualifies. An explicit zero priority amount needs its
-// presence flag to remain visible.
-func HasFastModeDisplayPricing(pricing *ModelPricing) bool {
-	return HasAnyDisplayTokenPricing(pricing) &&
-		(pricing.FastModeMultiplier != nil ||
-			pricing.FastMultiplier != nil || hasCatalogServiceTier(pricing, "priority") || pricing.PriorityInputPresent || pricing.PriorityOutputPresent || pricing.PriorityCacheReadPresent || pricing.PriorityCacheWritePresent ||
-			pricing.InputPricePerTokenPriority > 0 ||
-			pricing.OutputPricePerTokenPriority > 0 ||
-			pricing.CacheCreationPricePerTokenPriority > 0 ||
-			pricing.CacheReadPricePerTokenPriority > 0)
+// hasLegacyFastDisplayPricing reports whether a displayable base has a Fast
+// factor or priority bucket independent of the dated directory. An explicit
+// zero factor or a priority presence flag keeps a free Fast price visible.
+func hasLegacyFastDisplayPricing(pricing *ModelPricing) bool {
+	return HasAnyDisplayTokenPricing(pricing) && (pricing.FastModeMultiplier != nil ||
+		pricing.FastMultiplier != nil || UsePriorityServiceTierPricing(OpenAIFastTierPriority, pricing))
 }
 
 // BuildTokenIntervalDisplayPricing returns a token display result containing

@@ -366,3 +366,41 @@ func TestCaptureMessages_GeminiThinkingLevel(t *testing.T) {
 		})
 	}
 }
+
+// TestCompletionCapturePropagatesContextProtocolConversion verifies that
+// CaptureMessages and CaptureOpenAI extract staged attempt ProtocolConversion
+// diagnostics from ctx when absent on Result and attach them to matched attempts.
+func TestCompletionCapturePropagatesContextProtocolConversion(t *testing.T) {
+	var latest telemetry.RequestRecord
+	ctx := context.WithValue(context.Background(), telemetry.RequestID, "req-conv-capture")
+	ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{
+		RequestID: "req-conv-capture",
+		State:     "running",
+	}, func(r telemetry.RequestRecord) {
+		latest = r
+	})
+	target := &providercore.Record{ID: 77, Platform: capability.PlatformOpenAI}
+	ctx = telemetry.WithRequestProvider(ctx, target.ID, "X-Request-ID")
+	telemetry.ObserveProtocolConversion(ctx, telemetry.NewProtocolConversion(
+		telemetry.ConversionModeNativeReplay,
+		"openai_responses",
+		"openai_responses",
+		"openai",
+		"openai",
+		map[string]int{"replay_token_dropped": 1},
+	))
+
+	out := CaptureOpenAI(ctx, &OpenAICapture{
+		Provider: target,
+		Result: &forward.OpenAIResult{
+			RequestID: "up-77",
+			Model:     "gpt-5.4",
+		},
+	})
+	require.NotNil(t, out)
+	require.NotNil(t, out.Result.ProtocolConversion)
+	require.Equal(t, telemetry.ConversionModeNativeReplay, out.Result.ProtocolConversion.Mode)
+	require.Equal(t, 1, out.Result.ProtocolConversion.LossCounts["replay_token_dropped"])
+	require.Len(t, latest.Attempts, 1)
+	require.Equal(t, out.Result.ProtocolConversion, latest.Attempts[0].ProtocolConversion)
+}

@@ -45,7 +45,7 @@ func ChatForwardResult(result *openai.CompatResponseResult, billingModel string)
 	if result == nil {
 		return nil
 	}
-	return &forwardcore.OpenAIResult{RequestID: result.RequestID, ReasoningEffort: result.ReasoningEffort, ServiceTier: result.ResolvedTier, ResponseID: result.ResponseID, ClientDisconnect: result.ClientDisconnect, UpstreamHeaders: result.UpstreamHeaders, Usage: result.Usage, Model: result.Model, BillingModel: billingModel, UpstreamModel: result.UpstreamModel, UpstreamResponseServiceTier: result.ServiceTier, Stream: result.Stream, Duration: result.Duration, SearchCount: result.SearchCount}
+	return &forwardcore.OpenAIResult{RequestID: result.RequestID, ReasoningEffort: result.ReasoningEffort, ServiceTier: result.ResolvedTier, ResponseID: result.ResponseID, ClientDisconnect: result.ClientDisconnect, UpstreamHeaders: result.UpstreamHeaders, Usage: result.Usage, Model: result.Model, BillingModel: billingModel, UpstreamModel: result.UpstreamModel, UpstreamResponseServiceTier: result.ServiceTier, Stream: result.Stream, Duration: result.Duration, ProtocolConversion: result.ProtocolConversion, SearchCount: result.SearchCount}
 }
 
 // Candidates delegates model and alternate identities to the shared
@@ -113,11 +113,9 @@ func ProjectCompletionKey(v *apikey.APIKey) *completion.KeySnapshot {
 	}
 	if g := v.Group; g != nil {
 		out.Group = &completion.GroupSnapshot{
-			ID: g.ID,
-
-			RateMultiplier:     g.RateMultiplier,
-			Location:           time.Local,
-			SupportsOpenAIFast: true,
+			ID:             g.ID,
+			RateMultiplier: g.RateMultiplier,
+			Location:       time.Local,
 		}
 	}
 	return completion.SnapshotKey(out)
@@ -155,6 +153,7 @@ func ProjectMessagesCompletionResult(v *forwardcore.MessagesResult, a *provider.
 		Stream:                      v.Stream,
 		Duration:                    v.Duration,
 		Timings:                     v.Timings,
+		ProtocolConversion:          v.ProtocolConversion,
 		ImageCount:                  v.ImageCount,
 		ImageFrameCount:             v.ImageFrameCount,
 		ImageSize:                   v.ImageSize,
@@ -211,6 +210,7 @@ func ProjectOpenAICompletionResult(v *forwardcore.OpenAIResult, a *provider.Reco
 		OpenAIWSMode:                v.OpenAIWSMode,
 		Duration:                    v.Duration,
 		Timings:                     v.Timings,
+		ProtocolConversion:          v.ProtocolConversion,
 		ImageCount:                  v.ImageCount,
 		ImageFrameCount:             v.ImageFrameCount,
 		ImageSize:                   v.ImageSize,

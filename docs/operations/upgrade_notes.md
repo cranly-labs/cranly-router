@@ -5,7 +5,7 @@
 ## 章节导航
 
 - [通用升级与回退规则](#通用升级与回退规则)：所有跨版本升级的共同步骤与停机边界。
-- [未发布与近期升级](#未发布与近期升级)：当前待发布变更及迁移 292 到 316 的详细步骤。
+- [未发布与近期升级](#未发布与近期升级)：当前待发布变更及迁移 292 到 320 的详细步骤。
 - [关键破坏性历史升级](#关键破坏性历史升级)：迁移 282 到 291 中涉及停机或结构大改的专题。
 - [更早历史迁移速查表](#更早历史迁移速查表)：迁移 234 到 281 的快速索引与已取代状态。
 
@@ -17,6 +17,16 @@
 4. 需要撤销数据库变更的回退必须停止新版本并恢复升级前备份（含对应的 Redis、配置与前端资源）；仅回退二进制或删除迁移记录不会撤销表结构变更。
 
 ## 未发布与近期升级
+
+### 迁移 320：价格配置免费 Fast 开关下线
+
+- 变更要点：`320_drop_pricing_config_free_openai_fast.sql` 删除 `pricing_configs.free_openai_fast` 列，管理端价格配置 API、MCP 操作与计费设置面板移除该字段；模型广场同步改为按分组内候选路由能力与 `openai_fast_policy` 裁剪 `Fast`、`Flex`、`Ultrafast` 展示档位（见[服务档位展示](../interfaces/model_catalog_and_marketplace.md#marketplace_service_tiers)）。
+- 升级与回退：升级前若开启过 `free_openai_fast`，升级后 OpenAI `priority` / `fast` 请求按价卡或目录的生效 Fast 费率结算；如需为特定分组免除 Fast 加价，可在关联的价格配置中为对应型号显式设置 `fast_multiplier: 1`。回退旧二进制前须恢复升级前数据库备份。
+
+### 迁移 318、319：Ops 错误状态码
+
+- 318 保存实际发给客户端的 HTTP 状态，319 区分旧记录的逻辑码回退与新记录中缺失的 HTTP 状态。两步均保留原有数据，升级和回退都可读取旧版本写入的记录。
+- 历史流式错误的实际 HTTP 响应无法从逻辑错误码还原。查询和筛选口径见[运维监控与告警](ops_monitoring_and_alerting.md#实时与历史查询)。
 
 <a id="ir_protocol_conversion"></a>
 ### 未发布：协议转换引擎统一为 IR 管线（无数据库迁移）
@@ -224,7 +234,7 @@ WHERE p.platform = 'openai'
 | 270–271 | OpenAI 能力探测下线 | 整体升级；压缩与协议探测固定为显式开关，清理历史探测字段 | 有效 |
 | 269 | 分组 Fast 与 Ultra Fast 策略 | 整体升级；新增四值 `openai_fast_policy`，旧布尔列保留兼容镜像 | 有效 |
 | 265 | 数据共享功能下线 | 停机；删除共享表、列、索引与 9 项设置，`/api/v1/data-sharing/*` 返回 404；旧对象存储文件与配置需人工清理 | 有效 |
-| 264 | 分组 OpenAI Fast 按 Standard 计费 | 整体升级；新增 `free_openai_fast` | 字段已由 281 移至价格配置 |
+| 264 | 分组 OpenAI Fast 按 Standard 计费 | 整体升级；新增 `free_openai_fast` | 经 281 迁入价格配置后由 320 删除 |
 | 263 | 分组推理强度超限动作 | 整体升级；新增 `max_reasoning_effort_over_limit`（默认 `downgrade`） | 平台限制已由 277 取消 |
 | 262 | 分组 OpenAI Fast 强制策略 | 整体升级；新增 `force_openai_fast` | 被 269 取代 |
 | 261 | 缓存写入 1 小时分档 | 整体升级；价卡与区间新增可空 `cache_write_1h_price`（NULL 沿用旧价、0 免费） | 有效（表已由 274 改名） |

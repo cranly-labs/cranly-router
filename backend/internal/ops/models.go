@@ -7,11 +7,11 @@ import (
 
 // models.go defines error and system-log query models and applies display filters.
 // An error query combines captured request facts with current user, provider,
-// group, and API-key display metadata. Display status prefers a nonnull
-// upstream value, while client-status guards and query-time SLA policy decide
-// which observations are selected. Manual resolution is separate from those
-// classifications, and user conversion reads this query view rather than the
-// original wire response.
+// group, and API-key display metadata. List and detail queries return the
+// recorded client status separately from any stored upstream status, while
+// client-status guards and query-time SLA policy decide which observations are
+// selected. Manual resolution is separate from those classifications, and user
+// conversion reads this query view rather than the original wire response.
 //
 // Structured system-log fields remain available as decoded business and error
 // context. Request identifiers correlate those logs with request records and
@@ -57,12 +57,20 @@ type OpsErrorLog struct {
 
 	Severity string `json:"severity"` // recorded P0-P3 severity label
 
-	// StatusCode is the query display value, preferring nonnull
-	// upstream_status_code, then client status_code, then zero. It can differ from
-	// the final client response status.
-	StatusCode int    `json:"status_code"` // effective query display status
-	Platform   string `json:"platform"`    // recorded execution platform snapshot
-	Model      string `json:"model"`       // recorded execution model label
+	// StatusCode is the effective HTTP status returned to the client, preferring
+	// saved ClientStatusCode. Only legacy writers permit fallback to LogicalStatusCode.
+	// Current observations without a client HTTP response return zero.
+	// ClientStatusCode carries the raw committed wire HTTP status when stored,
+	// LogicalStatusCode carries the SLA/admission classification status, and
+	// UpstreamStatusCode carries the provider status separately, including zero
+	// for pre-dispatch credential failures. Legacy upstream cyber_policy records
+	// can supply an upstream code from their recorded policy response.
+	StatusCode         int    `json:"status_code"`                    // effective client HTTP status
+	ClientStatusCode   *int   `json:"client_status_code,omitempty"`   // optional recorded wire HTTP status
+	LogicalStatusCode  int    `json:"logical_status_code,omitempty"`  // stored logical classification status
+	UpstreamStatusCode *int   `json:"upstream_status_code,omitempty"` // optional stored upstream status
+	Platform           string `json:"platform"`                       // recorded execution platform snapshot
+	Model              string `json:"model"`                          // recorded execution model label
 
 	// Resolved, ResolvedAt, ResolvedByUserID, and ResolvedByUserName describe
 	// manual resolution separately from the error classification. PostgreSQL joins
@@ -120,8 +128,6 @@ type OpsErrorLogDetail struct {
 	// truncation follow the earlier capture and preparation paths.
 	ErrorBody string `json:"error_body"` // stored captured error body
 
-	// optional stored upstream status
-	UpstreamStatusCode *int `json:"upstream_status_code,omitempty"`
 	// stored upstream error description
 	UpstreamErrorMessage string `json:"upstream_error_message,omitempty"`
 	// stored upstream diagnostic text
@@ -168,11 +174,15 @@ type OpsErrorLogFilter struct {
 	GroupID    *int64 // optional positive group selection
 	ProviderID *int64 // optional positive provider selection
 
-	// StatusCodes selects effective upstream-first display statuses when nonempty
-	// and takes precedence over StatusCodesOther. The latter excludes the fixed
-	// common-status set only when no explicit list is supplied.
-	StatusCodes      []int // requested effective status values
-	StatusCodesOther bool  // exclude common effective statuses
+	// StatusCodes selects effective client HTTP statuses when nonempty and takes
+	// precedence over StatusCodesOther, which excludes the client menu's listed
+	// statuses (200 plus common 4xx/5xx codes) when positive. UpstreamStatusCodes
+	// and UpstreamStatusCodesOther apply the same precedence independently to
+	// present upstream statuses, excluding 0 plus common 4xx/5xx codes for Other.
+	StatusCodes              []int // requested client HTTP status values
+	StatusCodesOther         bool  // exclude listed client HTTP statuses
+	UpstreamStatusCodes      []int // requested upstream HTTP status values
+	UpstreamStatusCodesOther bool  // exclude listed upstream HTTP statuses
 	// Phase is trimmed and lowercased for equality matching. provider_auth also
 	// includes legacy account_auth rows; this selection participates in
 	// recovered-row eligibility when its explicit opt-in is set.
@@ -246,9 +256,10 @@ type OpsErrorLogFilter struct {
 	PageSize int // requested observations per page
 
 	// SortBy and SortOrder are trimmed and lowercased by storage. Supported
-	// columns are created_at, model, and upstream-first status_code; unknown
-	// columns use created_at, and only asc selects ascending order. Row ID breaks
-	// ties in that same direction.
+	// columns are created_at, model, client status_code, and nullable
+	// upstream_status_code with missing values ordered last; unknown columns use
+	// created_at, and only asc selects ascending order. Row ID breaks ties in that
+	// same direction.
 	SortBy    string // requested display sort column
 	SortOrder string // requested display sort direction
 }

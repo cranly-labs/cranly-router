@@ -164,7 +164,7 @@ RequestLogger
 - `reference_model` 校验：价格条目和属性规则可传 `reference_model` 引用同配置内另一具体模型的生效价格，省略或空串走字段覆盖模式。非空引用与非空覆盖字段并存、目标含通配符或目标命中本档案任一映射来源规则时，返回 `400 INVALID_MODEL_REFERENCE`。价格引用接受默认 `billing_mode=token` 占位，实际计费模式以目标为准；提供商成本条目传非空引用返回 400。属性预览与保存共用校验，预览用 `reference_model` 报告目标，实际路线仍在 `target`。
 - 默认目录查询：只读接口 `/api/v1/admin/pricing/defaults` 和 `/model` 无需平台参数，默认列表可按来源标签筛选（见[管理员默认价格查询](model_catalog_and_marketplace.md#gateway_default_pricing)）。模型链字段用 `group_mapped`，历史用量关联字段用 `pricing_config_id`。
 - 手动更新目录：`POST /api/v1/admin/pricing/defaults/update` 复用服务端已配置目录来源，不接受来源地址或文件路径；普通 GET 不触发更新。
-- 计费设置字段：价格配置支持 `peak_rate_enabled`、`peak_start`、`peak_end`、`peak_rate_multiplier`、`long_context_pricing_enabled`、`free_openai_fast`、`batch_image_discount_multiplier`、`batch_image_hold_multiplier`，以及 5 项可空单价（`web_search_price_per_call`、`search_price_per_1k`、`audio_realtime_price_per_min`、`audio_tts_price_per_million_chars`、`audio_stt_price_per_hour`）。
+- 计费设置字段：价格配置支持 `peak_rate_enabled`、`peak_start`、`peak_end`、`peak_rate_multiplier`、`long_context_pricing_enabled`、`batch_image_discount_multiplier`、`batch_image_hold_multiplier`，以及 5 项可空单价（`web_search_price_per_call`、`search_price_per_1k`、`audio_realtime_price_per_min`、`audio_tts_price_per_million_chars`、`audio_stt_price_per_hour`）。
 - 计费设置约束：更新省略保留现值，5 项单价传 `null` 清除覆盖、传 `0` 表免费；预扣倍率不得低于折扣倍率，高峰窗口仅限同一天内有效时段。分组不含上述字段与 `model_pricing`，仅保留 `rate_multiplier`（控制台置于分组"基本"页，其余位于价格配置"计费设置"页；旧分组价格不自动复制）。
 - 分组用量汇总：`GET /api/v1/admin/groups/usage-summary` 返回 `today_cost`、`yesterday_cost`、`total_cost`；自然日固定采用服务端配置时区，不接受浏览器时区参数。
 
@@ -347,7 +347,7 @@ POST /api/v1/creative/runs/{id}/outputs/{index}/ack
 
 ### 使用记录性能观测与计时
 
-性能观测唯一保存在 `usage_logs.timings`。普通用量接口返回由该行派生的 `ttft_ms`、`tps` 和 `ttft_mode`，管理员接口另返回 `detailed_timing`。请求详情按请求 ID 批量关联 usage 并分别展示，不回写请求摘要，也不从 Ops 日志补值；历史无快照记录显示未记录。
+性能观测唯一保存在 `usage_logs.timings`。普通用量接口返回由该行派生的 `ttft_ms`、`tps` 和 `ttft_mode`，管理员接口（`AdminUsageLog`）另返回 `detailed_timing` 以及按需记录的 `protocol_conversion` 协议转换诊断（普通 `/api/v1/usage` 省略该字段，详见[信息丢失上报](../architecture/protocol_conversion.md#loss_accounting)）。请求详情按请求 ID 批量关联 usage 并分别展示，不回写请求摘要，也不从 Ops 日志补值；历史无快照记录显示未记录。
 
 `timings` 保存当次模式、上游流式与完成状态、usage 完整性及 `values` 中的毫秒观测，所有事件时刻均以所属逻辑请求入口为参考：
 

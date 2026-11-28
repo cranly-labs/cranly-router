@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
@@ -25,23 +29,27 @@ import (
 
 // fakeConvertedPorts provides controllable in-memory stubs for RunConvertedResponses unit tests.
 type fakeConvertedPorts struct {
-	msgProfile          MessagesProfile               // returned by PrepareMessages
-	msgRoute            Dispatch                      // returned by PrepareMessages
-	chatProfile         ChatProfile                   // returned by PrepareChat
-	dispatchedRoute     Dispatch                      // recorded DispatchChat/DispatchMessages target
-	dispatchedBody      []byte                        // recorded body passed to DispatchChat/DispatchMessages
-	cursorConverted     bool                          // true when ConvertCursorResponsesToChat ran
-	sentBodies          [][]byte                      // outbound HTTP request bodies sent via Send
-	responses           []*http.Response              // queued HTTP responses returned by Send
-	sinkBuf             bytes.Buffer                  // downstream bytes captured by Sink
-	sinkStatus          int                           // committed HTTP status on Sink
-	boundResponseID     string                        // last ResponseID bound after success
-	boundDigestChain    string                        // last Anthropic digest chain bound after success
-	deletedContinuation bool                          // true when DeleteResponseID ran on recovery
-	prevResponseID      string                        // simulated saved previous_response_id
-	continuationEnabled bool                          // simulated ContinuationEnabled flag
-	replayScheme        string                        // optional replay scheme override for ResolveResponsesDialect
-	reasoning           convert.ReasoningCapabilities // optional model reasoning capabilities for ResolveResponsesDialect
+	msgProfile          MessagesProfile                 // returned by PrepareMessages
+	msgRoute            Dispatch                        // returned by PrepareMessages
+	chatProfile         ChatProfile                     // returned by PrepareChat
+	dispatchedRoute     Dispatch                        // recorded DispatchChat/DispatchMessages target
+	dispatchedBody      []byte                          // recorded body passed to DispatchChat/DispatchMessages
+	cursorConverted     bool                            // true when ConvertCursorResponsesToChat ran
+	sentBodies          [][]byte                        // outbound HTTP request bodies sent via Send
+	sentConversions     []*telemetry.ProtocolConversion // conversion snapshots observed on each Send request context
+	traceHTTPAttempts   bool                            // when true, Send registers HTTP attempts via timing.BeginHTTPTrace
+	agentIdentity       bool                            // simulated IsAgentIdentity flag for task-recovery tests
+	responseRequestCtx  context.Context                 // optional stale RequestContext injected into ConvertedResponseOptions
+	responses           []*http.Response                // queued HTTP responses returned by Send
+	sinkBuf             bytes.Buffer                    // downstream bytes captured by Sink
+	sinkStatus          int                             // committed HTTP status on Sink
+	boundResponseID     string                          // last ResponseID bound after success
+	boundDigestChain    string                          // last Anthropic digest chain bound after success
+	deletedContinuation bool                            // true when DeleteResponseID ran on recovery
+	prevResponseID      string                          // simulated saved previous_response_id
+	continuationEnabled bool                            // simulated ContinuationEnabled flag
+	replayScheme        string                          // optional replay scheme override for ResolveResponsesDialect
+	reasoning           convert.ReasoningCapabilities   // optional model reasoning capabilities for ResolveResponsesDialect
 }
 
 // testForwardSink implements upstream.OutputSink over fakeConvertedPorts to
@@ -263,12 +271,20 @@ func (f *fakeConvertedPorts) Header(string) string { return "" }
 // PrepareTransport performs no proxy setup in unit test stubs.
 func (f *fakeConvertedPorts) PrepareTransport() {}
 
-// Send records the outbound request body bytes and returns the next queued HTTP response on f.
+// Send records the outbound request body bytes and conversion snapshot,
+// optionally registers an HTTP attempt on r.Context(), and returns the next
+// queued HTTP response on f.
 func (f *fakeConvertedPorts) Send(r *http.Request) (*http.Response, error) {
 	raw, _ := io.ReadAll(r.Body)
 	f.sentBodies = append(f.sentBodies, raw)
+	f.sentConversions = append(f.sentConversions, telemetry.ProtocolConversionFromContext(r.Context()))
 	resp := f.responses[0]
 	f.responses = f.responses[1:]
+	if f.traceHTTPAttempts {
+		traceCtx := timing.BeginHTTPTrace(r.Context())
+		resp.Request = r.WithContext(traceCtx)
+		timing.ObserveResponse(traceCtx, resp)
+	}
 	return resp, nil
 }
 
@@ -287,8 +303,8 @@ func (f *fakeConvertedPorts) ReadUpstreamError(r *http.Response) ([]byte, string
 	return b, string(b)
 }
 
-// IsAgentIdentity returns false so Agent Identity task recovery stays inactive by default.
-func (f *fakeConvertedPorts) IsAgentIdentity(context.Context) bool { return false }
+// IsAgentIdentity returns the configured Agent Identity flag for task recovery tests.
+func (f *fakeConvertedPorts) IsAgentIdentity(context.Context) bool { return f.agentIdentity }
 
 // RecoverAgentTask returns a nil error immediately in unit test stubs.
 func (f *fakeConvertedPorts) RecoverAgentTask(context.Context) error { return nil }
@@ -324,9 +340,12 @@ func (f *fakeConvertedPorts) BindTurnState(context.Context, string, string) {}
 // Sink returns a testForwardSink writing status and payload bytes onto f.
 func (f *fakeConvertedPorts) Sink() upstream.OutputSink { return &testForwardSink{owner: f} }
 
-// ConvertedResponseOptions returns zero-valued ConvertedResponseOptions for unit test readers.
+// ConvertedResponseOptions returns ConvertedResponseOptions carrying any
+// configured responseRequestCtx to mirror Gin's initial c.Request.Context().
 func (f *fakeConvertedPorts) ConvertedResponseOptions(*http.Response, protocol.ProtocolID, string, string, string, int) openai.ConvertedResponseOptions {
-	return openai.ConvertedResponseOptions{}
+	return openai.ConvertedResponseOptions{
+		RequestContext: f.responseRequestCtx,
+	}
 }
 
 // CyberPolicy returns false so completions proceed unless cyber rejection is tested directly.
@@ -760,4 +779,242 @@ func TestCursorMixedShape_StripsUnsupportedFields(t *testing.T) {
 	assert.Equal(t, true, gjson.GetBytes(result, "stream").Bool())
 	assert.True(t, gjson.GetBytes(result, "input").IsArray())
 	assert.Equal(t, "user", gjson.GetBytes(result, "input.0.role").String())
+}
+
+// TestRunConvertedResponses_CursorInputShapedChatDiagnosticsMatchActualPayload
+// sends a Cursor input-shaped /v1/chat/completions payload carrying a custom
+// tool directly to a Responses upstream. Because the raw body preserves
+// type=custom tools instead of using Exchange's lowered request, diagnostics
+// must omit phantom tool_lowered while recording actual dropped fields and
+// response-side conversion losses.
+func TestRunConvertedResponses_CursorInputShapedChatDiagnosticsMatchActualPayload(t *testing.T) {
+	signedSSE := "event: response.created\n" +
+		"data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_cur_diag\",\"status\":\"in_progress\",\"model\":\"gpt-5.4\"}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"gAAAA_resp_sig\"}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"sequence_number\":2,\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"cursor ok\"}]}}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"id\":\"resp_cur_diag\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
+
+	t.Run("preserves_custom_tool_without_phantom_tool_lowered_and_keeps_response_losses", func(t *testing.T) {
+		cursorBody := []byte(`{` +
+			`"model":"gpt-5.4",` +
+			`"stream":false,` +
+			`"stream_options":{"include_usage":true},` +
+			`"tools":[{"type":"custom","name":"apply_patch","description":"Apply patch"}],` +
+			`"input":[{"type":"message","role":"user","content":"patch it"}]` +
+			`}`)
+
+		ports := &fakeConvertedPorts{
+			chatProfile: ChatProfile{
+				MessagesProfile:      MessagesProfile{Profile: Profile{Platform: "openai", Type: "apikey"}, ID: 21},
+				Protocol:             protocol.ProtocolOpenAIResponses,
+				ProtocolSlotDefaults: true,
+				OpenAIAPIKey:         true,
+			},
+			responses: []*http.Response{{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(signedSSE)),
+			}},
+		}
+		res, err := RunConvertedResponses(t.Context(), protocol.ProtocolOpenAIChatCompletions, cursorBody, "", "", false, ports)
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.Len(t, ports.sentBodies, 1)
+		require.Equal(t, "custom", gjson.GetBytes(ports.sentBodies[0], "tools.0.type").String())
+		require.NotNil(t, res.ProtocolConversion)
+		require.NotContains(t, res.ProtocolConversion.LossCounts, string(ir.LossToolLowered))
+		require.Equal(t, 1, res.ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+	})
+
+	t.Run("records_extra_dropped_for_stripped_cursor_unsupported_fields", func(t *testing.T) {
+		cursorBody := []byte(`{` +
+			`"model":"gpt-5.4",` +
+			`"stream":false,` +
+			`"prompt_cache_retention":"24h",` +
+			`"metadata":{"trace":"1"},` +
+			`"tools":[{"type":"custom","name":"apply_patch","description":"Apply patch"}],` +
+			`"input":[{"type":"message","role":"user","content":"patch it"}]` +
+			`}`)
+
+		ports := &fakeConvertedPorts{
+			chatProfile: ChatProfile{
+				MessagesProfile:      MessagesProfile{Profile: Profile{Platform: "openai", Type: "apikey"}, ID: 21},
+				Protocol:             protocol.ProtocolOpenAIResponses,
+				ProtocolSlotDefaults: true,
+				OpenAIAPIKey:         true,
+			},
+			responses: []*http.Response{{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(signedSSE)),
+			}},
+		}
+		res, err := RunConvertedResponses(t.Context(), protocol.ProtocolOpenAIChatCompletions, cursorBody, "", "", false, ports)
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.NotNil(t, res.ProtocolConversion)
+		require.NotContains(t, res.ProtocolConversion.LossCounts, string(ir.LossToolLowered))
+		require.Equal(t, 2, res.ProtocolConversion.LossCounts[string(ir.LossExtraDropped)])
+		require.Equal(t, 1, res.ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+	})
+}
+
+// TestRunConvertedResponses_ContinuationRecoveryIsolatesConversionScope triggers
+// a previous_response_not_found HTTP 400 followed by an HTTP 503 on a Messages
+// request carrying one cache_control breakpoint. Both dispatches and their
+// recorded RequestRecord attempts must report cache_mark_dropped=1 rather than
+// summing losses across the recursive rebuild.
+func TestRunConvertedResponses_ContinuationRecoveryIsolatesConversionScope(t *testing.T) {
+	var latest telemetry.RequestRecord
+	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{
+		RequestID: "req_cont_iso",
+		StartedAt: time.Now(),
+		State:     "running",
+	}, func(rec telemetry.RequestRecord) {
+		latest = rec
+	})
+	ctx = telemetry.WithRequestProvider(ctx, 11, "X-Request-Id")
+
+	ports := &fakeConvertedPorts{
+		msgProfile: MessagesProfile{
+			Profile:               Profile{Platform: "openai", Type: "apikey"},
+			ID:                    11,
+			ContinuationSupported: true,
+		},
+		msgRoute:            DispatchResponses,
+		continuationEnabled: true,
+		prevResponseID:      "resp_stale_iso",
+		traceHTTPAttempts:   true,
+		responses: []*http.Response{
+			{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"previous_response_not_found","message":"Previous response not found"}}`)),
+			},
+			{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"server_error","message":"upstream unavailable"}}`)),
+			},
+		},
+	}
+
+	reqBody := []byte(`{` +
+		`"model":"claude-sonnet-4-5",` +
+		`"max_tokens":256,` +
+		`"stream":false,` +
+		`"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"turn-1","cache_control":{"type":"ephemeral"}}]},` +
+		`{"role":"assistant","content":"reply-1"},` +
+		`{"role":"user","content":"turn-2"}` +
+		`]` +
+		`}`)
+
+	_, err := RunConvertedResponses(ctx, protocol.ProtocolAnthropicMessages, reqBody, "", "", false, ports)
+	require.Error(t, err)
+	require.Len(t, ports.sentConversions, 2)
+	require.NotNil(t, ports.sentConversions[0])
+	require.NotNil(t, ports.sentConversions[1])
+	require.Equal(t, 1, ports.sentConversions[0].LossCounts[string(ir.LossCacheMarkDropped)])
+	require.Equal(t, 1, ports.sentConversions[1].LossCounts[string(ir.LossCacheMarkDropped)])
+
+	require.Len(t, latest.Attempts, 2)
+	require.NotNil(t, latest.Attempts[0].ProtocolConversion)
+	require.NotNil(t, latest.Attempts[1].ProtocolConversion)
+	require.Equal(t, 1, latest.Attempts[0].ProtocolConversion.LossCounts[string(ir.LossCacheMarkDropped)])
+	require.Equal(t, 1, latest.Attempts[1].ProtocolConversion.LossCounts[string(ir.LossCacheMarkDropped)])
+}
+
+// TestRunConvertedResponses_RetrySuccessFinalizesResponseLossesOnRetryAttempt
+// triggers an HTTP 401 Agent Identity task recovery followed by a 200 OK
+// response carrying response-side conversion losses while ConvertedResponseOptions
+// supplies the initial outer context. Both the returned Result and the second
+// recorded RequestRecord attempt must receive the response-side LossCounts.
+func TestRunConvertedResponses_RetrySuccessFinalizesResponseLossesOnRetryAttempt(t *testing.T) {
+	signedSSE := "event: response.created\n" +
+		"data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_retry_ok\",\"status\":\"in_progress\",\"model\":\"gpt-5.4\"}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"gAAAA_retry_sig\"}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"sequence_number\":2,\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"retry ok\"}]}}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"id\":\"resp_retry_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
+
+	var latest telemetry.RequestRecord
+	outerCtx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{
+		RequestID: "req_retry_resp_loss",
+		StartedAt: time.Now(),
+		State:     "running",
+	}, func(rec telemetry.RequestRecord) {
+		latest = rec
+	})
+	outerCtx = telemetry.WithRequestProvider(outerCtx, 21, "X-Request-Id")
+
+	ports := &fakeConvertedPorts{
+		chatProfile: ChatProfile{
+			MessagesProfile:      MessagesProfile{Profile: Profile{Platform: "openai", Type: "apikey"}, ID: 21},
+			Protocol:             protocol.ProtocolOpenAIResponses,
+			ProtocolSlotDefaults: true,
+			OpenAIAPIKey:         true,
+		},
+		traceHTTPAttempts:  true,
+		agentIdentity:      true,
+		responseRequestCtx: outerCtx,
+		responses: []*http.Response{
+			{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id","message":"Invalid task id"}}`)),
+			},
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(signedSSE)),
+			},
+		},
+	}
+
+	reqBody := []byte(`{"model":"gpt-5.4","stream":false,"messages":[{"role":"user","content":"hi"}]}`)
+	res, err := RunConvertedResponses(outerCtx, protocol.ProtocolOpenAIChatCompletions, reqBody, "", "", false, ports)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.ProtocolConversion)
+	require.Equal(t, 1, res.ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+	require.Equal(t, 2, res.ProtocolConversion.LossCounts[string(ir.LossIDRewritten)])
+
+	require.Len(t, latest.Attempts, 2)
+	require.Equal(t, http.StatusUnauthorized, latest.Attempts[0].Status)
+	require.Equal(t, http.StatusOK, latest.Attempts[1].Status)
+	require.NotNil(t, latest.Attempts[1].ProtocolConversion)
+	require.Equal(t, res.ProtocolConversion.LossCounts, latest.Attempts[1].ProtocolConversion.LossCounts)
+}
+
+// BenchmarkPatchConvertedResponsesBodyCursorNoDeletedFields measures patching
+// a 1 MiB Cursor Responses-shaped body without unsupported extension fields
+// while collecting deletion losses in the same top-level parse.
+func BenchmarkPatchConvertedResponsesBodyCursorNoDeletedFields(b *testing.B) {
+	largeText := strings.Repeat("a", 1<<20)
+	body := []byte(`{"model":"gpt-5.4","stream":false,"input":[{"type":"message","role":"user","content":"` + largeText + `"}]}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		var losses []ir.Loss
+		out, _, err := patchConvertedResponsesBody(body, convertedResponsesBodyPatch{
+			Model:                "gpt-5.4",
+			ForceStream:          true,
+			DeleteFields:         CursorResponsesUnsupportedFields,
+			NormalizeServiceTier: true,
+			OnDeleteField: func(key string, rawVal jsontext.Value) {
+				if loss, ok := cursorDeletedFieldLoss(key, rawVal); ok {
+					losses = append(losses, loss)
+				}
+			},
+		})
+		if err != nil || len(out) == 0 || len(losses) != 0 {
+			b.Fatalf("unexpected patch result: err=%v len=%d losses=%d", err, len(out), len(losses))
+		}
+	}
 }

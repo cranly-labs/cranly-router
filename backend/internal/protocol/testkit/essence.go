@@ -66,12 +66,18 @@ type trackedPart struct {
 	dropped          bool             // true when a loss omitted this part
 	textTokenDropped bool             // true when replay_token_dropped cleared a text-attached token
 	inlined          bool             // true after reasoning_text_inlined converted this part
-	toolLowered      bool             // true when tool_lowered targeted this call or result
-	wasCustom        bool             // true when a lowered call originated as ToolCustom
-	partIDRewritten  bool             // true when id_rewritten targeted Part.ID
-	callIDRewritten  bool             // true when id_rewritten targeted CallID on call or result
-	relocateMedia    bool             // true when media_relocated targeted this tool_result
-	missingIDToUser  bool             // true when missing_tool_call_id folded an ID-less tool_result into user text
+	historyToolName  string           // executable name captured before inlining a call
+	// historyKind retains the original call or result kind through expansion.
+	// historyCallID links a rendered header to later results when a separate
+	// loss permits the upstream to rewrite the source call's identifier.
+	historyKind     ir.PartKind // original inlined variant
+	historyCallID   string      // source call identifier
+	toolLowered     bool        // true when tool_lowered targeted this call or result
+	wasCustom       bool        // true when a lowered call originated as ToolCustom
+	partIDRewritten bool        // true when id_rewritten targeted Part.ID
+	callIDRewritten bool        // true when id_rewritten targeted CallID on call or result
+	relocateMedia   bool        // true when media_relocated targeted this tool_result
+	missingIDToUser bool        // true when missing_tool_call_id folded an ID-less tool_result into user text
 }
 
 // trackedMsg wraps an ir.EssenceMessage with fixed part slots and turn-level flags.
@@ -237,7 +243,7 @@ func VerifyEssence(src, dst ir.EssenceDoc, losses []ir.Loss) ([]JSONDiffItem, er
 	return JSONDiff(srcBytes, dstBytes)
 }
 
-// buildLossDispatch constructs the complete dispatch table of 23 LossKind handlers.
+// buildLossDispatch constructs the complete dispatch table of 24 LossKind handlers.
 func buildLossDispatch() map[ir.LossKind]lossRecordHandler {
 	return map[ir.LossKind]lossRecordHandler{
 		ir.LossExtraDropped:             recordExtraDropped,
@@ -250,6 +256,7 @@ func buildLossDispatch() map[ir.LossKind]lossRecordHandler {
 		ir.LossMediaUnsupported:         recordMediaUnsupported,
 		ir.LossMediaRelocated:           recordMediaRelocated,
 		ir.LossToolLowered:              recordToolLowered,
+		ir.LossToolHistoryInlined:       recordToolHistoryInlined,
 		ir.LossToolChoiceApproximated:   recordToolChoiceApproximated,
 		ir.LossHostedToolDropped:        recordHostedToolDropped,
 		ir.LossSchemaApproximated:       recordSchemaApproximated,
@@ -638,6 +645,29 @@ func recordReasoningTextInlined(doc *trackedDoc, loss ir.Loss) error {
 	}
 	tp.inlined = true
 	tp.dropped = false
+	return nil
+}
+
+// recordToolHistoryInlined marks a message slot for recovery text expansion.
+// The original call or result stays available while subsequent losses address
+// its token, cache marker, or nested content using original source indices.
+func recordToolHistoryInlined(doc *trackedDoc, loss ir.Loss) error {
+	steps, err := parseIRPath(loss.Path)
+	if err != nil {
+		return err
+	}
+	if len(steps) != 2 || steps[0].field != "messages" || steps[1].field != "parts" {
+		return fmt.Errorf("tool history requires a message part at %q", loss.Path)
+	}
+	tp, err := locateTrackedPart(doc, steps, false)
+	if err != nil {
+		return err
+	}
+	if tp.part.Call == nil && tp.part.Result == nil {
+		return fmt.Errorf("part kind is %q, want tool_call or tool_result", tp.part.Kind)
+	}
+	tp.historyKind = tp.part.Kind
+	tp.historyToolName = loss.Detail
 	return nil
 }
 
@@ -1120,6 +1150,9 @@ func materializeAndAlign(td *trackedDoc, dst *ir.EssenceDoc, hasDst bool) (ir.Es
 		}
 	}
 
+	// Capture declared target names before tool alignment replaces them with
+	// comparison sentinels. Recovery text contains the actual lowered names.
+	materializeToolHistory(td, dst)
 	survivingTools, err := alignSurvivingTools(td, dst, hasDst)
 	if err != nil {
 		return ir.EssenceDoc{}, err
@@ -1209,6 +1242,140 @@ func materializeAndAlign(td *trackedDoc, dst *ir.EssenceDoc, hasDst bool) (ir.Es
 	}
 	cleanupEmptyCollections(&out)
 	return out, nil
+}
+
+// materializeToolHistory expands each marked source slot into its expected
+// visible text and surviving media after all original-coordinate losses have
+// been applied. Inlined tool results belong to user turns in the retry.
+//
+// Keeping the nested slots intact until this point allows a cache loss or
+// media omission to address an individual child even after its parent has
+// been marked for expansion. The expected text is derived from source history;
+// changing a name, argument, result, or attachment on the wire remains visible.
+func materializeToolHistory(td *trackedDoc, dst *ir.EssenceDoc) {
+	for i := range td.messages {
+		msg := &td.messages[i]
+		var expanded []trackedPart
+		for j, slot := range msg.parts {
+			if slot.historyKind == "" || slot.dropped {
+				if expanded != nil {
+					expanded = append(expanded, slot)
+				}
+				continue
+			}
+			if expanded == nil {
+				expanded = make([]trackedPart, 0, len(msg.parts))
+				expanded = append(expanded, msg.parts[:j]...)
+			}
+			text := trackedPart{
+				part:            ir.EssencePart{Kind: ir.PartText, ID: slot.part.ID, CacheTTL: slot.part.CacheTTL, HasExtra: slot.part.HasExtra},
+				partIDRewritten: slot.partIDRewritten,
+			}
+			if call := slot.part.Call; call != nil {
+				text.part.Text = inlinedToolCallText(&slot, td.tools, dst)
+				text.historyKind = ir.PartToolCall
+				text.historyCallID = call.CallID
+				text.callIDRewritten = slot.callIDRewritten
+				expanded = append(expanded, text)
+				continue
+			}
+
+			res := slot.part.Result
+			text.historyKind = ir.PartToolResult
+			text.historyCallID = res.CallID
+			header := "(tool_result)"
+			if res.CallID != "" {
+				header += " tool_use_id=" + res.CallID
+			}
+			if res.IsError {
+				header += " is_error=true"
+			}
+			lines := []string{header}
+			var media []trackedPart
+			for _, child := range slot.nestedContent {
+				if child.dropped {
+					continue
+				}
+				if child.part.Kind == ir.PartMedia {
+					media = append(media, child)
+					continue
+				}
+				if child.part.Text != "" {
+					lines = append(lines, child.part.Text)
+				}
+				// Keep undeclared metadata loss visible on the merged text. Reported
+				// child losses have already cleared their corresponding source fields.
+				if child.part.CacheTTL != "" {
+					text.part.CacheTTL = child.part.CacheTTL
+				}
+				text.part.HasExtra = text.part.HasExtra || child.part.HasExtra
+			}
+			text.part.Text = strings.Join(lines, "\n")
+			expanded = append(expanded, text)
+			expanded = append(expanded, media...)
+			if msg.role == ir.RoleTool {
+				msg.role = ir.RoleUser
+			}
+		}
+		if expanded != nil {
+			msg.parts = expanded
+		}
+	}
+}
+
+// inlinedToolCallText reconstructs the recovery header and arguments from the
+// source call. A lowered declaration can supply its target name because the
+// corresponding loss permits renaming. Custom inputs retain their original text
+// inside the function argument wrapper used by the lowering pipeline.
+//
+// Only declarations that survive on the target consume a wire index. Keep the
+// original call ID in the expected header until the alignment pass checks any
+// separately recorded identifier rewrite against the corresponding result.
+func inlinedToolCallText(slot *trackedPart, tools []trackedTool, dst *ir.EssenceDoc) string {
+	call := slot.part.Call
+	name := call.Tool.Name
+	args := call.Arguments
+	if slot.toolLowered {
+		if call.Tool.Kind == ir.ToolCustom {
+			// Wrapping a free-text custom argument as a JSON string preserves embedded
+			// whitespace and quotes when the upstream dialect accepts functions only.
+			raw, _ := json.Marshal(map[string]string{"input": args})
+			args = string(raw)
+		}
+		if call.Tool.Kind == ir.ToolClientSearch {
+			name = "tool_search"
+		}
+		if slot.historyToolName != "" {
+			// Historical calls can outlive their declaration. Use the independently
+			// recorded lowering result even when the current request omits the declaration.
+			name = slot.historyToolName
+		}
+		if dst != nil && slot.historyToolName == "" {
+			index := 0
+			for _, t := range tools {
+				if t.dropped {
+					continue
+				}
+				if index < len(dst.Tools) && t.lowered && t.tool.Kind == call.Tool.Kind &&
+					t.tool.Name == call.Tool.Name && t.tool.Namespace == call.Tool.Namespace {
+					name = dst.Tools[index].Name
+					break
+				}
+				index++
+			}
+		}
+	}
+	header := "(tool_use)"
+	if name != "" {
+		header += " name=" + name
+	}
+	if call.CallID != "" {
+		header += " id=" + call.CallID
+	}
+	if args != "" && args != "null" {
+		header += " input=" + args
+	}
+	return header
 }
 
 // alignSurvivingTools compacts non-dropped tools, pairs them by surviving
@@ -1839,7 +2006,13 @@ func alignSurvivingMessagesAndParts(msgs []materializedMsg, rootParts []trackedP
 
 // alignPartSlice applies toolLowered and idRewritten flags across one part
 // slice. Per-kind ordinals locate counterparts inside dstParts even when target
-// legalization reordered parts across kinds.
+// legalization reordered parts across kinds. A missing required counterpart
+// or an incompatible target representation returns an error.
+//
+// Inlined history still carries the tool name, arguments and call ID in its text.
+// Only the argument JSON has semantic whitespace and object-key normalization.
+// A declared call-ID rewrite also applies to following result headers until a
+// later call reuses the source identifier.
 func alignPartSlice(parts []trackedPart, curMsgIdx int, allMsgs []materializedMsg, allRoot []trackedPart, dstParts []ir.EssencePart, dst *ir.EssenceDoc, hasDst bool, nextID *int) error {
 	kindOrdinals := make(map[ir.PartKind]int)
 	for pIdx := range parts {
@@ -1853,6 +2026,32 @@ func alignPartSlice(parts []trackedPart, curMsgIdx int, allMsgs []materializedMs
 			dPart = findNthPartOfKind(dstParts, origKind, ord)
 		}
 
+		if tp.historyKind == ir.PartToolCall && dPart != nil {
+			if tp.callIDRewritten {
+				// Resolve the declared ID rewrite from this call header, then require
+				// subsequent inlined results to reference the same ID. The argument
+				// JSON and result body may themselves contain the original ID.
+				wantHeader, args, hasArgs := strings.Cut(tp.part.Text, " input=")
+				gotHeader, _, _ := strings.Cut(dPart.Text, " input=")
+				prefix := strings.TrimSuffix(wantHeader, " id="+tp.historyCallID) + " id="
+				id, ok := strings.CutPrefix(gotHeader, prefix)
+				if !ok || id == "" {
+					return fmt.Errorf("inlined tool call at part %d has an invalid rewritten ID", pIdx)
+				}
+				rewriteCallIDInMaterialized(allMsgs, curMsgIdx, pIdx, tp.historyCallID, id)
+				tp.part.Text = prefix + id
+				if hasArgs {
+					tp.part.Text += " input=" + args
+				}
+			}
+			// Essence canonicalizes function JSON before comparison. Normalize only
+			// the embedded argument bytes, preserving the exact wire name and call ID.
+			if header, args, found := strings.Cut(dPart.Text, " input="); found {
+				if canonical, err := CanonicalJSON([]byte(args)); err == nil {
+					dPart.Text = header + " input=" + string(canonical)
+				}
+			}
+		}
 		if tp.relocateMedia && hasDst && dPart != nil && dPart.Result != nil {
 			stripRelocatedMediaMarkerOnResult(dPart.Result)
 		}
@@ -1919,7 +2118,7 @@ func alignPartSlice(parts []trackedPart, curMsgIdx int, allMsgs []materializedMs
 			}
 		}
 
-		if tp.callIDRewritten {
+		if tp.callIDRewritten && tp.historyKind != ir.PartToolCall {
 			sentinel := fmt.Sprintf("<rewritten_id_%d>", *nextID)
 			*nextID++
 			switch {
@@ -2036,8 +2235,9 @@ func findNthPartOfKind(parts []ir.EssencePart, wantKind ir.PartKind, ordinal int
 }
 
 // rewriteCallIDInMaterialized replaces correlated Result CallIDs following the
-// call at (startMsg, startPart) until another call reuses oldID so multi-turn
-// call_id reuse never cross-wires distinct turn pairs.
+// call at (startMsg, startPart) until another call reuses oldID. For inlined
+// history it rewrites the header field alone, retaining result text even when
+// that text also contains the old identifier.
 func rewriteCallIDInMaterialized(msgs []materializedMsg, startMsg, startPart int, oldID, newID string) {
 	if oldID == "" || startMsg < 0 {
 		return
@@ -2048,7 +2248,15 @@ func rewriteCallIDInMaterialized(msgs []materializedMsg, startMsg, startPart int
 			pStart = startPart + 1
 		}
 		for pIdx := pStart; pIdx < len(msgs[mIdx].parts); pIdx++ {
-			p := &msgs[mIdx].parts[pIdx].part
+			slot := &msgs[mIdx].parts[pIdx]
+			p := &slot.part
+			if slot.historyCallID == oldID {
+				if slot.historyKind == ir.PartToolCall {
+					return
+				}
+				prefix := "(tool_result) tool_use_id="
+				p.Text = prefix + newID + strings.TrimPrefix(p.Text, prefix+oldID)
+			}
 			if p.Call != nil && p.Call.CallID == oldID {
 				return
 			}

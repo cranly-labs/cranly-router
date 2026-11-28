@@ -16,7 +16,8 @@ import (
 func TestStripMessagesSignatureBlocksForRetryBytes_StandardClaudeToolLoopAndPlaceholders(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-6","max_tokens":4096,"thinking":{"type":"enabled","budget_tokens":2048},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},"custom_extra":{"seq":9007199254740993},"messages":[{"role":"user","content":"step 1"},{"role":"assistant","content":[{"type":"thinking","thinking":"old sonnet thought","signature":"EqQBSonnetSig"}]},{"role":"user","content":"step 2"},{"role":"assistant","content":[{"type":"thinking","thinking":"tool plan","signature":"EqQBSonnetSig2"},{"type":"redacted_thinking","data":"EmwKRedacted"},{"type":"tool_use","id":"toolu_1","name":"lookup","input":{"id":9007199254740995}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"done"}]}]}`)
 
-	patched, changed := StripMessagesSignatureBlocksForRetryBytes(body, false)
+	patched, changed, losses := StripMessagesSignatureBlocksWithLosses(body, false)
+	require.Equal(t, SignatureRetryLosses{Tokens: 3, Reasoning: 2}, losses)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(patched, "thinking").Exists(), "active tool loop without leading thinking must omit top-level thinking")
 	require.False(t, gjson.GetBytes(patched, "context_management").Exists(), "dependent clear_thinking_20251015 must be removed with thinking")
@@ -42,7 +43,8 @@ func TestStripMessagesSignatureBlocksForRetryBytes_StandardClaudeToolLoopAndPlac
 func TestStripMessagesSignatureBlocksForRetryBytes_PassbackAndNoop(t *testing.T) {
 	passbackBody := []byte(`{"model":"deepseek-reasoner","thinking":{"type":"enabled","budget_tokens":2048},"messages":[{"role":"user","content":"run"},{"role":"assistant","content":[{"type":"thinking","thinking":"keep me","signature":"EqQBSig"},{"type":"thinking","thinking":"","signature":"EqQBEmpty"},{"type":"redacted_thinking","data":"EmwK"},{"type":"tool_use","id":"call_1","name":"ping","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"pong"}]}]}`)
 
-	patched, changed := StripMessagesSignatureBlocksForRetryBytes(passbackBody, true)
+	patched, changed, losses := StripMessagesSignatureBlocksWithLosses(passbackBody, true)
+	require.Equal(t, SignatureRetryLosses{Tokens: 3}, losses)
 	require.True(t, changed)
 	require.Equal(t, "enabled", gjson.GetBytes(patched, "thinking.type").String())
 	require.Equal(t, 2, len(gjson.GetBytes(patched, "messages.1.content").Array()))

@@ -14,6 +14,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
@@ -60,6 +61,14 @@ import (
 // can replace the provider, while later timeout requires reconnection.
 func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, firstClientMessage []byte) error {
 	p, o, hooks := s.Port, s.Options, s.Hooks
+	turnContext := func(turn int) context.Context {
+		if hooks != nil && hooks.ContextForTurn != nil {
+			if turnCtx := hooks.ContextForTurn(turn); turnCtx != nil {
+				return turnCtx
+			}
+		}
+		return ctx
+	}
 	var turnParameters atomic.Pointer[Parameters]
 	initial := DefaultParameters()
 	// Truncate static durations to whole-second fallback parameters, dropping
@@ -231,9 +240,10 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		Source:                   "passthrough",
 	})
 	p.SetUpstreamModel(firstUpstreamModel)
-	// Prepare outbound trc1 carrier replay before dialing upstream so invalid
-	// token-path JSON closes locally while turnPayloads retains pre-replay bytes.
-	preparedFirstOutbound, replayErr := prepareOutboundNativeReplay(ctx, p, o.ProviderID, firstUpstreamModel, firstClientMessage)
+	// Prepare outbound trc1 carrier replay on turn one's context before dialing
+	// upstream so invalid token-path JSON closes locally while turnPayloads
+	// retains pre-replay bytes and turn one captures native_replay diagnostics.
+	preparedFirstOutbound, replayErr := prepareOutboundNativeReplay(turnContext(1), p, o.ProviderID, firstUpstreamModel, firstClientMessage)
 	if replayErr != nil {
 		return p.CloseError(1008, "invalid websocket request payload", replayErr)
 	}
@@ -478,9 +488,10 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			// succeed. Rejected frames retain those two fields, while requested effort
 			// was captured earlier and can already reflect this rejected request.
 			if policyErr == nil && blocked == nil && isResponseCreate {
-				// Validate and prepare outbound trc1 carrier replay before turn
-				// admission and queue publication so rejected payloads cancel cleanly.
-				preparedOutbound, replayErr := prepareOutboundNativeReplay(ctx, p, o.ProviderID, model, out)
+				// Validate and prepare outbound trc1 carrier replay on turnNo's context
+				// before turn admission and queue publication so rejected payloads cancel
+				// cleanly and accepted turns record native_replay diagnostics on their scope.
+				preparedOutbound, replayErr := prepareOutboundNativeReplay(turnContext(turnNo), p, o.ProviderID, model, out)
 				if replayErr != nil {
 					return payload, nil, p.CloseError(1008, "invalid websocket request payload", replayErr)
 				}
@@ -691,6 +702,7 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 					ResponseHeaders:             cloneHeaders(handshakeHeaders),
 					Duration:                    turn.Duration,
 					Timings:                     turn.Timings,
+					ProtocolConversion:          telemetry.ProtocolConversionFromContext(turnContext(turnNo)),
 					ClientDisconnect:            turn.Timings != nil && turn.Timings.Values["client_disconnected"] == 1,
 				}
 				p.Log(fmt.Sprintf(

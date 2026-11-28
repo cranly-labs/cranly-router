@@ -222,6 +222,10 @@ func (e *Executor) executeConverted(
 		}
 	}
 
+	if strings.TrimSpace(dialect.Name) == "" {
+		dialect.Name = "qoder"
+	}
+
 	responseID := ""
 	if input.Protocol == protocol.ProtocolOpenAIResponses {
 		responseID = QoderResponsesID()
@@ -251,6 +255,7 @@ func (e *Executor) executeConverted(
 	if err != nil {
 		return upstream.AttemptResult{}, translateClientRequestError(err)
 	}
+	upstream.ObserveExchangeConversion(executionCtx, exchange)
 	protoReq, err := protocolqoder.DecodePayload(upBytes)
 	if err != nil {
 		return upstream.AttemptResult{}, translateClientRequestError(err)
@@ -355,6 +360,7 @@ func (e *Executor) executeConverted(
 			result.HasUsage = streamRes.HasUsage
 			result.Served = streamRes.Served
 			result.ClientDisconnect = result.ClientDisconnect || streamRes.ClientDisconnect
+			result.ProtocolConversion = streamRes.ProtocolConversion
 			commitComplete = streamRes.Served
 		}
 		if streamErr != nil {
@@ -369,6 +375,7 @@ func (e *Executor) executeConverted(
 				UpstreamResponseModel: result.UpstreamResponseModel,
 				Stream:                true,
 				Duration:              result.Duration,
+				ProtocolConversion:    result.ProtocolConversion,
 			}, streamErr
 		}
 	} else {
@@ -380,6 +387,7 @@ func (e *Executor) executeConverted(
 			result.HasUsage = bufRes.HasUsage
 			result.Served = bufRes.Served
 			result.ClientDisconnect = result.ClientDisconnect || bufRes.ClientDisconnect
+			result.ProtocolConversion = bufRes.ProtocolConversion
 		}
 		if bufErr != nil {
 			// Roll back accepted conversation state whenever buffered SSE collection or
@@ -387,6 +395,7 @@ func (e *Executor) executeConverted(
 			plan.RollbackAccepted()
 			return upstream.AttemptResult{
 				UpstreamResponseModel: result.UpstreamResponseModel,
+				ProtocolConversion:    result.ProtocolConversion,
 			}, bufErr
 		}
 	}

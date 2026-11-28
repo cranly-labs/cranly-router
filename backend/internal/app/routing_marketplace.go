@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/gateway"
+	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
@@ -31,8 +33,9 @@ import (
 // marketplacePrices adapts billing quotes and model modalities for marketplace
 // presentation.
 type marketplacePrices struct {
-	resolver   *billing.PriceResolver // group model quotes
-	calculator *billing.Calculator    // catalog model modalities
+	settings   *gateway.RuntimeSettings // global gateway tier settings
+	resolver   *billing.PriceResolver   // group model quotes
+	calculator *billing.Calculator      // catalog model modalities
 }
 
 // marketplaceStats narrows public dashboard counts for the marketplace
@@ -64,9 +67,9 @@ func (a marketplaceGroupAccess) AllowedGroupIDs(ctx context.Context, userID int6
 // price/capacity presentation. cfg, catalogue, and attributes are required by
 // construction; the marketplace retains the supplied timezone and current
 // model-attribute resolver for later queries.
-func provideMarketplace(groups *routingpostgres.GroupStore, store *settings.Store, catalogue *routing.RequestableCatalogue, prices *billing.PriceResolver, calculator *billing.Calculator, capacity *routing.CapacityService, availability routing.GroupAvailabilityProbeRepository, cfg *config.Config, attributes *routing.ModelAttributeService) *routing.Marketplace {
+func provideMarketplace(groups *routingpostgres.GroupStore, store *settings.Store, catalogue *routing.RequestableCatalogue, prices *billing.PriceResolver, calculator *billing.Calculator, capacity *routing.CapacityService, availability routing.GroupAvailabilityProbeRepository, cfg *config.Config, attributes *routing.ModelAttributeService, gatewaySettings *gateway.RuntimeSettings) *routing.Marketplace {
 	options := routing.MarketplaceOptions{Attributes: attributes.ResolveMarketplaceGroups, Timezone: cfg.Timezone, Now: time.Now, Warn: slog.Warn}
-	return routing.NewMarketplace(groups, store, catalogue, catalogue.Resolver, marketplacePrices{prices, calculator}, capacity, availability, options)
+	return routing.NewMarketplace(groups, store, catalogue, catalogue.Resolver, marketplacePrices{resolver: prices, calculator: calculator, settings: gatewaySettings}, capacity, availability, options)
 }
 
 // PublicStats returns dashboard token and user counts for public marketplace
@@ -79,12 +82,31 @@ func (s marketplaceStats) PublicStats(ctx context.Context) (routingdto.ModelMark
 	return routingdto.ModelMarketplaceStats{TodayTokens: value.TodayTokens, TotalTokens: value.TotalTokens, TotalUsers: value.TotalUsers}, nil
 }
 
-// Quote delegates the requested group/model and display multipliers to billing
-// public pricing.
+// ServiceTierPolicy captures globally applicable gateway rules once for the
+// current marketplace listing. A storage failure uses the gateway's default
+// pass decision so other model and price information remains available.
+func (p marketplacePrices) ServiceTierPolicy(ctx context.Context) routing.MarketplaceTierPolicy {
+	settings, err := p.settings.GetOpenAIFastPolicySettings(ctx)
+	if err != nil {
+		// The request executor passes tiers when it cannot read global policy. Keep
+		// the listing available under the same fallback and record the failed read.
+		slog.WarnContext(ctx, "failed to read marketplace service-tier policy", "error", err)
+	}
+	beta, err := p.settings.GetBetaPolicySettings(ctx)
+	if err != nil {
+		// Messages execution applies no dynamic beta restrictions after a storage
+		// error. Keep that fallback independent of the OpenAI settings read above.
+		slog.WarnContext(ctx, "failed to read marketplace beta policy", "error", err)
+	}
+	return gatewayprovider.MarketplaceTierPolicy(settings, gatewayprovider.AnthropicBetaPolicy(beta))
+}
+
+// Quote delegates the requested group/model, display multiplier, and optional
+// route service-tier filter to billing public pricing.
 func (p marketplacePrices) Quote(ctx context.Context, request routing.MarketplaceQuoteRequest) pricing.ModelDisplayPricing {
 	return p.resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{
 		Model: request.Model, GroupID: &request.GroupID,
-	}, RateMultiplier: request.RateMultiplier, FreeFastApplicable: request.FreeFastApplicable})
+	}, RateMultiplier: request.RateMultiplier, ServiceTiers: request.ServiceTiers})
 }
 
 // GetModelModalities delegates input and output modality reads to the shared

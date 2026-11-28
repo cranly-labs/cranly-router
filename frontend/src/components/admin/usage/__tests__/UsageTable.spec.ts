@@ -102,6 +102,21 @@ const messages: Record<string, string> = {
   'admin.usage.cacheWriteAnomalyPartial': 'Partial breakdown (raw {raw})',
   'admin.usage.cacheWriteAnomalyMissingTotal': 'Missing total (raw {raw})',
   'admin.usage.cacheWriteAnomalyExceeds': 'Exceeds total (raw {raw})',
+  'requests.protocolConversion.title': 'Protocol conversion',
+  'requests.protocolConversion.mode': 'Mode',
+  'requests.protocolConversion.clientProtocol': 'Client protocol',
+  'requests.protocolConversion.upstreamProtocol': 'Upstream protocol',
+  'requests.protocolConversion.dialect': 'Dialect',
+  'requests.protocolConversion.replayScheme': 'Replay scheme',
+  'requests.protocolConversion.losses': 'Information losses',
+  'requests.protocolConversion.lossless': 'No information loss',
+  'requests.protocolConversion.modes.ir_converted': 'IR converted',
+  'requests.protocolConversion.modes.tool_adapted': 'Tool adapted',
+  'requests.protocolConversion.modes.native_replay': 'Envelope replay',
+  'requests.protocolConversion.protocols.anthropic_messages': 'Anthropic Messages',
+  'requests.protocolConversion.protocols.gemini_generate_content': 'Gemini GenerateContent',
+  'requests.protocolConversion.lossKinds.cache_mark_dropped': 'Cache breakpoint dropped',
+  'requests.protocolConversion.lossKinds.replay_token_dropped': 'Replay token dropped',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -132,6 +147,7 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-endpoint" :row="row" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
@@ -1054,6 +1070,7 @@ const DataTableStubWithUser = {
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-user" :row="row" />
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-endpoint" :row="row" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
@@ -1391,4 +1408,107 @@ it('renders administrator cache-write anomaly badges and raw upstream tooltip de
   })
   expect(wrapper.find('[data-testid="cache-write-anomaly-badge"]').exists()).toBe(false)
   wrapper.unmount()
+})
+
+// UsageTable is shared by user and administrator pages. Protocol conversion
+// info buttons and floating details must remain hidden by default and render
+// only when showProtocolConversion is enabled on rows with conversion metadata,
+// while endpoint containers override td nowrap so long upstream paths wrap.
+it('renders protocol conversion info button, wrapping endpoint cell, and floating details only when enabled', async () => {
+  const convertedRow = {
+    ...baseImageRow,
+    request_id: 'req-conv-admin',
+    model: 'claude-sonnet-4-6',
+    billing_mode: 'token',
+    image_count: 0,
+    inbound_endpoint: '/v1/messages',
+    upstream_endpoint: '/v1beta/models/gemini-2.5-pro:streamGenerateContent',
+    protocol_conversion: {
+      mode: 'ir_converted' as const,
+      client_protocol: 'anthropic_messages',
+      upstream_protocol: 'gemini_generate_content',
+      dialect: 'gemini',
+      replay_scheme: 'gemini',
+      loss_counts: {
+        replay_token_dropped: 1,
+        cache_mark_dropped: 2,
+      },
+    },
+  }
+
+  const userWrapper = mount(UsageTable, {
+    props: {
+      data: [convertedRow],
+      columns: [{ key: 'endpoint', label: 'Endpoint' }],
+      loading: false,
+      showUpstreamEndpoint: false,
+    },
+    global: {
+      stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+    },
+  })
+  expect(userWrapper.find('[data-testid="protocol-conversion-info-button"]').exists()).toBe(false)
+  expect(userWrapper.find('[data-testid="protocol-conversion-tooltip"]').exists()).toBe(false)
+  userWrapper.unmount()
+
+  const adminWrapper = mount(UsageTable, {
+    props: {
+      data: [
+        convertedRow,
+        {
+          ...convertedRow,
+          id: 991,
+          request_id: 'req-other',
+          protocol_conversion: { ...convertedRow.protocol_conversion, dialect: 'other-dialect' },
+        },
+      ],
+      columns: [{ key: 'endpoint', label: 'Endpoint' }],
+      loading: false,
+      showUpstreamEndpoint: true,
+      showProtocolConversion: true,
+    },
+    global: {
+      stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+    },
+  })
+
+  const [infoButton, otherButton] = adminWrapper.findAll(
+    '[data-testid="protocol-conversion-info-button"]',
+  )
+  expect(infoButton.attributes('title')).toBe('Protocol conversion')
+  expect(infoButton.attributes('aria-label')).toBe('Protocol conversion')
+  expect(infoButton.element.parentElement?.classList.contains('whitespace-normal')).toBe(true)
+
+  await infoButton.trigger('click')
+  await nextTick()
+  await nextMotionFrame()
+
+  const tooltip = adminWrapper.get('[data-testid="protocol-conversion-tooltip"]')
+  expect(tooltip.text()).toContain('Protocol conversion')
+  expect(tooltip.text()).toContain('IR converted')
+  expect(tooltip.text()).toContain('Anthropic Messages')
+  expect(tooltip.text()).toContain('Gemini GenerateContent')
+  expect(tooltip.text()).toContain('gemini')
+  expect(tooltip.text()).toContain('Cache breakpoint dropped')
+  expect(tooltip.text()).toContain('×2')
+  expect(tooltip.text()).toContain('Replay token dropped')
+  expect(tooltip.text()).toContain('×1')
+
+  // Pointer exit leaves a click-pinned tooltip open until the info button is clicked again.
+  await infoButton.trigger('mouseleave')
+  expect(adminWrapper.find('[data-testid="protocol-conversion-tooltip"]').exists()).toBe(true)
+
+  await otherButton.trigger('mouseenter')
+  await nextTick()
+  expect(tooltip.text()).not.toContain('other-dialect')
+  await otherButton.trigger('click')
+  await nextTick()
+  expect(tooltip.text()).toContain('other-dialect')
+
+  // A second click on the newly pinned row closes its panel.
+  await otherButton.trigger('click')
+  await nextTick()
+  await nextMotionFrame()
+  expect(adminWrapper.find('[data-testid="protocol-conversion-tooltip"]').exists()).toBe(false)
+  adminWrapper.unmount()
 })

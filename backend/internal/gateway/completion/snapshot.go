@@ -75,6 +75,7 @@ func SnapshotResult(in *Result) *Result {
 	out.ReasoningEffort = cloneString(in.ReasoningEffort)
 	out.RequestedReasoningEffort = cloneString(in.RequestedReasoningEffort)
 	out.Timings = in.Timings.Clone()
+	out.ProtocolConversion = in.ProtocolConversion.Clone()
 	out.ImageOutputSizes = slices.Clone(in.ImageOutputSizes)
 	out.ImageSizeBreakdown = maps.Clone(in.ImageSizeBreakdown)
 	if in.AudioUsage != nil {

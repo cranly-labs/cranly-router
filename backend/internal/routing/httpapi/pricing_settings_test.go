@@ -28,10 +28,10 @@ func TestBillingSettingsRequestPreservesNullablePrices(t *testing.T) {
 		require.Equal(t, tc.price, patch.WebSearchPricePerCall.Value)
 	}
 	var req createPricingConfigRequest
-	require.NoError(t, json.Unmarshal([]byte(`{"long_context_pricing_enabled":false,"free_openai_fast":true,"batch_image_discount_multiplier":0}`), &req))
+	require.NoError(t, json.Unmarshal([]byte(`{"peak_rate_enabled":true,"peak_start":"09:00","peak_end":"17:00","long_context_pricing_enabled":false,"batch_image_discount_multiplier":0}`), &req))
 	settings := pricing.DefaultBillingSettings()
 	require.NoError(t, req.patch().Apply(&settings))
+	require.True(t, settings.PeakRateEnabled)
 	require.False(t, settings.LongContextPricingEnabled)
-	require.True(t, settings.FreeOpenAIFast)
 	require.Zero(t, settings.BatchImageDiscountMultiplier)
 }

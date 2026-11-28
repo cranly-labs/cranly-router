@@ -131,7 +131,7 @@ OAuth 直接复用站点的 `frontend_url`（后台非空值优先，未填用�
 
 - 明确保留字段：已登记的 token 数量、限制、价格、配置开关、凭据存在标记及 API Key 管理元数据按明确字段名和 JSON 类型保留；`null` 保留为空值（如定价区间 `max_tokens:null` 表无上限）。元数据对象和数组继续递归检查内部凭据，异常类型不放行。
 - 跨协议归一化：字段归一化兼容大小写和分隔符，多协议同名时分别登记允许结构（如 OpenAI `prompt_tokens_details` 对象与 Gemini `promptTokensDetails` 数组均保持可读，内部凭据仍遮蔽）。
-- 特定保留类型：审计 `extra.mcp_token_id` 保留数字类型，提供商 `session_token_present` 和 `antigravity_force_token_refresh` 保留布尔类型。
+- 特定保留类型：审计 `extra.mcp_token_id` 与协议转换损失计数 `replay_token_dropped` 保留数字类型，提供商 `session_token_present` 和 `antigravity_force_token_refresh` 保留布尔类型。
 - 歧义名称路径约束：`key`、`code`、`authorization` 另须匹配操作和字段路径，默认价格项标识、用户属性键、运维锁名、协议授权类别、HTTP 错误码和 SSE 错误事件码可读，凭据或其他嵌套位置继续遮蔽。真实凭据不因值为数字或布尔放行；处理不改原响应或确认参数，不将数字字符串转数值。
 
 ### 受保护文件与上传

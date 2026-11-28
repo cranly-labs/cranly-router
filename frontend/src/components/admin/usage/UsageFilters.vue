@@ -191,7 +191,7 @@
             />
           </FilterField>
 
-          <!-- Error HTTP status selector. -->
+          <!-- Client HTTP status selector. -->
           <FilterField
             v-if="mode === 'errors'"
             :label="t('admin.ops.errorLog.status')"
@@ -201,6 +201,20 @@
               :model-value="filters.status_code ?? null"
               :options="statusCodeOptions"
               @update:model-value="filters.status_code = $event"
+              @change="emitChange"
+            />
+          </FilterField>
+
+          <!-- Upstream HTTP status selector. -->
+          <FilterField
+            v-if="mode === 'errors'"
+            :label="t('admin.ops.errorLog.upstreamStatus')"
+            icon="exclamationCircle"
+          >
+            <FilterOptions
+              :model-value="filters.upstream_status_code ?? null"
+              :options="upstreamStatusCodeOptions"
+              @update:model-value="filters.upstream_status_code = $event"
               @change="emitChange"
             />
           </FilterField>
@@ -430,6 +444,10 @@ const activeFilterCount = computed(
           key === 'native_compaction_v2' &&
           (props.mode === 'errors' || props.mode === 'cleanup')
         ) &&
+        !(
+          ['error_phase', 'error_category', 'status_code', 'upstream_status_code'].includes(key) &&
+          props.mode !== 'errors'
+        ) &&
         value !== null &&
         value !== undefined &&
         String(value) !== '',
@@ -524,10 +542,19 @@ const errorCategoryOptions = computed<SelectOption[]>(() =>
   ),
 )
 
-// statusCodeOptions uses common status codes independently of current rows so later-page
-// errors remain selectable.
+// statusCodeOptions includes HTTP 200 for in-band stream errors alongside common client
+// failure status codes so later-page errors remain selectable.
 const statusCodeOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('usage.errors.allStatuses') },
+  { value: 200, label: '200' },
+  ...COMMON_ERROR_STATUS_CODES.map((c) => ({ value: c, label: String(c) })),
+])
+
+// upstreamStatusCodeOptions adds pre-dispatch zero before common HTTP error statuses so
+// credential failures and upstream responses remain selectable across pages.
+const upstreamStatusCodeOptions = computed<SelectOption[]>(() => [
+  { value: null, label: t('usage.errors.allUpstreamStatuses') },
+  { value: 0, label: '0' },
   ...COMMON_ERROR_STATUS_CODES.map((c) => ({ value: c, label: String(c) })),
 ])
 

@@ -16,6 +16,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
@@ -204,6 +205,7 @@ func (s *Antigravity) ForwardConverted(
 		s.writeAntigravityConvertedClientError(c, source, originalModel, http.StatusBadRequest, "invalid_request_error", "", err.Error())
 		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(fmt.Errorf("encode converted antigravity request: %w", err))
 	}
+	upstream.ObserveExchangeConversion(modelCtx, exchange)
 
 	customIdentityPrompt := ""
 	if s.Gateway != nil {
@@ -351,6 +353,7 @@ func (s *Antigravity) ForwardConverted(
 				projectID,
 				accessToken,
 				customIdentityPrompt,
+				exchange,
 				body,
 				reqState,
 				geminiBody,
@@ -425,6 +428,7 @@ func (s *Antigravity) ForwardConverted(
 		Stream:                clientStream,
 		Duration:              result.Duration,
 		Timings:               result.Timings,
+		ProtocolConversion:    result.ProtocolConversion,
 		ReasoningEffort:       reasoningEffort,
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,
@@ -497,6 +501,7 @@ func (s *Antigravity) recoverAntigravityConvertedGemini(
 	targetProvider *gatewayprovider.ExecutionProvider,
 	source protocol.ProtocolID,
 	originalModel, mappedModel, projectID, accessToken, customIdentityPrompt string,
+	exchange *convert.Exchange,
 	clientBody []byte,
 	reqState modelrules.RequestState,
 	injectedGeminiBody []byte,
@@ -505,6 +510,7 @@ func (s *Antigravity) recoverAntigravityConvertedGemini(
 	resp *http.Response,
 ) (*http.Response, *convert.Exchange, error) {
 	var fallbackExchange *convert.Exchange
+	var droppedTokens int
 	recovered, err := antigravity.RecoverGemini(ctx, antigravity.GeminiRecoveryInput{
 		ProviderID:   targetProvider.Record.ID,
 		ProviderName: targetProvider.Record.Name,
@@ -560,9 +566,13 @@ func (s *Antigravity) recoverAntigravityConvertedGemini(
 				fbPatched = fbCleaned
 			}
 			fallbackExchange = fbEx
+			telemetry.ReplaceProtocolConversion(ctx, upstream.ExchangeConversion(fbEx))
 			return fbPatched, nil
 		},
 		Retry: func(retryBody []byte) (*http.Response, error) {
+			// The wrapper has been built successfully. Bind the token replacements
+			// to this dispatch before the transport captures its attempt snapshot.
+			upstream.StageSignatureRetry(ctx, exchange, droppedTokens, 0)
 			next := params
 			next.Body = retryBody
 			value, rErr := retry.AntigravityRetryLoop(next)
@@ -586,7 +596,9 @@ func (s *Antigravity) recoverAntigravityConvertedGemini(
 		},
 		IsModelNotFound: upstream.IsModelNotFoundOrBare404,
 		CleanSignatures: func(rawBody []byte) []byte {
-			return replaceGeminiThoughtSignaturesLossless(rawBody, gemini.DummyThoughtSignature)
+			cleaned, count := replaceGeminiThoughtSignaturesLossless(rawBody, gemini.DummyThoughtSignature)
+			droppedTokens = count
+			return cleaned
 		},
 		ReadErrorBody: s.readUpstreamErrorBody,
 		ErrorDetail:   s.getUpstreamErrorDetail,
@@ -852,31 +864,31 @@ func (s *Antigravity) classifyAntigravityConvertedStreamFailure(
 	}, false
 }
 
-// replaceGeminiThoughtSignaturesLossless rewrites every exact "thoughtSignature"
-// object member value in body to placeholder via jsontext token streaming,
-// preserving 64-bit integer literals and member ordering in the inner Gemini
-// payload before WrapV1InternalRequest envelope serialization. Empty or
-// syntactically invalid inputs return body unchanged.
-func replaceGeminiThoughtSignaturesLossless(body []byte, placeholder string) []byte {
+// replaceGeminiThoughtSignaturesLossless replaces part-level Gemini signatures
+// and counts nonempty tokens that differ from the placeholder. Invalid JSON
+// returns the original bytes and zero losses. Tool argument fields with the
+// same name retain their application-defined values.
+func replaceGeminiThoughtSignaturesLossless(body []byte, placeholder string) ([]byte, int) {
 	if len(body) == 0 {
-		return body
+		return body, 0
 	}
 	dec := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowInvalidUTF8(true))
 	var out bytes.Buffer
+	var count int
 	enc := jsontext.NewEncoder(&out, jsontext.AllowInvalidUTF8(true))
-	if err := rewriteThoughtSignaturesTokens(dec, enc, placeholder); err != nil {
-		return body
+	if err := rewriteThoughtSignaturesTokens(dec, enc, placeholder, &count); err != nil {
+		return body, 0
 	}
 	if _, err := dec.ReadToken(); err != io.EOF {
-		return body
+		return body, 0
 	}
-	return bytes.TrimRight(out.Bytes(), "\n")
+	return bytes.TrimRight(out.Bytes(), "\n"), count
 }
 
 // rewriteThoughtSignaturesTokens copies one complete JSON value from dec to enc
-// while replacing exact "thoughtSignature" object member values with placeholder.
+// while replacing contents[*].parts[*].thoughtSignature values with placeholder.
 // Syntax errors or writer failures propagate to the caller so malformed inputs abort cleanly.
-func rewriteThoughtSignaturesTokens(dec *jsontext.Decoder, enc *jsontext.Encoder, placeholder string) error {
+func rewriteThoughtSignaturesTokens(dec *jsontext.Decoder, enc *jsontext.Encoder, placeholder string, count *int) error {
 	switch dec.PeekKind() {
 	case '{':
 		tok, err := dec.ReadToken()
@@ -895,16 +907,20 @@ func rewriteThoughtSignaturesTokens(dec *jsontext.Decoder, enc *jsontext.Encoder
 			if err := enc.WriteToken(jsontext.String(key)); err != nil {
 				return err
 			}
-			if key == "thoughtSignature" {
-				if err := dec.SkipValue(); err != nil {
+			if key == "thoughtSignature" && isGeminiPartSignature(dec) && dec.PeekKind() == '"' {
+				signature, err := dec.ReadToken()
+				if err != nil {
 					return err
+				}
+				if original := signature.String(); original != "" && original != placeholder {
+					*count++
 				}
 				if err := enc.WriteToken(jsontext.String(placeholder)); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := rewriteThoughtSignaturesTokens(dec, enc, placeholder); err != nil {
+			if err := rewriteThoughtSignaturesTokens(dec, enc, placeholder, count); err != nil {
 				return err
 			}
 		}
@@ -923,7 +939,7 @@ func rewriteThoughtSignaturesTokens(dec *jsontext.Decoder, enc *jsontext.Encoder
 			return err
 		}
 		for dec.PeekKind() != ']' {
-			if err := rewriteThoughtSignaturesTokens(dec, enc, placeholder); err != nil {
+			if err := rewriteThoughtSignaturesTokens(dec, enc, placeholder, count); err != nil {
 				return err
 			}
 		}
@@ -1167,4 +1183,17 @@ func antigravityCredentialRejectedError(resp *http.Response, body []byte) *forwa
 		ClientStatusCode:   http.StatusBadGateway,
 		ClientMessage:      forwardcore.AntigravityCredentialRejectedClientMessage,
 	}
+}
+
+// isGeminiPartSignature identifies signature member names immediately after
+// reading their key. Both array levels are required so a tool argument or
+// schema property named thoughtSignature cannot be counted or rewritten.
+func isGeminiPartSignature(dec *jsontext.Decoder) bool {
+	if dec.StackDepth() != 5 {
+		return false
+	}
+	contents, _ := dec.StackIndex(2)
+	parts, _ := dec.StackIndex(4)
+	path := dec.StackPointer().Parent().Parent()
+	return contents == '[' && parts == '[' && path.LastToken() == "parts" && path.Parent().Parent() == "/contents"
 }

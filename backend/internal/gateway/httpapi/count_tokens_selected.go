@@ -152,6 +152,7 @@ func forwardGeminiMessagesCount(
 		WriteAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "", err.Error())
 		return err
 	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	patchedBody, request, err := wrapGeminiCountTokensRequestBytes(geminiBody, upstreamModel)
 	if err != nil {

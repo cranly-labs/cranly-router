@@ -82,6 +82,7 @@ func ToForwardResult(result *Result) *forwardcore.OpenAIResult {
 		Stream:                      result.Stream,
 		Duration:                    result.Duration,
 		Timings:                     result.Timings,
+		ProtocolConversion:          result.ProtocolConversion,
 		ImageCount:                  result.ImageCount,
 		ImageFrameCount:             result.ImageFrameCount,
 		ImageSize:                   result.ImageSize,
@@ -138,6 +139,7 @@ func FromForwardResult(r *forwardcore.OpenAIResult) *Result {
 		Stream:                      r.Stream,
 		Duration:                    r.Duration,
 		Timings:                     r.Timings,
+		ProtocolConversion:          r.ProtocolConversion,
 		ClientDisconnect:            r.ClientDisconnect,
 		SearchCount:                 r.SearchCount,
 		ImageCount:                  r.ImageCount,
@@ -178,6 +180,7 @@ func FromCompatResult(r *openai.CompatResponseResult, billing string) *Result {
 		ReasoningEffort:             r.ReasoningEffort,
 		Stream:                      r.Stream,
 		Duration:                    r.Duration,
+		ProtocolConversion:          r.ProtocolConversion,
 		ClientDisconnect:            r.ClientDisconnect,
 		SearchCount:                 r.SearchCount,
 	}

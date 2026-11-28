@@ -53601,6 +53601,7 @@ type UsageLogMutation struct {
 	cache_creation_12h_tokens    *int
 	addcache_creation_12h_tokens *int
 	cache_write_anomaly          *map[string]interface{}
+	protocol_conversion          *map[string]interface{}
 	input_cost                   *float64
 	addinput_cost                *float64
 	output_cost                  *float64
@@ -55405,6 +55406,55 @@ func (m *UsageLogMutation) ResetCacheWriteAnomaly() {
 	delete(m.clearedFields, usagelog.FieldCacheWriteAnomaly)
 }
 
+// SetProtocolConversion sets the "protocol_conversion" field.
+func (m *UsageLogMutation) SetProtocolConversion(value map[string]interface{}) {
+	m.protocol_conversion = &value
+}
+
+// ProtocolConversion returns the value of the "protocol_conversion" field in the mutation.
+func (m *UsageLogMutation) ProtocolConversion() (r map[string]interface{}, exists bool) {
+	v := m.protocol_conversion
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProtocolConversion returns the old "protocol_conversion" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldProtocolConversion(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProtocolConversion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProtocolConversion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProtocolConversion: %w", err)
+	}
+	return oldValue.ProtocolConversion, nil
+}
+
+// ClearProtocolConversion clears the value of the "protocol_conversion" field.
+func (m *UsageLogMutation) ClearProtocolConversion() {
+	m.protocol_conversion = nil
+	m.clearedFields[usagelog.FieldProtocolConversion] = struct{}{}
+}
+
+// ProtocolConversionCleared returns if the "protocol_conversion" field was cleared in this mutation.
+func (m *UsageLogMutation) ProtocolConversionCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldProtocolConversion]
+	return ok
+}
+
+// ResetProtocolConversion resets all changes to the "protocol_conversion" field.
+func (m *UsageLogMutation) ResetProtocolConversion() {
+	m.protocol_conversion = nil
+	delete(m.clearedFields, usagelog.FieldProtocolConversion)
+}
+
 // SetInputCost sets the "input_cost" field.
 func (m *UsageLogMutation) SetInputCost(f float64) {
 	m.input_cost = &f
@@ -57133,7 +57183,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 61)
+	fields := make([]string, 0, 62)
 	if m.image_frame_count != nil {
 		fields = append(fields, usagelog.FieldImageFrameCount)
 	}
@@ -57229,6 +57279,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.cache_write_anomaly != nil {
 		fields = append(fields, usagelog.FieldCacheWriteAnomaly)
+	}
+	if m.protocol_conversion != nil {
+		fields = append(fields, usagelog.FieldProtocolConversion)
 	}
 	if m.input_cost != nil {
 		fields = append(fields, usagelog.FieldInputCost)
@@ -57389,6 +57442,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheCreation12hTokens()
 	case usagelog.FieldCacheWriteAnomaly:
 		return m.CacheWriteAnomaly()
+	case usagelog.FieldProtocolConversion:
+		return m.ProtocolConversion()
 	case usagelog.FieldInputCost:
 		return m.InputCost()
 	case usagelog.FieldOutputCost:
@@ -57520,6 +57575,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCacheCreation12hTokens(ctx)
 	case usagelog.FieldCacheWriteAnomaly:
 		return m.OldCacheWriteAnomaly(ctx)
+	case usagelog.FieldProtocolConversion:
+		return m.OldProtocolConversion(ctx)
 	case usagelog.FieldInputCost:
 		return m.OldInputCost(ctx)
 	case usagelog.FieldOutputCost:
@@ -57810,6 +57867,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCacheWriteAnomaly(v)
+		return nil
+	case usagelog.FieldProtocolConversion:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProtocolConversion(v)
 		return nil
 	case usagelog.FieldInputCost:
 		v, ok := value.(float64)
@@ -58428,6 +58492,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldCacheWriteAnomaly) {
 		fields = append(fields, usagelog.FieldCacheWriteAnomaly)
 	}
+	if m.FieldCleared(usagelog.FieldProtocolConversion) {
+		fields = append(fields, usagelog.FieldProtocolConversion)
+	}
 	if m.FieldCleared(usagelog.FieldBillingAllocations) {
 		fields = append(fields, usagelog.FieldBillingAllocations)
 	}
@@ -58537,6 +58604,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldCacheWriteAnomaly:
 		m.ClearCacheWriteAnomaly()
+		return nil
+	case usagelog.FieldProtocolConversion:
+		m.ClearProtocolConversion()
 		return nil
 	case usagelog.FieldBillingAllocations:
 		m.ClearBillingAllocations()
@@ -58680,6 +58750,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldCacheWriteAnomaly:
 		m.ResetCacheWriteAnomaly()
+		return nil
+	case usagelog.FieldProtocolConversion:
+		m.ResetProtocolConversion()
 		return nil
 	case usagelog.FieldInputCost:
 		m.ResetInputCost()

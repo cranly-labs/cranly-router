@@ -30,12 +30,7 @@ import (
 // settings are cloned, and an unmatched card can still use that resolver's
 // configuration. The helper makes group selection and card fallback visible
 // while production billing calculates interval amounts, service-tier factors,
-// and user funding.
-//
-// Free Fast requires the marketplace and user allocation to use Standard
-// amounts even when the retained request cost uses Fast rates. The assertions
-// inspect those distinct amounts, cache-TTL inheritance, and quote results
-// using the same configured cards and selected billing instants.
+// cache-TTL inheritance, and public quotes at the selected billing instants.
 
 // configuredPrices supplies one group's settings and cards with
 // optional base-resolver lookup.
@@ -57,98 +52,81 @@ type configuredPrices struct {
 	cards []routing.ModelPricingEntry // ordered shared model cards
 }
 
-// TestGroupPricingFreeFastWithIntervalsAndTurnTime records priority usage in a
-// configured interval and discounted UTC period. It checks Free Fast user
+// TestGroupPricingFastWithIntervalsAndTurnTime records priority usage in a
+// configured interval and discounted UTC period. It checks Fast user
 // allocation, retained Fast total cost, public interval prices, and the
 // resolver's Fast factor.
-func TestGroupPricingFreeFastWithIntervalsAndTurnTime(t *testing.T) {
-	for _, free := range []bool{false, true} {
-		t.Run(fmt.Sprint(free), func(t *testing.T) {
-			usageRepo := &testkit.UsageLogStore{Inserted: true}
-			svc := newOpenAIRecordUsageServiceForTest(usageRepo, &testkit.UserStore{}, &testkit.SubscriptionStore{}, nil)
-			svc.Dependencies.Prices = billingtestkit.PriceResolver(nil, svc.Dependencies.Calculator)
-			groupID := int64(88)
-			tier := "priority"
-			group := configureBillingGroup(svc, &routing.Group{
-				ID:             groupID,
-				Hydrated:       true,
-				Status:         billing.StatusActive,
-				RateMultiplier: 0.5,
-			}, pricing.BillingSettings{
-				FreeOpenAIFast:               free,
-				LongContextPricingEnabled:    true,
-				PeakRateMultiplier:           1,
-				BatchImageDiscountMultiplier: 0.5,
-				BatchImageHoldMultiplier:     0.6,
-			}, []routing.ModelPricingEntry{{
-				Models: []string{"gpt-5.6-sol"}, BillingMode: routing.BillingModeToken,
-				FastMultiplier: testPtrFloat64(3), MaxReasoningEffortMultiplier: testPtrFloat64(2),
-				Intervals: []routing.PricingInterval{
-					{MinTokens: 0, MaxTokens: testPtrInt(50), InputPrice: testPtrFloat64(0.001), OutputPrice: testPtrFloat64(0)},
-					{MinTokens: 50, InputPrice: testPtrFloat64(0.002), OutputPrice: testPtrFloat64(0)},
-				},
-				TimePricing: &routing.TimePricingConfig{Timezone: "UTC", Periods: []routing.TimePricingPeriod{{StartTime: "01:00", EndTime: "02:00", Multiplier: 0.5}}},
-			}})
-			err := svc.RecordOpenAI(context.Background(), &gatewaycapture.OpenAICapture{
-				Result: &forwardcore.OpenAIResult{
-					RequestID: "resp_group_pricing", Model: "gpt-5.6-sol", ServiceTier: &tier,
-					Usage: openai.ForwardUsage{InputTokens: 100}, Duration: time.Second,
-				},
-				APIKey: &apikey.APIKey{ID: 1020, GroupID: &groupID, Group: group}, User: &identity.User{ID: 2020},
-				Provider:  gatewaycapture.ExecutionCompletionRecord(&gatewaycapture.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 3020, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}),
-				PricingAt: time.Date(2026, 9, 9, 1, 30, 0, 0, time.UTC),
-			})
-			require.NoError(t, err)
-			standardTotal := 100 * 0.002 * 0.5
-			wantBase := standardTotal * 3
-			if free {
-				wantBase = standardTotal
-			}
-			// Model and funding USD totals allow rounding in
-			// combined pricing factors.
-			require.InDelta(t, standardTotal*3, usageRepo.LastLog.TotalCost, 1e-12)
-			require.InDelta(t, wantBase*0.5, usageRepo.LastLog.ActualCost, 1e-12)
-			cmd := requireOpenAIRecordUsageBillingRepoStub(t, svc).LastCmd
-			// Model and funding USD totals allow rounding in
-			// combined pricing factors.
-			require.InDelta(t, wantBase, cmd.BaseAmountUSD, 1e-12)
-			require.InDelta(t, wantBase*0.5, cmd.BillableAmountUSD, 1e-12)
-			// Public quotes use the user's Free Fast view. Resolve the card
-			// again afterward to check that quoting leaves its
-			// Fast multiplier available.
-			market := newPricingMarketplaceFixture(nil, nil, svc.Dependencies.Prices, svc.Dependencies.Calculator, nil, nil, nil)
-			display := market.PublicModelPricing(context.Background(), group, "gpt-5.6-sol")
-			require.Len(t, display.ContextIntervals, 2)
-			ratio := 3.0
-			if free {
-				ratio = 1
-			}
-			// Displayed USD-per-token rates use an absolute tolerance
-			// for multiplier rounding.
-			require.InDelta(t, display.ContextIntervals[1].InputPricePerToken*ratio, display.ContextIntervals[1].FastInputPricePerToken, 1e-12)
-			resolved := svc.Dependencies.Prices.Resolve(context.Background(), billing.PricingInput{Model: "gpt-5.6-sol", GroupID: &group.ID})
-			require.Equal(t, 3.0, *resolved.BasePricing.FastMultiplier)
-		})
-	}
+func TestGroupPricingFastWithIntervalsAndTurnTime(t *testing.T) {
+	usageRepo := &testkit.UsageLogStore{Inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &testkit.UserStore{}, &testkit.SubscriptionStore{}, nil)
+	svc.Dependencies.Prices = billingtestkit.PriceResolver(nil, svc.Dependencies.Calculator)
+	groupID := int64(88)
+	tier := "priority"
+	group := configureBillingGroup(svc, &routing.Group{
+		ID:             groupID,
+		Hydrated:       true,
+		Status:         billing.StatusActive,
+		RateMultiplier: 0.5,
+	}, pricing.BillingSettings{
+		LongContextPricingEnabled:    true,
+		PeakRateMultiplier:           1,
+		BatchImageDiscountMultiplier: 0.5,
+		BatchImageHoldMultiplier:     0.6,
+	}, []routing.ModelPricingEntry{{
+		Models: []string{"gpt-5.6-sol"}, BillingMode: routing.BillingModeToken,
+		FastMultiplier: testPtrFloat64(3), MaxReasoningEffortMultiplier: testPtrFloat64(2),
+		Intervals: []routing.PricingInterval{
+			{MinTokens: 0, MaxTokens: testPtrInt(50), InputPrice: testPtrFloat64(0.001), OutputPrice: testPtrFloat64(0)},
+			{MinTokens: 50, InputPrice: testPtrFloat64(0.002), OutputPrice: testPtrFloat64(0)},
+		},
+		TimePricing: &routing.TimePricingConfig{Timezone: "UTC", Periods: []routing.TimePricingPeriod{{StartTime: "01:00", EndTime: "02:00", Multiplier: 0.5}}},
+	}})
+	err := svc.RecordOpenAI(context.Background(), &gatewaycapture.OpenAICapture{
+		Result: &forwardcore.OpenAIResult{
+			RequestID: "resp_group_pricing", Model: "gpt-5.6-sol", ServiceTier: &tier,
+			Usage: openai.ForwardUsage{InputTokens: 100}, Duration: time.Second,
+		},
+		APIKey: &apikey.APIKey{ID: 1020, GroupID: &groupID, Group: group}, User: &identity.User{ID: 2020},
+		Provider:  gatewaycapture.ExecutionCompletionRecord(&gatewaycapture.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 3020, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}),
+		PricingAt: time.Date(2026, 9, 9, 1, 30, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	standardTotal := 100 * 0.002 * 0.5
+	wantBase := standardTotal * 3
+	// Model and funding USD totals allow rounding in combined pricing factors.
+	require.InDelta(t, wantBase, usageRepo.LastLog.TotalCost, 1e-12)
+	require.InDelta(t, wantBase*0.5, usageRepo.LastLog.ActualCost, 1e-12)
+	cmd := requireOpenAIRecordUsageBillingRepoStub(t, svc).LastCmd
+	// Model and funding USD totals allow rounding in combined pricing factors.
+	require.InDelta(t, wantBase, cmd.BaseAmountUSD, 1e-12)
+	require.InDelta(t, wantBase*0.5, cmd.BillableAmountUSD, 1e-12)
+	// Resolve the card again after public quoting to check that quoting leaves
+	// its Fast multiplier unchanged.
+	market := newPricingMarketplaceFixture(nil, nil, svc.Dependencies.Prices, svc.Dependencies.Calculator, nil, nil, nil)
+	display := market.PublicModelPricing(context.Background(), group, "gpt-5.6-sol")
+	require.Len(t, display.ContextIntervals, 2)
+	// Displayed USD-per-token rates use an absolute tolerance for multiplier rounding.
+	require.InDelta(t, display.ContextIntervals[1].InputPricePerToken*3, display.ContextIntervals[1].FastInputPricePerToken, 1e-12)
+	resolved := svc.Dependencies.Prices.Resolve(context.Background(), billing.PricingInput{Model: "gpt-5.6-sol", GroupID: &group.ID})
+	require.Equal(t, 3.0, *resolved.BasePricing.FastMultiplier)
 }
 
-// TestConfigPricingFreeFastDisplayRespectsModelSupport quotes a custom model
-// with absent or explicitly zero Fast-mode metadata. It checks Standard
-// display pricing and whether Free Fast exposes a Fast price for each fixture.
-func TestConfigPricingFreeFastDisplayRespectsModelSupport(t *testing.T) {
+// TestConfigPricingFastDisplayRespectsModelSupport quotes a custom model with
+// absent, zero, and positive Fast-mode factors. It checks Standard display
+// pricing and the corresponding Fast token quote for each fixture.
+func TestConfigPricingFastDisplayRespectsModelSupport(t *testing.T) {
 	bs := billingtestkit.ResolverCalculator()
 	settings := pricing.DefaultBillingSettings()
-	settings.FreeOpenAIFast = true
 	group := &routing.Group{ID: 100, RateMultiplier: 1}
-	for _, factor := range []*float64{nil, testPtrFloat64(0)} {
+	for _, factor := range []*float64{nil, testPtrFloat64(0), testPtrFloat64(2)} {
 		r := billingtestkit.SharedPriceResolver(bs, group.ID, settings, []routing.ModelPricingEntry{{Models: []string{"embedding-parity"}, InputPrice: testPtrFloat64(0.02), FastModeMultiplier: factor}})
 		svc := newPricingMarketplaceFixture(nil, nil, r, bs, nil, nil, nil)
 		display := svc.PublicModelPricing(context.Background(), group, "embedding-parity")
 		require.Equal(t, 0.02, display.InputPricePerToken)
-		if factor == nil {
+		if factor == nil || *factor == 0 {
 			require.Zero(t, display.FastInputPricePerToken)
 		} else {
-			require.Equal(t, 0.02, display.FastInputPricePerToken)
+			require.InDelta(t, 0.04, display.FastInputPricePerToken, 1e-12)
 		}
 	}
 }
@@ -210,71 +188,63 @@ func TestConfiguredIntervalsPreserveDefaultPrices(t *testing.T) {
 	}
 }
 
-// TestFreeFastIntervalOnlyDisplayMatchesStandard quotes one or two custom
-// intervals with optional Free Fast. It checks displayed input/cache ratios
-// and confirms that a subsequent priority calculation retains the configured
-// Fast base amount.
-func TestFreeFastIntervalOnlyDisplayMatchesStandard(t *testing.T) {
+// TestIntervalOnlyFastDisplayPreservesSettlementMultiplier quotes one or two
+// custom intervals with a Fast multiplier. It checks displayed input and cache
+// ratios and confirms that a subsequent priority calculation retains the
+// configured Fast base amount.
+func TestIntervalOnlyFastDisplayPreservesSettlementMultiplier(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, tierCount := range []int{1, 2} {
-			for _, free := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/%d/free=%v", source, tierCount, free), func(t *testing.T) {
-					intervals := []routing.PricingInterval{{MinTokens: 0, InputPrice: testPtrFloat64(0.001), CacheReadPrice: testPtrFloat64(0.0001)}}
-					if tierCount == 2 {
-						intervals[0].MaxTokens = testPtrInt(100)
-						intervals = append(intervals, routing.PricingInterval{MinTokens: 100, InputPrice: testPtrFloat64(0.002), CacheReadPrice: testPtrFloat64(0.0002)})
-					}
-					card := routing.ModelPricingEntry{
-						Models: []string{"custom-priced"}, BillingMode: routing.BillingModeToken,
-						FastMultiplier: testPtrFloat64(3), Intervals: intervals,
-					}
-					err := (routing.PricingConfigValidation{LoadLocation: pricingprovider.LoadPricingLocation}).PricingEntries([]routing.ModelPricingEntry{card})
-					require.NoError(t, err)
-					group := &routing.Group{
-						ID:             100,
-						RateMultiplier: 0.5,
-					}
-					rCalculator := billingtestkit.ResolverCalculator()
-					settings := pricing.DefaultBillingSettings()
-					settings.FreeOpenAIFast = free
-					r := billingtestkit.SharedPriceResolver(rCalculator, group.ID, settings, []routing.ModelPricingEntry{card})
-					svc := newPricingMarketplaceFixture(nil, nil, r, rCalculator, nil, nil, nil)
-					display := svc.PublicModelPricing(context.Background(), group, "custom-priced")
-					require.Equal(t, "priced", display.PriceStatus)
-					ratio := 3.0
-					if free {
-						ratio = 1
-					}
-					if tierCount == 1 {
-						require.Empty(t, display.ContextIntervals)
+			t.Run(fmt.Sprintf("%s/%d", source, tierCount), func(t *testing.T) {
+				intervals := []routing.PricingInterval{{MinTokens: 0, InputPrice: testPtrFloat64(0.001), CacheReadPrice: testPtrFloat64(0.0001)}}
+				if tierCount == 2 {
+					intervals[0].MaxTokens = testPtrInt(100)
+					intervals = append(intervals, routing.PricingInterval{MinTokens: 100, InputPrice: testPtrFloat64(0.002), CacheReadPrice: testPtrFloat64(0.0002)})
+				}
+				card := routing.ModelPricingEntry{
+					Models: []string{"custom-priced"}, BillingMode: routing.BillingModeToken,
+					FastMultiplier: testPtrFloat64(3), Intervals: intervals,
+				}
+				err := (routing.PricingConfigValidation{LoadLocation: pricingprovider.LoadPricingLocation}).PricingEntries([]routing.ModelPricingEntry{card})
+				require.NoError(t, err)
+				group := &routing.Group{
+					ID:             100,
+					RateMultiplier: 0.5,
+				}
+				rCalculator := billingtestkit.ResolverCalculator()
+				settings := pricing.DefaultBillingSettings()
+				r := billingtestkit.SharedPriceResolver(rCalculator, group.ID, settings, []routing.ModelPricingEntry{card})
+				svc := newPricingMarketplaceFixture(nil, nil, r, rCalculator, nil, nil, nil)
+				display := svc.PublicModelPricing(context.Background(), group, "custom-priced")
+				require.Equal(t, "priced", display.PriceStatus)
+				if tierCount == 1 {
+					require.Empty(t, display.ContextIntervals)
+					// Displayed USD-per-token rates use an absolute
+					// tolerance for multiplier rounding.
+					require.InDelta(t, 0.001*group.RateMultiplier, display.InputPricePerToken, 1e-12)
+					require.InDelta(t, display.InputPricePerToken*3, display.FastInputPricePerToken, 1e-12)
+					require.InDelta(t, display.CacheReadPricePerToken*3, display.FastCacheReadPricePerToken, 1e-12)
+				} else {
+					require.Len(t, display.ContextIntervals, 2)
+					for i, interval := range display.ContextIntervals {
 						// Displayed USD-per-token rates use an absolute
 						// tolerance for multiplier rounding.
-						require.InDelta(t, 0.001*group.RateMultiplier, display.InputPricePerToken, 1e-12)
-						require.InDelta(t, display.InputPricePerToken*ratio, display.FastInputPricePerToken, 1e-12)
-						require.InDelta(t, display.CacheReadPricePerToken*ratio, display.FastCacheReadPricePerToken, 1e-12)
-					} else {
-						require.Len(t, display.ContextIntervals, 2)
-						for i, interval := range display.ContextIntervals {
-							// Displayed USD-per-token rates use an absolute
-							// tolerance for multiplier rounding.
-							require.InDelta(t, float64(i+1)*0.001*group.RateMultiplier, interval.InputPricePerToken, 1e-12)
-							require.InDelta(t, interval.InputPricePerToken*ratio, interval.FastInputPricePerToken, 1e-12)
-							require.InDelta(t, interval.CacheReadPricePerToken*ratio, interval.FastCacheReadPricePerToken, 1e-12)
-						}
+						require.InDelta(t, float64(i+1)*0.001*group.RateMultiplier, interval.InputPricePerToken, 1e-12)
+						require.InDelta(t, interval.InputPricePerToken*3, interval.FastInputPricePerToken, 1e-12)
+						require.InDelta(t, interval.CacheReadPricePerToken*3, interval.FastCacheReadPricePerToken, 1e-12)
 					}
-					// Calculate after quoting so the public Free Fast view
-					// cannot conceal an accidental mutation of the
-					// card's priority-cost multiplier.
-					cost, err := rCalculator.CalculateCostUnified(billing.CostInput{
-						Ctx: context.Background(), Model: "custom-priced", GroupID: &group.ID,
-						Tokens: pricing.UsageTokens{InputTokens: 50}, RateMultiplier: group.RateMultiplier, ServiceTier: "priority", Resolver: r,
-					})
-					require.NoError(t, err)
-					// Model and funding USD totals allow rounding in
-					// combined pricing factors.
-					require.InDelta(t, 50*0.001*3, cost.TotalCost, 1e-12)
+				}
+				// Calculate after quoting so public display assembly cannot conceal
+				// an accidental mutation of the card's priority-cost multiplier.
+				cost, err := rCalculator.CalculateCostUnified(billing.CostInput{
+					Ctx: context.Background(), Model: "custom-priced", GroupID: &group.ID,
+					Tokens: pricing.UsageTokens{InputTokens: 50}, RateMultiplier: group.RateMultiplier, ServiceTier: "priority", Resolver: r,
 				})
-			}
+				require.NoError(t, err)
+				// Model and funding USD totals allow rounding in
+				// combined pricing factors.
+				require.InDelta(t, 50*0.001*3, cost.TotalCost, 1e-12)
+			})
 		}
 	}
 }

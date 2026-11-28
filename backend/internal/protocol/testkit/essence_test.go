@@ -9,7 +9,7 @@ import (
 )
 
 // TestSupportedLossKindsCoversAllIRLosses reconciles a multi-turn EssenceDoc
-// pair using original unshifted source paths across all twenty-three canonical
+// pair using original unshifted source paths across the canonical
 // ir.LossKind handlers and injects silent text and schema mutations. Reported
 // losses must explain every difference without index drift, while unreported
 // edits or missing target schemas must fail verification.
@@ -36,6 +36,7 @@ func TestSupportedLossKindsCoversAllIRLosses(t *testing.T) {
 		ir.LossStopDropped,
 		ir.LossSystemRelocated,
 		ir.LossToolChoiceApproximated,
+		ir.LossToolHistoryInlined,
 		ir.LossToolLowered,
 		ir.LossToolPairingRepaired,
 	}

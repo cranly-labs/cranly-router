@@ -53,6 +53,9 @@ type Result struct {
 	// Timings owns the frozen observations of the exchange producing this usage.
 	// Completion clones it before asynchronous processing and never mutates its values.
 	Timings *timing.Performance
+	// ProtocolConversion carries bounded protocol transformation diagnostics for
+	// administrator usage logs; nil indicates pure lossless native passthrough.
+	ProtocolConversion *telemetry.ProtocolConversion
 
 	// UpstreamResponseModel retains the pre-conversion declaration; an empty
 	// value yields unknown mismatch evidence rather than a requested-model substitute.
@@ -159,8 +162,8 @@ type ProviderSnapshot struct {
 	// ResetForbiddenCounterOnSuccess clears accumulated forbidden evidence after
 	// a result is accepted, independently of the model's pricing policy.
 	ResetForbiddenCounterOnSuccess bool
-	// CredentialProviderID names a shadow's credential parent. OpenAI tier and
-	// free-Fast eligibility use that parent; usage attribution keeps this provider ID.
+	// CredentialProviderID names a shadow's credential parent. The parent's OAuth
+	// credentials determine how to interpret a default tier echoed by the upstream.
 	CredentialProviderID *int64
 	Notification         *billing.QuotaNotifyProvider // captured quota notification settings
 }
@@ -200,10 +203,6 @@ type GroupSnapshot struct {
 	// Location controls peak-window interpretation. SnapshotKey retains this
 	// pointer, so callers treat the supplied timezone object as immutable data.
 	Location *time.Location
-	// FreeOpenAIFast: standard-priced Fast enabled. SupportsOpenAIFast: group capability flag.
-	// Both flags participate with the credential provider's OpenAI classification
-	// and the billed premium tier before user allocation can use standard prices.
-	FreeOpenAIFast, SupportsOpenAIFast bool
 	// WebSearchPricePerCall: Alpha search dollars per call.
 	// SearchPricePer1k: search dollars per thousand operations.
 	// These optional prices distinguish inherited defaults from an explicitly free
@@ -311,8 +310,8 @@ type RateReader interface {
 // ProviderReader resolves the credential owner used by OpenAI billing policy.
 type ProviderReader interface {
 	// CredentialProvider returns the selected provider or its credential parent for
-	// OpenAI tier eligibility. A nil successful result supplies no OAuth or free-Fast
-	// eligibility; errors stop RecordOpenAI before cost calculation and settlement.
+	// OpenAI tier resolution. A nil result uses ordinary tier comparison. Lookup
+	// errors stop RecordOpenAI before cost calculation and settlement.
 	CredentialProvider(context.Context, ProviderSnapshot) (*ProviderSnapshot, error)
 }
 type (

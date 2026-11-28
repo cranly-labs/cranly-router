@@ -151,10 +151,10 @@ type PreludePorts interface {
 	// FlattenRequired reports whether declarations need lowering for the resolved
 	// transport policy.
 	FlattenRequired(TransportDecision, bool, bool) bool
-	// Flatten lowers namespace declarations and binds their response restoration
-	// names. Call it after ClearMappings so another provider's names are absent;
-	// errors produce the tools rejection before forwarding.
-	Flatten([]byte) ([]byte, error)
+	// Flatten lowers namespace declarations, stages conversion diagnostics on ctx,
+	// and binds response restoration names. Call it after ClearMappings so
+	// names from an earlier provider cannot affect the current response.
+	Flatten(context.Context, []byte) ([]byte, error)
 	// StripNamespacesRequired reports whether historical calls need namespace
 	// cleanup for this route.
 	StripNamespacesRequired(TransportDecision, bool) bool
@@ -280,7 +280,7 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 	// restoration state before historical tool calls are cleaned for that same
 	// route.
 	if p.FlattenRequired(value.Transport, profile.Passthrough, value.Compact) {
-		body, err = p.Flatten(body)
+		body, err = p.Flatten(ctx, body)
 		if err != nil {
 			p.Reject(Rejection{Status: 400, Type: "invalid_request_error", Message: err.Error(), Param: "tools", ObserveUpstream: true})
 			return nil, err

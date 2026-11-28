@@ -314,3 +314,51 @@ func TestPrepareNativeReplay_ResponsesAndWSSubScenarios(t *testing.T) {
 		require.Contains(t, string(outOther), "kept summary")
 	})
 }
+
+// TestPrepareNativeReplayWithStatus_DistinguishesMatchedCarriersFromLiterals
+// verifies that PrepareNativeReplayWithStatus reports applied=true for both
+// lossless matching carrier unpacking and lossy foreign stripping, while
+// reporting applied=false when "trc1:" appears only inside user prompt text.
+func TestPrepareNativeReplayWithStatus_DistinguishesMatchedCarriersFromLiterals(t *testing.T) {
+	carrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme: ir.SchemeAnthropic,
+		Data:   "sig_native_ok",
+		Text:   "step by step",
+	})
+	require.NoError(t, err)
+
+	// 1. Literal "trc1:" inside user message text does not trigger native_replay.
+	literalOnly := []byte(`{"model":"claude-sonnet-4-5","max_tokens":128,"messages":[{"role":"user","content":"Literal string ` + carrier + ` in prompt"}]}`)
+	outLit, lossesLit, appliedLit, err := PrepareNativeReplayWithStatus(Route{
+		Client:   protocol.ProtocolAnthropicMessages,
+		Upstream: protocol.ProtocolAnthropicMessages,
+		Dialect:  Dialect{ReplayScheme: ir.SchemeAnthropic},
+	}, literalOnly)
+	require.NoError(t, err)
+	require.False(t, appliedLit)
+	require.Empty(t, lossesLit)
+	require.Equal(t, literalOnly, outLit)
+
+	// 2. Matching carrier on thinking.signature unpacks losslessly and reports applied=true.
+	withMatchingCarrier := []byte(`{"model":"claude-sonnet-4-5","max_tokens":128,"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"step by step","signature":"` + carrier + `"},{"type":"text","text":"answer"}]},{"role":"user","content":"next"}]}`)
+	outMatch, lossesMatch, appliedMatch, err := PrepareNativeReplayWithStatus(Route{
+		Client:   protocol.ProtocolAnthropicMessages,
+		Upstream: protocol.ProtocolAnthropicMessages,
+		Dialect:  Dialect{ReplayScheme: ir.SchemeAnthropic},
+	}, withMatchingCarrier)
+	require.NoError(t, err)
+	require.True(t, appliedMatch)
+	require.Empty(t, lossesMatch)
+	require.Contains(t, string(outMatch), `"signature":"sig_native_ok"`)
+
+	// 3. Foreign scheme carrier strips thinking block, records loss, and reports applied=true.
+	outForeign, lossesForeign, appliedForeign, err := PrepareNativeReplayWithStatus(Route{
+		Client:   protocol.ProtocolAnthropicMessages,
+		Upstream: protocol.ProtocolAnthropicMessages,
+		Dialect:  Dialect{ReplayScheme: ir.SchemeGemini},
+	}, withMatchingCarrier)
+	require.NoError(t, err)
+	require.True(t, appliedForeign)
+	require.NotEmpty(t, lossesForeign)
+	require.NotContains(t, string(outForeign), "sig_native_ok")
+}

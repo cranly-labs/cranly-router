@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -323,7 +324,10 @@ func (e *UnifiedTextExecutor) forwardQoderConverted(
 		fresh, refreshErr := e.QoderRefresh.RefreshProviderSession(ctx, &target.Record)
 		if refreshErr == nil && fresh != nil {
 			target.Record = *fresh
-			result, err = forwardQoderAttempt(ctx, c, e.Qoder, &target.Record, body, source, true)
+			// The refreshed credential sends a newly converted request. Give that
+			// dispatch its own counters while retaining the original request recorder.
+			retryCtx := telemetry.WithProtocolConversionScope(ctx)
+			result, err = forwardQoderAttempt(retryCtx, c, e.Qoder, &target.Record, body, source, true)
 		}
 	}
 	if local, ok := errors.AsType[*qoder.RequestError](err); ok {
@@ -425,10 +429,14 @@ func nativeTextResult(value *forward.MessagesResult, endpoint string) *forward.O
 	return &forward.OpenAIResult{
 		RequestID: value.RequestID, UpstreamHeaders: value.UpstreamHeaders,
 		Model: value.Model, UpstreamModel: value.UpstreamModel, UpstreamEndpoint: endpoint,
-		NativeUsage: &usage,
-		Usage:       openaiwire.ForwardUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens, ImageOutputTokens: usage.ImageOutputTokens},
-		Stream:      value.Stream, Duration: value.Duration, Timings: value.Timings, ClientDisconnect: value.ClientDisconnect,
-		ReasoningEffort: value.ReasoningEffort, RequestedReasoningEffort: value.RequestedReasoningEffort,
+		NativeUsage:        &usage,
+		Usage:              openaiwire.ForwardUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens, ImageOutputTokens: usage.ImageOutputTokens},
+		Stream:             value.Stream,
+		Duration:           value.Duration,
+		Timings:            value.Timings,
+		ProtocolConversion: value.ProtocolConversion,
+		ClientDisconnect:   value.ClientDisconnect,
+		ReasoningEffort:    value.ReasoningEffort, RequestedReasoningEffort: value.RequestedReasoningEffort,
 		ServiceTier:                 value.ServiceTier,
 		UpstreamResponseServiceTier: value.UpstreamResponseServiceTier,
 		UpstreamResponseModel:       value.UpstreamResponseModel,

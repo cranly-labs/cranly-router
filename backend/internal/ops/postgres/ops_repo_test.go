@@ -184,17 +184,27 @@ func TestProviderAuthFilterIncludesLegacyRows(t *testing.T) {
 }
 
 // TestOpsInsertErrorLogArgsPreservesExplicitZeroUpstreamStatus prepares a
-// credential observation carrying upstream status zero. It protects a valid
-// zero SQL integer in the shared insert's twenty-eighth argument slot.
+// credential observation carrying upstream status zero and client wire status
+// 200. It protects valid SQL integers in the shared insert's upstream and
+// client wire status argument slots.
 func TestOpsInsertErrorLogArgsPreservesExplicitZeroUpstreamStatus(t *testing.T) {
 	zero := 0
-	args := opsInsertErrorLogArgs(&ops.OpsInsertErrorLogInput{UpstreamStatusCode: &zero})
+	wireOK := 200
+	args := opsInsertErrorLogArgs(&ops.OpsInsertErrorLogInput{
+		ClientStatusCode:   &wireOK,
+		UpstreamStatusCode: &zero,
+	})
 
-	require.Len(t, args, 37)
+	require.Len(t, args, 38)
 	encoded, ok := args[27].(sql.NullInt64)
 	require.True(t, ok)
 	require.True(t, encoded.Valid)
 	require.Zero(t, encoded.Int64)
+
+	wireEncoded, ok := args[37].(sql.NullInt64)
+	require.True(t, ok)
+	require.True(t, wireEncoded.Valid)
+	require.EqualValues(t, 200, wireEncoded.Int64)
 }
 
 // TestOpsNullableIntPointerDistinguishesNilZeroAndStatus supplies missing,
@@ -460,6 +470,82 @@ func TestBuildOpsSystemLogsCleanupWhere_WithClientRequestIDAndUserID(t *testing.
 	if !contains(where, "l.api_key_id = $") {
 		t.Fatalf("where should include api_key_id condition: %s", where)
 	}
+}
+
+// TestBuildOpsErrorLogsWhere_ClientAndUpstreamStatusFilters exercises explicit
+// and Other-bucket selectors for client and upstream HTTP statuses. It protects
+// client_status_code precedence, cyber_policy upstream fallback, and separate
+// menu exclusion sets including client 200 and upstream 0.
+func TestBuildOpsErrorLogsWhere_ClientAndUpstreamStatusFilters(t *testing.T) {
+	clientExpr := opsEffectiveClientStatusSQL("e")
+	upstreamExpr := opsEffectiveUpstreamStatusSQL("e")
+
+	whereClient, argsClient := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{
+		StatusCodes: []int{502},
+		View:        "all",
+	})
+	require.Contains(t, whereClient, clientExpr+" = ANY($1)")
+	require.NotContains(t, whereClient, "upstream_status_code")
+	require.Len(t, argsClient, 1)
+
+	whereClientOther, argsClientOther := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{
+		StatusCodesOther: true,
+		View:             "all",
+	})
+	require.Contains(t, whereClientOther, "("+clientExpr+" > 0 AND NOT ("+clientExpr+" = ANY($1)))")
+	require.Len(t, argsClientOther, 1)
+	require.Contains(t, opsCommonClientStatusCodes, 200)
+
+	whereUpstream, argsUpstream := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{
+		UpstreamStatusCodes: []int{0, 429},
+		View:                "all",
+	})
+	require.Contains(t, whereUpstream, upstreamExpr+" = ANY($1)")
+	require.Len(t, argsUpstream, 1)
+
+	whereUpstreamOther, argsUpstreamOther := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{
+		UpstreamStatusCodesOther: true,
+		View:                     "all",
+	})
+	require.Contains(
+		t,
+		whereUpstreamOther,
+		"("+upstreamExpr+" IS NOT NULL AND NOT ("+upstreamExpr+" = ANY($1)))",
+	)
+	require.Len(t, argsUpstreamOther, 1)
+	require.Contains(t, opsCommonUpstreamStatusCodes, 0)
+
+	whereCombined, argsCombined := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{
+		Phase:                    "upstream",
+		IncludeRecoveredUpstream: true,
+		StatusCodes:              []int{200},
+		UpstreamStatusCodes:      []int{429},
+		View:                     "all",
+	})
+	require.Contains(t, whereCombined, clientExpr+" = ANY($2)")
+	require.Contains(t, whereCombined, upstreamExpr+" = ANY($3)")
+	require.Len(t, argsCombined, 3)
+}
+
+// TestOpsErrorLogsOrderBy_StatusAndUpstreamStatus checks order-by clauses for
+// client status_code and nullable upstream_status_code in both directions. It
+// protects effective client status ordering and NULLS LAST placement on
+// effective upstream status sorts with matching ID tie-breakers.
+func TestOpsErrorLogsOrderBy_StatusAndUpstreamStatus(t *testing.T) {
+	clientExpr := opsEffectiveClientStatusSQL("e")
+	upstreamExpr := opsEffectiveUpstreamStatusSQL("e")
+
+	clientAsc := &ops.OpsErrorLogFilter{SortBy: "status_code", SortOrder: "asc"}
+	require.Equal(t, clientExpr+" ASC, e.id ASC", opsErrorLogsOrderBy(clientAsc))
+
+	clientDesc := &ops.OpsErrorLogFilter{SortBy: "status_code", SortOrder: "desc"}
+	require.Equal(t, clientExpr+" DESC, e.id DESC", opsErrorLogsOrderBy(clientDesc))
+
+	upstreamAsc := &ops.OpsErrorLogFilter{SortBy: "upstream_status_code", SortOrder: "asc"}
+	require.Equal(t, upstreamExpr+" ASC NULLS LAST, e.id ASC", opsErrorLogsOrderBy(upstreamAsc))
+
+	upstreamDesc := &ops.OpsErrorLogFilter{SortBy: "upstream_status_code", SortOrder: "desc"}
+	require.Equal(t, upstreamExpr+" DESC NULLS LAST, e.id DESC", opsErrorLogsOrderBy(upstreamDesc))
 }
 
 // contains reports whether expected SQL text occurs within a supplied

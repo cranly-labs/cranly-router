@@ -43,11 +43,6 @@ type BillingSettings struct {
 	// because they are card prices.
 	// built-in context-pricing selection flag
 	LongContextPricingEnabled bool `json:"long_context_pricing_enabled"`
-	// FreeOpenAIFast lets eligible OpenAI Fast funding use Standard amounts in
-	// billing consumers. Fast total-cost reporting and provider-cost calculation
-	// retain their own prices.
-	// eligible OpenAI Fast funding policy
-	FreeOpenAIFast bool `json:"free_openai_fast"`
 	// batch-image estimated cost discount factor
 	BatchImageDiscountMultiplier float64 `json:"batch_image_discount_multiplier"`
 	// batch-image reservation scaling factor
@@ -65,9 +60,9 @@ type BillingSettings struct {
 }
 
 // DefaultBillingSettings returns policy values for an unconfigured billing
-// group. Long-context pricing is enabled, peak and free-Fast policy are
-// disabled, and batch-image discount and hold factors are 0.5 and 0.6. Optional
-// operation prices remain absent.
+// group. Long-context pricing is enabled, peak-rate pricing is disabled, and
+// batch-image discount and hold factors are 0.5 and 0.6. Optional operation
+// prices remain absent.
 func DefaultBillingSettings() BillingSettings {
 	return BillingSettings{
 		PeakRateMultiplier:           1,

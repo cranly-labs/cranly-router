@@ -322,6 +322,7 @@
           :show-provider-billing="false"
           :show-standard-cost="false"
           :show-upstream-endpoint="false"
+          :show-protocol-conversion="false"
           :user-clickable="false"
           :compact-user-column="isTeamOwner"
           :show-ip-geo-toolbar="false"
@@ -572,10 +573,11 @@ const errorCategoryOptions = computed<SelectOption[]>(() =>
   ),
 )
 
-// errorStatusOptions uses common status codes shared with administrator filters, keeping
-// codes selectable even when absent from the current page.
+// errorStatusOptions includes HTTP 200 for in-band stream errors alongside common status
+// codes shared with administrator filters, keeping codes selectable across pages.
 const errorStatusOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('usage.errors.allStatuses') },
+  { value: 200, label: '200' },
   ...COMMON_ERROR_STATUS_CODES.map((c) => ({ value: c, label: String(c) })),
 ])
 

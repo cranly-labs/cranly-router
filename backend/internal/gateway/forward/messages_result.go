@@ -3,6 +3,7 @@ package forward
 import (
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -30,12 +31,13 @@ type MessagesResult struct {
 	// mapping. It can equal Model when no mapping applies, and the Gemini wrapper
 	// retains its initial selection after provider-local model recovery. Empty
 	// leaves completion to its configured model-source and logical-model rules.
-	UpstreamModel    string
-	Stream           bool                // client streaming output mode
-	Duration         time.Duration       // forwarding elapsed duration
-	Timings          *timing.Performance // frozen exchange performance observations
-	ClientDisconnect bool                // observed client disconnect flag
-	ReasoningEffort  *string             // executed reasoning effort
+	UpstreamModel      string
+	Stream             bool                          // client streaming output mode
+	Duration           time.Duration                 // forwarding elapsed duration
+	Timings            *timing.Performance           // frozen exchange performance observations
+	ProtocolConversion *telemetry.ProtocolConversion // bounded protocol transformation diagnostics
+	ClientDisconnect   bool                          // observed client disconnect flag
+	ReasoningEffort    *string                       // executed reasoning effort
 	// RequestedReasoningEffort captures client effort before compatibility mapping.
 	// It remains separate from ReasoningEffort so completion can record requested
 	// and executed policies independently when a rewrite changes the effort.
@@ -85,5 +87,6 @@ func MessagesFromAttempt(result upstream.AttemptResult) *MessagesResult {
 		Duration:              result.Duration,
 		ClientDisconnect:      result.ClientDisconnect,
 		Timings:               result.Timings,
+		ProtocolConversion:    result.ProtocolConversion,
 	}
 }

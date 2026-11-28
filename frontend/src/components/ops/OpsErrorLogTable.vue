@@ -139,11 +139,17 @@
         <template #cell-status="{ row }">
           <div class="flex items-center gap-1.5">
             <span
+              v-if="row.status_code > 0"
               class="inline-flex items-center rounded-compact px-2 py-0.5 text-xs font-medium"
               :class="getStatusClass(row.status_code)"
             >
-              {{ row.status_code }}
+              {{
+                showsLegacyStreamStatus(row)
+                  ? t('usage.errors.fallbackStatus', { status: row.status_code })
+                  : row.status_code
+              }}
             </span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
             <span
               v-if="row.severity"
               :class="[
@@ -158,6 +164,17 @@
               >{{ formatRequestType(row.request_type) }}</span
             >
           </div>
+        </template>
+
+        <template #cell-upstream_status="{ row }">
+          <span
+            v-if="row.upstream_status_code != null"
+            class="inline-flex items-center rounded-compact px-2 py-0.5 text-xs font-medium"
+            :class="getStatusClass(row.upstream_status_code)"
+          >
+            {{ row.upstream_status_code }}
+          </span>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
         <template #cell-message="{ row }">
@@ -232,20 +249,22 @@ import type { OpsErrorLog } from '@/api/admin/ops'
 import type { Column } from '@/components/common/table/types'
 import { getSeverityClass, formatDateTime } from './opsErrorFormatting'
 import { mapErrorCategory } from '@/utils/errorCategory'
-import { mapErrorSortKey, statusCodeBadgeClass } from '@/utils/errorBadges'
+import { mapErrorSortKey, showsLegacyStreamStatus, statusCodeBadgeClass } from '@/utils/errorBadges'
 
 // OpsErrorLogTable.vue renders error rows with request identities, routing
-// context, status, and diagnostic messages. API keys and providers have separate
-// columns so a recorded caller remains distinct from the upstream execution
-// identity. The owner supplies pagination and receives mapped sort and
-// navigation events.
+// context, separate client and upstream HTTP statuses, and diagnostic messages.
+// API keys and providers have separate columns so a recorded caller remains
+// distinct from the upstream execution identity, while nullable upstream status
+// distinguishes absent upstream calls from explicit zero credential failures.
+// The owner supplies pagination and receives mapped sort and navigation events.
 
 // Translation supplies table labels while API rows and pagination remain
 // controlled by the component owner.
 const { t } = useI18n()
 
-// allColumns orders caller identities before request shape, outcome, timestamps,
-// correlation identifiers, and row actions for investigation.
+// allColumns orders caller identities before request shape, client and upstream
+// outcomes, timestamps, correlation identifiers, and row actions for
+// investigation.
 const allColumns = computed<Column[]>(() => [
   { key: 'user', label: t('admin.ops.errorLog.user') },
   { key: 'api_key', label: t('admin.ops.errorLog.apiKey') },
@@ -257,6 +276,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'type', label: t('admin.ops.errorLog.type') },
   { key: 'category', label: t('usage.errors.category') },
   { key: 'status', label: t('admin.ops.errorLog.status'), sortable: true },
+  { key: 'upstream_status', label: t('admin.ops.errorLog.upstreamStatus'), sortable: true },
   { key: 'message', label: t('admin.ops.errorLog.message') },
   { key: 'created_at', label: t('admin.ops.errorLog.time'), sortable: true },
   { key: 'request_id', label: t('requests.id') },

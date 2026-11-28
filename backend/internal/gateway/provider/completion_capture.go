@@ -224,6 +224,11 @@ func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input
 			out.Result.Timings = observed
 		}
 	}
+	if out.Result != nil && out.Result.ProtocolConversion == nil {
+		if observed := telemetry.ProtocolConversionFromContext(ctx); observed != nil {
+			out.Result.ProtocolConversion = observed
+		}
+	}
 	if in.Result != nil {
 		captureRequestIdentity(
 			ctx, out, in.Result.RequestID, in.Result.UpstreamHeaders,
@@ -266,6 +271,11 @@ func CaptureOpenAI(ctx context.Context, in *OpenAICapture) *completion.Input {
 	if out.Result != nil && out.Result.Timings == nil {
 		if observed := timing.PerformanceFromContext(ctx); observed != nil {
 			out.Result.Timings = observed
+		}
+	}
+	if out.Result != nil && out.Result.ProtocolConversion == nil {
+		if observed := telemetry.ProtocolConversionFromContext(ctx); observed != nil {
+			out.Result.ProtocolConversion = observed
 		}
 	}
 	if in.Result != nil {
@@ -410,12 +420,23 @@ func captureRequestIdentity(
 			if ref.Number == 0 && len(record.Attempts) == 0 && !childRequest {
 				ref = selected
 				ref.Number = 1
-				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: 1, ProviderID: ref.ProviderID, RequestIDHeader: ref.Header, Outcome: "completed"})
+				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{
+					Number:             1,
+					ProviderID:         ref.ProviderID,
+					RequestIDHeader:    ref.Header,
+					Outcome:            "completed",
+					ProtocolConversion: out.Result.ProtocolConversion.Clone(),
+				})
 			}
 			for i := range record.Attempts {
 				attempt := &record.Attempts[i]
-				if attempt.Number == ref.Number && attempt.ProviderID == ref.ProviderID && attempt.Outcome == "running" {
-					attempt.Outcome = "completed"
+				if attempt.Number == ref.Number && attempt.ProviderID == ref.ProviderID {
+					if attempt.Outcome == "running" {
+						attempt.Outcome = "completed"
+					}
+					if attempt.ProtocolConversion == nil && out.Result.ProtocolConversion != nil {
+						attempt.ProtocolConversion = out.Result.ProtocolConversion.Clone()
+					}
 				}
 			}
 		})

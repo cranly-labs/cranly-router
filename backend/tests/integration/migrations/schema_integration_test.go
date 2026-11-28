@@ -84,11 +84,11 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "providers", "session_window_status", "character varying", 20, true)
 	requireIndex(t, tx, "providers", "idx_providers_autopause_expiry_due")
 
-	// Live access belongs to groups; free Fast pricing belongs to
-	// pricing_configs.
+	// Live access belongs to groups; retired free-Fast columns remain absent
+	// from both groups and pricing_configs.
 	requireColumn(t, tx, "groups", "allow_live", "boolean", 0, false)
 	requireNoColumn(t, tx, "groups", "free_openai_fast")
-	requireColumn(t, tx, "pricing_configs", "free_openai_fast", "boolean", 0, false)
+	requireNoColumn(t, tx, "pricing_configs", "free_openai_fast")
 
 	// API keys support up to 128 characters.
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)

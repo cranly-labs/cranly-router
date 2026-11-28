@@ -281,14 +281,80 @@ describe('OpsErrorDetailModal', () => {
   // inspected.
   it('shows the upstream status of recovered attempts', async () => {
     mocks.listRequestErrorUpstreamErrors.mockResolvedValue({
-      items: [errorRecord(10, { status_code: 200, upstream_status_code: 429 })],
-      total: 1,
+      items: [
+        errorRecord(10, { status_code: 200, upstream_status_code: 429 }),
+        errorRecord(11, { status_code: 200, upstream_status_code: null }),
+        errorRecord(12, { status_code: 503, upstream_status_code: 0 }),
+      ],
+      total: 3,
     })
     const wrapper = mountDialog()
     await flushPromises()
     const attempt = wrapper.find('[data-testid="upstream-attempts"] li')
     expect(attempt.text()).toContain('429')
     expect(attempt.text()).not.toContain('200')
+    const badges = wrapper.findAll('[data-testid="upstream-attempts"] li .font-mono')
+    expect(badges.map((badge) => badge.text())).toEqual(['429', '—', '0'])
     wrapper.unmount()
+  })
+
+  // Summary badges pair the gateway client status with any recorded upstream
+  // status, including explicit zero on pre-dispatch credential failures. Both
+  // values must remain distinct in the rendered summary header.
+  it('displays client status_code separately from upstream_status_code in the summary', async () => {
+    mocks.getRequestErrorDetail.mockResolvedValueOnce(
+      errorRecord(1, { status_code: 503, upstream_status_code: 0 }),
+    )
+    const wrapper = mountDialog()
+    await flushPromises()
+    const summaryText = wrapper.find('[data-testid="error-summary"]').text()
+    expect(summaryText).toContain('admin.ops.errorDetail.status')
+    expect(summaryText).toContain('503')
+    expect(summaryText).toContain('admin.ops.errorDetail.upstreamStatus')
+    expect(summaryText).toContain('0')
+    wrapper.unmount()
+  })
+
+  // SSE terminal errors commit HTTP 200 before delivering an in-band failure,
+  // while historical stream records lack a separate saved client_status_code.
+  // Summary badges must show logical_status_code when wire 200 differs and show
+  // the fallback note only when historical stream records omit wire status.
+  it('shows logical status on HTTP 200 stream errors and explains historical stream fallback', async () => {
+    mocks.getRequestErrorDetail.mockResolvedValueOnce(
+      errorRecord(1, {
+        status_code: 200,
+        client_status_code: 200,
+        logical_status_code: 400,
+        upstream_status_code: 200,
+        stream: true,
+      }),
+    )
+    const liveStreamWrapper = mountDialog()
+    await flushPromises()
+    const liveSummary = liveStreamWrapper.find('[data-testid="error-summary"]').text()
+    expect(liveSummary).toContain('admin.ops.errorDetail.status')
+    expect(liveSummary).toContain('200')
+    expect(liveSummary).toContain('admin.ops.errorDetail.logicalStatus')
+    expect(liveSummary).toContain('400')
+    expect(liveStreamWrapper.find('[data-testid="historical-client-status-note"]').exists()).toBe(
+      false,
+    )
+    liveStreamWrapper.unmount()
+
+    mocks.getRequestErrorDetail.mockResolvedValueOnce(
+      errorRecord(2, {
+        status_code: 400,
+        client_status_code: null,
+        logical_status_code: 400,
+        upstream_status_code: 400,
+        stream: true,
+      }),
+    )
+    const legacyStreamWrapper = mountDialog({ errorId: 2 })
+    await flushPromises()
+    expect(legacyStreamWrapper.find('[data-testid="historical-client-status-note"]').text()).toBe(
+      'usage.errors.detail.historicalClientStatusFallback',
+    )
+    legacyStreamWrapper.unmount()
   })
 })

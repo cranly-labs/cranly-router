@@ -1540,3 +1540,32 @@ func extractUpstreamToolsAndCalls(t *testing.T, upProto protocol.ProtocolID, enc
 
 	return declared, calls
 }
+
+// TestHasResponsesToolAdaptation_ExcludesPlainFunctionWSInheritance verifies
+// that HasResponsesToolAdaptation returns false for plain function-only session
+// maps carried across WebSocket bridge turns and returns true when custom,
+// namespace, tool_search, or historical input lowering occurs.
+func TestHasResponsesToolAdaptation_ExcludesPlainFunctionWSInheritance(t *testing.T) {
+	require.False(t, HasResponsesToolAdaptation(nil, nil))
+	plainSessionMap := &ToolMap{
+		FunctionTools: map[string]bool{"read_file": true},
+		LoweredTools:  []jsontext.Value{jsontext.Value(`{"type":"function","name":"read_file"}`)},
+	}
+	require.False(t, HasResponsesToolAdaptation(plainSessionMap, nil))
+
+	fnOnlyDialect := Dialect{Tools: ToolSupportFunction}
+	turn2Plain := []byte(`{"type":"response.create","response":{"model":"gpt-5","input":[{"type":"message","role":"user","content":"hi"}]}}`)
+	_, tmPlain, lossesPlain, err := AdaptResponsesTools(turn2Plain, fnOnlyDialect, plainSessionMap)
+	require.NoError(t, err)
+	require.False(t, HasResponsesToolAdaptation(tmPlain, lossesPlain))
+
+	withCustom := []byte(`{"model":"gpt-5","tools":[{"type":"custom","name":"apply_patch"}],"input":"hi"}`)
+	_, tmCustom, lossesCustom, err := AdaptResponsesTools(withCustom, fnOnlyDialect, nil)
+	require.NoError(t, err)
+	require.True(t, HasResponsesToolAdaptation(tmCustom, lossesCustom))
+
+	withDefaultNS := []byte(`{"model":"gpt-5","tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"ls","parameters":{"type":"object"}}]}],"input":"hi"}`)
+	_, tmNS, lossesNS, err := AdaptResponsesTools(withDefaultNS, fnOnlyDialect, nil)
+	require.NoError(t, err)
+	require.True(t, HasResponsesToolAdaptation(tmNS, lossesNS))
+}

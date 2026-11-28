@@ -83,7 +83,9 @@ func (s *Stream) Write(frame sse.Frame) ([]sse.Frame, error) {
 
 // Close finalizes the upstream stream decoder (passing nil on normal EOF or a
 // non-nil transport/timeout cause on abnormal disconnect) and flushes any
-// trailing client completion or error frames. Repeated Close calls return nil.
+// trailing client completion or error frames. Accumulated response-side losses
+// commit onto the owning Exchange even if tail encoding fails, and repeated
+// Close calls return nil without duplicating losses.
 func (s *Stream) Close(cause error) ([]sse.Frame, error) {
 	if s.closed {
 		return nil, nil
@@ -92,13 +94,17 @@ func (s *Stream) Close(cause error) ([]sse.Frame, error) {
 	if s.exchange.upstreamErr != nil {
 		return nil, s.exchange.upstreamErr
 	}
+	// Commit accumulated response-side losses onto the owning Exchange on every
+	// exit path so abnormal stream terminations still preserve observed losses.
+	defer func() {
+		s.exchange.appendLosses(s.losses)
+	}()
 	tail := s.decoder.Close(cause)
 	frames, err := s.processEvents(tail)
 	if err != nil {
 		return nil, err
 	}
 	s.drainDecoderRevisions()
-	s.exchange.appendLosses(s.losses)
 	return frames, nil
 }
 

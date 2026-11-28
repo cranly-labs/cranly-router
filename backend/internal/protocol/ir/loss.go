@@ -21,6 +21,7 @@ const (
 	LossMediaUnsupported         LossKind = "media_unsupported"          // unsupported attachment modality or source dropped
 	LossMediaRelocated           LossKind = "media_relocated"            // tool-result attachment moved to following user turn
 	LossToolLowered              LossKind = "tool_lowered"               // custom, namespace, or search tool lowered to function
+	LossToolHistoryInlined       LossKind = "tool_history_inlined"       // structured tool call or tool result downgraded into visible text
 	LossToolChoiceApproximated   LossKind = "tool_choice_approximated"   // tool choice widened or adapted for target
 	LossHostedToolDropped        LossKind = "hosted_tool_dropped"        // unsupported hosted tool declaration omitted
 	LossSchemaApproximated       LossKind = "schema_approximated"        // JSON Schema cleaned to fit target schema dialect
@@ -47,17 +48,17 @@ type Loss struct {
 	Detail string   `json:"detail,omitzero"` // optional field name or reason detail
 }
 
-// IsValid reports whether k is one of the twenty-three canonical LossKind values.
+// IsValid reports whether k is one of the twenty-four canonical LossKind values.
 func (k LossKind) IsValid() bool {
 	switch k {
 	case LossExtraDropped, LossOpaqueItemDropped, LossReplayTokenDropped,
 		LossReasoningTextDropped, LossReasoningTextInlined, LossRefusalInlined,
-		LossCacheMarkDropped, LossMediaUnsupported, LossMediaRelocated, LossToolLowered,
-		LossToolChoiceApproximated, LossHostedToolDropped, LossSchemaApproximated,
-		LossSystemRelocated, LossPartsReordered, LossToolPairingRepaired,
-		LossSamplingDropped, LossStopDropped, LossAnnotationDropped,
-		LossOutputFormatApproximated, LossClientMarkerDropped,
-		LossCandidateCountIgnored, LossIDRewritten:
+		LossCacheMarkDropped, LossMediaUnsupported, LossMediaRelocated,
+		LossToolLowered, LossToolHistoryInlined, LossToolChoiceApproximated,
+		LossHostedToolDropped, LossSchemaApproximated, LossSystemRelocated,
+		LossPartsReordered, LossToolPairingRepaired, LossSamplingDropped,
+		LossStopDropped, LossAnnotationDropped, LossOutputFormatApproximated,
+		LossClientMarkerDropped, LossCandidateCountIgnored, LossIDRewritten:
 		return true
 	default:
 		return false

@@ -18,7 +18,7 @@
 | 层级 | 管理的策略 | 职责范围之外 |
 | --- | --- | --- |
 | API Key | 分组选择、复合前缀、Key 级模型重定向、Key 限额、Fast 偏好、强制 Claude 1 小时缓存 | 上游提供商凭据和平台 |
-| Group | 组内提供商关联、基础或高级调度器选择、高级调度稀疏覆盖、客户端协议与媒体准入、fallback、OAuth 与 privacy、推理上限、模型可见性、Fast/Standard 计费和 RPM | 上游 token |
+| Group | 组内提供商关联、基础或高级调度器选择、高级调度稀疏覆盖、客户端协议与媒体准入、fallback、OAuth 与 privacy、推理上限、模型可见性、OpenAI 加速策略和 RPM | 上游 token |
 | PricingConfig | 可被多分组复用的价卡、价格引用、计费设置、计费模型来源和提供商成本配置 | 模型权限、请求模型改写和功能开关 |
 | Provider | 凭据、代理、模型映射与白名单、重试状态码、临时不可调度、Header override 和 capability | 超出分组对用户公开的能力范围 |
 | Setting/config | 高级调度评分参数、跨分组运行策略、兼容开关、默认 Header 与 UA、缓存和安全策略 | 分组调度器选择及各提供商运行状态 |

@@ -60,6 +60,7 @@ func copyCompletionContext(destination, source context.Context) context.Context 
 		}
 	}
 	destination = timing.CopyPerformance(destination, source)
+	destination = telemetry.CopyProtocolConversionSnapshot(destination, source)
 	return telemetry.CopyRequestCapture(destination, source)
 }
 

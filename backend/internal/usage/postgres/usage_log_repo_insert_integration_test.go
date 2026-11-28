@@ -62,6 +62,14 @@ func TestResponseModelBatchRoundTrip(t *testing.T) {
 					ReportedTotal: 311,
 					Reported5m:    211,
 				}
+				log.ProtocolConversion = &usage.ProtocolConversion{
+					Mode:             "ir_converted",
+					ClientProtocol:   "anthropic_messages",
+					UpstreamProtocol: "openai_responses",
+					Dialect:          "openai",
+					ReplayScheme:     "openai",
+					LossCounts:       map[string]int{"cache_mark_dropped": 2},
+				}
 			}
 		}
 		batchKey := usageLogBatchKey(log.RequestID, log.APIKeyID)
@@ -75,16 +83,25 @@ func TestResponseModelBatchRoundTrip(t *testing.T) {
 		log, err := scanUsageLog(integrationDB.QueryRowContext(ctx, "SELECT "+usageLogSelectColumns+" FROM usage_logs WHERE id=$1", state.ID))
 		require.NoError(t, err)
 		want := prepared[key].args
-		require.Equal(t, want[len(want)-6], nullString(log.UpstreamResponseModel))
-		require.Equal(t, want[len(want)-5], log.UpstreamModelMismatch)
+		require.Equal(t, want[len(want)-7], nullString(log.UpstreamResponseModel))
+		require.Equal(t, want[len(want)-6], log.UpstreamModelMismatch)
 		if log.UpstreamModelMismatch != nil && *log.UpstreamModelMismatch {
 			require.Equal(t, &billing.CacheWriteAnomaly{
 				Kind:          "partial_breakdown",
 				ReportedTotal: 311,
 				Reported5m:    211,
 			}, log.CacheWriteAnomaly)
+			require.Equal(t, &usage.ProtocolConversion{
+				Mode:             "ir_converted",
+				ClientProtocol:   "anthropic_messages",
+				UpstreamProtocol: "openai_responses",
+				Dialect:          "openai",
+				ReplayScheme:     "openai",
+				LossCounts:       map[string]int{"cache_mark_dropped": 2},
+			}, log.ProtocolConversion)
 		} else {
 			require.Nil(t, log.CacheWriteAnomaly)
+			require.Nil(t, log.ProtocolConversion)
 		}
 	}
 	// Execute the acknowledgement-only and direct shapes with populated response

@@ -502,6 +502,14 @@ func TestUsageLogFromService_NormalizesCacheWriteBucketsAndScopesAnomalyToAdmin(
 				ReportedTotal: 311,
 				Reported5m:    211,
 			},
+			ProtocolConversion: &usage.ProtocolConversion{
+				Mode:             "ir_converted",
+				ClientProtocol:   "anthropic_messages",
+				UpstreamProtocol: "gemini_generate_content",
+				Dialect:          "antigravity",
+				ReplayScheme:     "antigravity_claude",
+				LossCounts:       map[string]int{"replay_token_dropped": 2},
+			},
 		}
 		userDTO := FromUsage(row)
 		adminDTO := FromUsageAdmin(row)
@@ -510,10 +518,16 @@ func TestUsageLogFromService_NormalizesCacheWriteBucketsAndScopesAnomalyToAdmin(
 		userJSON, err := json.Marshal(userDTO)
 		require.NoError(t, err)
 		require.NotContains(t, string(userJSON), "cache_write_anomaly")
+		require.NotContains(t, string(userJSON), "protocol_conversion")
+		require.NotContains(t, string(userJSON), "antigravity_claude")
 
 		require.NotNil(t, adminDTO.CacheWriteAnomaly)
 		require.Equal(t, "partial_breakdown", adminDTO.CacheWriteAnomaly.Kind)
 		require.Equal(t, 211, adminDTO.CacheWriteAnomaly.Reported5m)
+		require.NotNil(t, adminDTO.ProtocolConversion)
+		require.Equal(t, "ir_converted", adminDTO.ProtocolConversion.Mode)
+		require.Equal(t, "antigravity", adminDTO.ProtocolConversion.Dialect)
+		require.Equal(t, 2, adminDTO.ProtocolConversion.LossCounts["replay_token_dropped"])
 	})
 
 	t.Run("historical untagged claude and openai rows gain default short buckets", func(t *testing.T) {

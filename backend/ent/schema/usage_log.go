@@ -145,6 +145,10 @@ func (UsageLog) Fields() []ent.Field {
 		field.JSON("cache_write_anomaly", map[string]any{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+		// Administrator protocol conversion diagnostics; null on lossless native passthrough rows.
+		field.JSON("protocol_conversion", map[string]any{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
 		// USD input-token cost.
 		field.Float("input_cost").
@@ -163,9 +167,8 @@ func (UsageLog) Fields() []ent.Field {
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
 		// total_cost retains the pricing cost before funding multipliers, while
-		// actual_cost records the user-side amount. Free-OpenAI-Fast policy can
-		// reprice user funding at Standard while retaining the upstream Fast
-		// base for provider statistics.
+		// actual_cost records the user-side amount after funding allocation.
+		// Both use the effective service tier recorded for this request.
 		// USD pricing-base total.
 		field.Float("total_cost").
 			Default(0).

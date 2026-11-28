@@ -48,9 +48,11 @@ func TestFlattenResponsesNamespaces_RewritesDeclarationHistoryAndChoice(t *testi
 		},
 	}
 
-	names, changed, err := FlattenResponsesNamespaces(req)
+	report, err := FlattenResponsesNamespacesWithReport(req, nil)
+	names := report.Names
 	require.NoError(t, err)
-	require.True(t, changed)
+	require.Equal(t, 2, report.Lowered)
+	require.True(t, report.ApproximatedChoice)
 	require.Equal(t, ResponsesNamespaceName{Namespace: "collaboration", Name: "spawn_agent"}, names["collaboration__spawn_agent"])
 
 	tools, ok := req["tools"].([]any)

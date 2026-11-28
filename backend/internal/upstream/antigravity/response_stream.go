@@ -11,6 +11,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -62,6 +63,9 @@ type (
 		// ClientDisconnect reports a failed client write or a handled
 		// cancelled/read-failure path according to the selected response adapter.
 		ClientDisconnect bool
+		// ProtocolConversion carries bounded protocol transformation diagnostics
+		// when this stream result came from an IR-converted exchange.
+		ProtocolConversion *telemetry.ProtocolConversion
 	}
 )
 

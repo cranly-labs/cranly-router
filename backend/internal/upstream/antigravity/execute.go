@@ -279,9 +279,13 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		if stream.Usage != nil && (err == nil || !result.HasUsage) {
 			result.Usage = *stream.Usage
 		}
+		if stream.ProtocolConversion != nil {
+			result.ProtocolConversion = stream.ProtocolConversion
+		}
 
 		result.ClientDisconnect = stream.ClientDisconnect || (target.Mode == ModeConvertedResponse && output.Err() != nil)
 	} else if target.Mode == ModeConvertedResponse {
+		result.ProtocolConversion = upstream.ExchangeConversion(target.Converted.Exchange)
 		result.ClientDisconnect = output.Err() != nil
 	}
 	if err != nil && target.OutputError != nil {

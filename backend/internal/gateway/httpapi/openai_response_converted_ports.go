@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
@@ -127,7 +128,12 @@ func (p *openAIConvertedResponsesAdapter) ConvertCursorResponsesToChat(body []by
 	if err != nil {
 		return nil, err
 	}
-	return ex.UpstreamRequest()
+	converted, err := ex.UpstreamRequest()
+	if err != nil {
+		return nil, err
+	}
+	upstream.ObserveExchangeConversion(ctx, ex)
+	return converted, nil
 }
 
 // MessagesEffortValue reconciles explicit Anthropic max effort against the

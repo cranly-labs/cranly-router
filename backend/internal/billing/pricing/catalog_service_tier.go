@@ -10,7 +10,8 @@ import (
 
 // catalog_service_tier.go converts the directory's supported mode prices into
 // bucket adjustments and evaluates them at the request's pricing instant.
-// Per-bucket prices serve both settlement and displayed service-tier quotes.
+// Per-bucket prices serve settlement, displayed service-tier quotes, and
+// route-restricted marketplace views.
 //
 // Explicit mode prices take precedence over a corresponding multiplier. A
 // known base price lets the explicit mode amount retain its relative effect
@@ -108,10 +109,7 @@ func catalogServiceTierPricing(pricing *ModelPricing, tier string, at time.Time)
 		tier == "flex" && pricing.FlexMultiplier != nil {
 		return nil, false
 	}
-	for _, row := range pricing.ServiceTierPrices {
-		if row.Tier != tier || !row.appliesAt(at) {
-			continue
-		}
+	if row := activeCatalogTier(pricing, tier, at); row != nil {
 		return row.applyToTokenRates(pricing), true
 	}
 	return nil, false
@@ -250,6 +248,100 @@ func (r CatalogServicePrice) adjustOptional(key string, base *float64) *float64 
 		return new(value)
 	}
 	return nil
+}
+
+// activeCatalogTier returns the first directory rule applicable to the named
+// service tier on the supplied market date. The pointer borrows immutable
+// catalog storage. Nil indicates that the directory supplies no current rate.
+func activeCatalogTier(pricing *ModelPricing, tier string, at time.Time) *CatalogServicePrice {
+	for i := range pricing.ServiceTierPrices {
+		row := &pricing.ServiceTierPrices[i]
+		if row.Tier == tier && row.appliesAt(at) {
+			return row
+		}
+	}
+	return nil
+}
+
+// DisplayServiceTiersAt identifies the current service-tier prices of one
+// effective token band. Manual multipliers remain available outside directory
+// date windows. A missing or undisplayable base yields no tiers, while explicit
+// zero amounts retain their availability independently of the resulting price.
+func DisplayServiceTiersAt(pricing *ModelPricing, at time.Time) ServiceTierSupport {
+	if !HasAnyDisplayTokenPricing(pricing) {
+		return ServiceTierSupport{}
+	}
+	return ServiceTierSupport{
+		Fast:      hasLegacyFastDisplayPricing(pricing) || activeCatalogTier(pricing, "priority", at) != nil,
+		Flex:      pricing.FlexMultiplier != nil || activeCatalogTier(pricing, "flex", at) != nil,
+		Ultrafast: activeCatalogTier(pricing, "ultrafast", at) != nil,
+	}
+}
+
+// restrictModelPricingServiceTiers returns a copy of pricing with disallowed
+// Fast, Flex, and Ultrafast modifiers and directory rules removed across root
+// and nested context tiers. Date-only calendar rules remain intact because they
+// adjust standard token rates. Nil input returns nil.
+func restrictModelPricingServiceTiers(pricing *ModelPricing, allowed ServiceTierSupport) *ModelPricing {
+	if pricing == nil || (allowed.Fast && allowed.Flex && allowed.Ultrafast) {
+		return pricing
+	}
+	out := *pricing
+	if len(pricing.ContextPrices) > 0 {
+		out.ContextPrices = make([]ContextModelPrice, len(pricing.ContextPrices))
+		for i, tier := range pricing.ContextPrices {
+			out.ContextPrices[i] = ContextModelPrice{
+				Threshold: tier.Threshold,
+				Pricing:   restrictModelPricingServiceTiers(tier.Pricing, allowed),
+			}
+		}
+	}
+	if !allowed.Fast {
+		out.FastModeMultiplier = nil
+		out.FastMultiplier = nil
+		out.PriorityInputPresent = false
+		out.PriorityOutputPresent = false
+		out.PriorityCacheReadPresent = false
+		out.PriorityCacheWritePresent = false
+		out.InputPricePerTokenPriority = 0
+		out.OutputPricePerTokenPriority = 0
+		out.CacheCreationPricePerTokenPriority = 0
+		out.CacheReadPricePerTokenPriority = 0
+	}
+	if !allowed.Flex {
+		out.FlexMultiplier = nil
+	}
+	if len(pricing.ServiceTierPrices) > 0 {
+		filtered := make([]CatalogServicePrice, 0, len(pricing.ServiceTierPrices))
+		for _, row := range pricing.ServiceTierPrices {
+			if !serviceTierRuleAllowed(row.Tier, allowed) {
+				continue
+			}
+			filtered = append(filtered, row)
+		}
+		out.ServiceTierPrices = filtered
+	}
+	out.SupportsServiceTier = hasLegacyFastDisplayPricing(&out) || out.FlexMultiplier != nil ||
+		slices.ContainsFunc(out.ServiceTierPrices, func(row CatalogServicePrice) bool { return row.Tier != "" })
+	return &out
+}
+
+// serviceTierRuleAllowed reports whether a compiled service-price tier remains
+// active under allowed. Empty tiers represent shared calendar adjustments and
+// stay enabled across all routes.
+func serviceTierRuleAllowed(tier string, allowed ServiceTierSupport) bool {
+	switch NormalizeBillingServiceTier(tier) {
+	case "":
+		return true
+	case "priority", "fast":
+		return allowed.Fast
+	case "flex":
+		return allowed.Flex
+	case "ultrafast":
+		return allowed.Ultrafast
+	default:
+		return false
+	}
 }
 
 // hasCatalogServiceTier reports whether any compiled adjustment declares the tier.

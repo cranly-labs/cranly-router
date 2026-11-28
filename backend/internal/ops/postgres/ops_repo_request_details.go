@@ -37,9 +37,10 @@ import (
 // ID/model/message with retained wildcards. SLAOnly affects error eligibility
 // but neither branch gains a count-probe filter. Count executes before sort
 // validation and the independent page read, so totals can diverge during
-// writes. Nullable numerics preserve zero through new pointers, with unchecked
-// native-int narrowing for duration/status, and blank returned platform becomes
-// unknown.
+// writes. Error rows return the client HTTP status with the legacy fallback while
+// logical status_code >= 400 governs admission; nullable numerics preserve zero
+// through new pointers, with unchecked native-int narrowing for
+// duration/status, and blank returned platform becomes unknown.
 func (r *Store) ListRequestDetails(ctx context.Context, filter *ops.OpsRequestDetailFilter) ([]*ops.OpsRequestDetail, int64, error) {
 	if r == nil || r.db == nil {
 		return nil, 0, fmt.Errorf("nil ops repository")
@@ -164,7 +165,7 @@ WITH combined AS (
     COALESCE(NULLIF(o.platform, ''), 'unknown') AS platform,
     o.model AS model,
     o.duration_ms AS duration_ms,
-    o.status_code AS status_code,
+    ops_client_http_status(o.client_status_code, o.status_code, o.legacy_client_status) AS status_code,
     o.id AS error_id,
     o.error_phase AS phase,
     o.severity AS severity,

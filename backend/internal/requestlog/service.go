@@ -74,10 +74,11 @@ type Repository interface {
 // Usage exposes retained usage-record cost and token counts in request
 // diagnostics.
 type Usage struct {
-	RequestSource string             `json:"request_source"`          // recorded customer or system source
-	SystemUsage   *usage.SystemUsage `json:"system_usage,omitempty"`  // optional internal execution evidence
-	ProviderCost  *float64           `json:"provider_cost,omitempty"` // known provider cost including multiplier
-	DurationMs    *int64             `json:"duration_ms"`             // measured upstream execution duration
+	RequestSource      string                        `json:"request_source"`                // recorded customer or system source
+	SystemUsage        *usage.SystemUsage            `json:"system_usage,omitempty"`        // optional internal execution evidence
+	ProviderCost       *float64                      `json:"provider_cost,omitempty"`       // known provider cost including multiplier
+	ProtocolConversion *telemetry.ProtocolConversion `json:"protocol_conversion,omitempty"` // administrator conversion diagnostics
+	DurationMs         *int64                        `json:"duration_ms"`                   // measured upstream execution duration
 
 	Timings *timing.Performance `json:"timings,omitempty"` // usage-owned performance snapshot
 	TTFTMs  *int                `json:"ttft_ms"`           // selected upstream latency milliseconds
@@ -92,9 +93,13 @@ type Usage struct {
 
 // Failure references a retained error row selected after its ownership check.
 type Failure struct {
-	ID     int64  `json:"id"`          // retained error row ID
-	Status int    `json:"status_code"` // recorded HTTP error status
-	Phase  string `json:"phase"`       // recorded request error phase
+	ID int64 `json:"id"` // retained error row ID
+	// Status and LogicalStatus come from the same error record. Status supplies the
+	// client result for a missing summary, while LogicalStatus retains the failure
+	// classification after a stream has already committed its headers.
+	Status        int    `json:"status_code"`                   // effective client HTTP status
+	LogicalStatus int    `json:"logical_status_code,omitempty"` // saved Ops classification status
+	Phase         string `json:"phase"`                         // recorded request error phase
 }
 
 // Detail joins a stored or inferred request summary with retained diagnostic
@@ -487,6 +492,16 @@ func (s *Service) Find(ctx context.Context, id string, userID int64, admin bool)
 			writeFailure := items[i].UsageWriteState == "unknown" || items[i].UsageWriteState == "not_persisted" || items[i].UsageWriteState == "skipped"
 			if len(items[i].Usage) > 0 || (!writeFailure && items[i].State != "failed" && items[i].State != "canceled") {
 				items[i].FailureTimings = nil
+			}
+			if !admin {
+				// Strip administrator-only conversion metadata from pending and stored
+				// attempts and usage summaries whenever a non-admin caller queries Find.
+				for j := range items[i].Attempts {
+					items[i].Attempts[j].ProtocolConversion = nil
+				}
+				for j := range items[i].Usage {
+					items[i].Usage[j].ProtocolConversion = nil
+				}
 			}
 		}
 		if admin && err == nil {

@@ -13,7 +13,7 @@
         </p>
       </div>
 
-      <div v-for="item in providerItems" :key="item.provider" :class="rowClass">
+      <div v-for="item in visibleProviderItems" :key="item.provider" :class="rowClass">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div class="flex min-w-0 flex-1 items-start gap-4">
             <div
@@ -193,7 +193,9 @@ import type { User, UserAuthBindingStatus, UserAuthProvider } from '@/api/identi
 // profile page. Binding status accepts direct flags and compatible nested records, while
 // action availability combines current bindings, public provider settings, and server-
 // provided permissions. Cached WeChat settings take precedence over props and retain
-// explicit per-flow capabilities.
+// explicit per-flow capabilities. External providers the administrator has not enabled are
+// hidden unless the account is already bound to them, so the list only shows rows a user
+// can act on or still needs to see.
 //
 // Successful operations publish their returned user to local display state and the shared
 // auth store. A later parent profile update clears that temporary local override. Email
@@ -528,6 +530,27 @@ const providerItems = computed(() => [
     details: getBindingDetails('wechat'),
   },
 ])
+
+// isProviderConfigured reports whether the administrator enabled a provider at all. WeChat
+// counts as configured when either authorization flow is on, even when the current browser
+// cannot start that flow and its bind action stays hidden.
+function isProviderConfigured(provider: ConfigurableBindingProvider): boolean {
+  if (provider !== 'wechat') {
+    return isProviderEnabledForBinding(provider)
+  }
+  const settings = wechatOAuthSettings.value
+  return settings?.wechat_oauth_open_enabled === true || settings?.wechat_oauth_mp_enabled === true
+}
+
+// visibleProviderItems keeps the email row and every provider the account is bound to, and
+// drops unbound external providers the administrator has not enabled because those rows
+// could offer no action. A bound row stays visible after its provider is disabled so the
+// user still sees the linked identity and any unbind permission the server grants.
+const visibleProviderItems = computed(() =>
+  providerItems.value.filter(
+    (item) => item.provider === 'email' || item.bound || isProviderConfigured(item.provider),
+  ),
+)
 
 // providerInitial supplies the single-letter emblem used by the displayed provider row.
 function providerInitial(provider: UserAuthProvider): string {

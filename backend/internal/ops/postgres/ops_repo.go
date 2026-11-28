@@ -18,13 +18,15 @@ import (
 
 // ops_repo.go stores and queries Ops errors and system logs, including
 // resolution and cleanup audit records.
-// Ops error lists can display an upstream status even when the final client
-// request recovered successfully. The final status still controls ordinary
-// request-error admission, with the cyber_policy exception retaining streamed
-// rejections and provider-health filters opting into recovered attempts. Model
-// filtering and ordering also differ: filtering uses the saved requested model
-// whenever it is nonnull, while ordering treats a blank requested model as
-// absent.
+// Lists and details report observed client and upstream HTTP statuses separately.
+// Older writers allow the saved logical status to supply a missing client code.
+// Historical upstream_http cyber_policy rows also retain their policy response
+// as an upstream status. Recovered attempts keep the successful client response.
+// Logical status_code still controls ordinary request-error
+// admission, with the cyber_policy exception retaining streamed rejections and
+// provider-health filters opting into recovered attempts. Model filtering and
+// ordering also differ: filtering uses the saved requested model whenever it is
+// nonnull, while ordering treats a blank requested model as absent.
 //
 // Writes encode optional values according to their consumers. General numeric
 // encoders map zero to NULL, but the upstream status encoder preserves explicit
@@ -74,14 +76,21 @@ INSERT INTO ops_error_logs (
   upstream_latency_ms,
   response_latency_ms,
   created_at,
-  api_key_prefix
+  api_key_prefix,
+  client_status_code,
+  legacy_client_status
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,FALSE
 )`
 
-// likePatternReplacer makes fuzzy model names literal inside PostgreSQL LIKE
-// patterns while surrounding percent signs provide substring matching.
-var likePatternReplacer = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+// likePatternReplacer escapes literal model wildcards inside LIKE patterns, and
+// the status slices define each filter menu's listed codes excluded by Other.
+var (
+	likePatternReplacer = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+	opsCommonClientStatusCodes   = []int{200, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529}
+	opsCommonUpstreamStatusCodes = []int{0, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529}
+)
 
 // Store executes Ops queries and transactional writes through the caller's SQL
 // pool.
@@ -187,8 +196,9 @@ func (r *Store) BatchInsertErrorLogs(ctx context.Context, inputs []*ops.OpsInser
 
 // opsInsertErrorLogArgs encodes a nonnil prepared observation in the shared
 // insert's exact column order. Blank platforms become unknown; general
-// zero-valued optional integers become NULL, while an explicit upstream status
-// zero survives for provider credential failures.
+// zero-valued optional integers and nonpositive client wire statuses become
+// NULL, while an explicit upstream status zero survives for provider credential
+// failures.
 func opsInsertErrorLogArgs(input *ops.OpsInsertErrorLogInput) []any {
 	// Store unknown when the observation lacks a platform. Queries retain this
 	// saved dimension even if current providers or group membership change later.
@@ -234,13 +244,37 @@ func opsInsertErrorLogArgs(input *ops.OpsInsertErrorLogInput) []any {
 		opsNullInt64(input.ResponseLatencyMs),
 		input.CreatedAt,
 		opsNullString(input.APIKeyPrefix),
+		opsPositiveNullIntPointer(input.ClientStatusCode),
 	}
+}
+
+// opsEffectiveClientStatusSQL returns the SQL expression for displayed,
+// filtered, and sorted client HTTP status on alias. Saved client_status_code
+// takes precedence over logical status_code so in-band stream errors keep HTTP
+// 200. Only older writers permit fallback to the logical code. Current rows
+// without an HTTP response use zero in the numeric API and sort projection.
+func opsEffectiveClientStatusSQL(alias string) string {
+	return fmt.Sprintf("COALESCE(ops_client_http_status(%s.client_status_code, %s.status_code, %s.legacy_client_status), 0)", alias, alias, alias)
+}
+
+// opsEffectiveUpstreamStatusSQL returns the SQL expression for displayed,
+// filtered, and sorted upstream HTTP status on alias. Stored
+// upstream_status_code wins, including zero for provider_auth; historical
+// cyber_policy rows from upstream_http fall back to positive status_code saved
+// before BuildPolicyOpsEntry populated upstream_status_code.
+func opsEffectiveUpstreamStatusSQL(alias string) string {
+	return fmt.Sprintf(
+		"CASE WHEN %s.upstream_status_code IS NOT NULL THEN %s.upstream_status_code "+
+			"WHEN %s.error_type = 'cyber_policy' AND LOWER(COALESCE(%s.error_source, '')) = 'upstream_http' "+
+			"AND %s.legacy_client_status AND COALESCE(%s.status_code, 0) > 0 THEN %s.status_code ELSE NULL END",
+		alias, alias, alias, alias, alias, alias, alias,
+	)
 }
 
 // opsErrorLogsOrderBy returns a validated sort expression with ID ordering in
 // the same direction to break ties. Unknown columns select creation time, only
-// asc selects ascending order, and model sorting falls back from blank
-// requested model to execution model.
+// asc selects ascending order, model sorting falls back from blank requested
+// model to execution model, and upstream_status_code places NULL values last.
 func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 	sortBy := ""
 	sortOrder := ""
@@ -249,23 +283,21 @@ func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 		sortOrder = strings.ToLower(strings.TrimSpace(filter.SortOrder))
 	}
 
-	var column string
-	switch sortBy {
-	case "model":
-		column = "COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model)"
-	case "status_code":
-		// Match the displayed status when sorting recovered attempts: a present
-		// upstream code wins over the final client code, including a stored zero.
-		column = "COALESCE(e.upstream_status_code, e.status_code, 0)"
-	default:
-		column = "e.created_at"
-	}
-
 	dir := "DESC"
 	if sortOrder == "asc" {
 		dir = "ASC"
 	}
-	return fmt.Sprintf("%s %s, e.id %s", column, dir, dir)
+
+	switch sortBy {
+	case "model":
+		return fmt.Sprintf("COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model) %s, e.id %s", dir, dir)
+	case "status_code":
+		return fmt.Sprintf("%s %s, e.id %s", opsEffectiveClientStatusSQL("e"), dir, dir)
+	case "upstream_status_code":
+		return fmt.Sprintf("%s %s NULLS LAST, e.id %s", opsEffectiveUpstreamStatusSQL("e"), dir, dir)
+	default:
+		return fmt.Sprintf("e.created_at %s, e.id %s", dir, dir)
+	}
 }
 
 // ListErrorLogs returns error observations and current joined display names
@@ -275,11 +307,13 @@ func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 // breaker.
 //
 // Count and page are separate statements and can observe different writes.
-// Displayed status prefers a nonnull upstream status over final client status,
-// even when zero; stored account_auth phases are returned as provider_auth.
-// Optional IDs and timestamps receive independent scalar pointers, while
-// integer status and request type conversions are unchecked. Query, scan, and
-// iteration failures reject the list.
+// Client status prefers saved client_status_code before logical status_code and
+// defaults to zero for current writers without a wire status. Upstream status
+// remains nullable, preserves explicit zero, and derives legacy upstream_http
+// cyber_policy statuses; stored account_auth phases are returned as provider_auth. Optional
+// IDs and timestamps receive independent scalar pointers, while integer status
+// and request type conversions are unchecked. Query, scan, and iteration
+// failures reject the list.
 func (r *Store) ListErrorLogs(ctx context.Context, filter *ops.OpsErrorLogFilter) (*ops.OpsErrorLogList, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -321,7 +355,10 @@ SELECT
   COALESCE(e.error_owner, ''),
   COALESCE(e.error_source, ''),
   e.severity,
-  COALESCE(e.upstream_status_code, e.status_code, 0),
+  ` + opsEffectiveClientStatusSQL("e") + `,
+  e.client_status_code,
+  COALESCE(e.status_code, 0),
+  ` + opsEffectiveUpstreamStatusSQL("e") + `,
   COALESCE(e.platform, ''),
   COALESCE(e.model, ''),
   COALESCE(e.resolved, false),
@@ -371,6 +408,9 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	for rows.Next() {
 		var item ops.OpsErrorLog
 		var statusCode sql.NullInt64
+		var clientStatusCode sql.NullInt64
+		var logicalStatusCode sql.NullInt64
+		var upstreamStatusCode sql.NullInt64
 		var clientIP sql.NullString
 		var userID sql.NullInt64
 		var apiKeyID sql.NullInt64
@@ -394,6 +434,9 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&item.Source,
 			&item.Severity,
 			&statusCode,
+			&clientStatusCode,
+			&logicalStatusCode,
+			&upstreamStatusCode,
 			&item.Platform,
 			&item.Model,
 			&item.Resolved,
@@ -437,6 +480,15 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		}
 		item.ResolvedByUserName = resolvedByName
 		item.StatusCode = int(statusCode.Int64)
+		if clientStatusCode.Valid {
+			v := int(clientStatusCode.Int64)
+			item.ClientStatusCode = &v
+		}
+		item.LogicalStatusCode = int(logicalStatusCode.Int64)
+		if upstreamStatusCode.Valid {
+			v := int(upstreamStatusCode.Int64)
+			item.UpstreamStatusCode = &v
+		}
 		if clientIP.Valid {
 			s := clientIP.String
 			item.ClientIP = &s
@@ -488,9 +540,10 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 
 // GetErrorLogByID loads one positive error identity with stored diagnostic data
 // and current joined names. Missing rows return the database's no-rows error
-// for OpsService to classify. The upstream status remains independently
-// nullable, while the displayed status prefers it over final client status,
-// including an explicit zero.
+// for OpsService to classify. Client status prefers client_status_code before
+// legacy logical status_code and defaults to zero when unavailable, while upstream
+// status remains nullable, preserves explicit zero, and derives legacy
+// upstream_http cyber_policy statuses.
 //
 // Saved account_auth becomes provider_auth, and upstream JSON null becomes an
 // empty string for downstream parsing. Optional IDs, timestamps, timings, and
@@ -514,7 +567,9 @@ SELECT
   COALESCE(e.error_owner, ''),
   COALESCE(e.error_source, ''),
   e.severity,
-  COALESCE(e.upstream_status_code, e.status_code, 0),
+  ` + opsEffectiveClientStatusSQL("e") + `,
+  e.client_status_code,
+  COALESCE(e.status_code, 0),
   COALESCE(e.platform, ''),
   COALESCE(e.model, ''),
   COALESCE(e.resolved, false),
@@ -524,7 +579,7 @@ SELECT
   COALESCE(e.request_id, ''),
   COALESCE(e.error_message, ''),
   COALESCE(e.error_body, ''),
-  e.upstream_status_code,
+  ` + opsEffectiveUpstreamStatusSQL("e") + `,
   COALESCE(e.upstream_error_message, ''),
   COALESCE(e.upstream_error_detail, ''),
   COALESCE(e.upstream_errors::text, ''),
@@ -562,6 +617,8 @@ LIMIT 1`
 
 	var out ops.OpsErrorLogDetail
 	var statusCode sql.NullInt64
+	var clientStatusCode sql.NullInt64
+	var logicalStatusCode sql.NullInt64
 	var upstreamStatusCode sql.NullInt64
 	var resolvedAt sql.NullTime
 	var resolvedBy sql.NullInt64
@@ -587,6 +644,8 @@ LIMIT 1`
 		&out.Source,
 		&out.Severity,
 		&statusCode,
+		&clientStatusCode,
+		&logicalStatusCode,
 		&out.Platform,
 		&out.Model,
 		&out.Resolved,
@@ -633,6 +692,11 @@ LIMIT 1`
 	// nil. Display status and request type narrow integer widths unchecked after
 	// the database scan.
 	out.StatusCode = int(statusCode.Int64)
+	if clientStatusCode.Valid {
+		v := int(clientStatusCode.Int64)
+		out.ClientStatusCode = &v
+	}
+	out.LogicalStatusCode = int(logicalStatusCode.Int64)
 	if resolvedAt.Valid {
 		t := resolvedAt.Time
 		out.ResolvedAt = &t
@@ -1060,12 +1124,14 @@ func escapeLikePattern(s string) string {
 //
 // Positive identity values add conjunctive restrictions. Explicit phase
 // matching accepts stored account_auth for provider_auth, while phase/type
-// arrays remain caller-supplied except that legacy addition. Display-status
-// filtering prefers upstream status; explicit status lists take precedence over
-// the Other category. Model filtering prefers any nonnull requested model,
-// including blank, unlike model ordering's blank fallback. Fuzzy model text is
-// escaped, but free text and user-email searches retain LIKE wildcards. Request
-// correlation uses lookup candidates with exact-local precedence.
+// arrays remain caller-supplied except that legacy addition. Client and
+// upstream status filters apply independently, with explicit lists taking
+// precedence over their respective Other categories and upstream predicates
+// requiring a nonnull upstream_status_code. Model filtering prefers any nonnull
+// requested model, including blank, unlike model ordering's blank fallback.
+// Fuzzy model text is escaped, but free text and user-email searches retain
+// LIKE wildcards. Request correlation uses lookup candidates with exact-local
+// precedence.
 func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	clauses := make([]string, 0, 12)
 	args := make([]any, 0, 12)
@@ -1160,16 +1226,25 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 		// behavior so malformed selectors do not expose every excluded observation.
 		clauses = append(clauses, slaCountableSQL)
 	}
+	clientStatusExpr := opsEffectiveClientStatusSQL("e")
+	upstreamStatusExpr := opsEffectiveUpstreamStatusSQL("e")
 	if len(filter.StatusCodes) > 0 {
 		args = append(args, pq.Array(filter.StatusCodes))
-		clauses = append(clauses, "COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+")")
+		clauses = append(clauses, clientStatusExpr+" = ANY($"+itoa(len(args))+")")
 	} else if filter.StatusCodesOther {
-		// Other excludes the dashboard's common displayed-status list. A nonempty
-		// explicit status list takes precedence and never reaches this inverse
-		// category.
-		known := []int{400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529}
-		args = append(args, pq.Array(known))
-		clauses = append(clauses, "NOT (COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+"))")
+		// Exclude every status listed in the client status menu (including 200) and
+		// require a positive status so unrecorded rows do not match Other.
+		args = append(args, pq.Array(opsCommonClientStatusCodes))
+		clauses = append(clauses, "("+clientStatusExpr+" > 0 AND NOT ("+clientStatusExpr+" = ANY($"+itoa(len(args))+")))")
+	}
+	if len(filter.UpstreamStatusCodes) > 0 {
+		args = append(args, pq.Array(filter.UpstreamStatusCodes))
+		clauses = append(clauses, upstreamStatusExpr+" = ANY($"+itoa(len(args))+")")
+	} else if filter.UpstreamStatusCodesOther {
+		// Require a present upstream status and exclude every status listed in the
+		// upstream menu (including 0 for provider_auth credential failures).
+		args = append(args, pq.Array(opsCommonUpstreamStatusCodes))
+		clauses = append(clauses, "("+upstreamStatusExpr+" IS NOT NULL AND NOT ("+upstreamStatusExpr+" = ANY($"+itoa(len(args))+")))")
 	}
 	// Correlate internal and external IDs through request_lookup_ids with
 	// exact-local precedence. A supplied ClientRequestID adds its own conjunctive
@@ -1473,6 +1548,15 @@ func opsNullInt(v any) any {
 	default:
 		return sql.NullInt64{}
 	}
+}
+
+// opsPositiveNullIntPointer encodes a positive optional status as SQL integer
+// data, mapping nil and nonpositive values to NULL.
+func opsPositiveNullIntPointer(v *int) any {
+	if v == nil || *v <= 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(*v), Valid: true}
 }
 
 // opsNullableIntPointer encodes a status or pool count while preserving an

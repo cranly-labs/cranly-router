@@ -64,7 +64,7 @@ func (*stubPreludePorts) CompactPath() bool { return false }
 func (*stubPreludePorts) FlattenRequired(TransportDecision, bool, bool) bool { return false }
 
 // Flatten returns the supplied request bytes unchanged when namespace flattening is skipped.
-func (*stubPreludePorts) Flatten(b []byte) ([]byte, error) { return b, nil }
+func (*stubPreludePorts) Flatten(_ context.Context, b []byte) ([]byte, error) { return b, nil }
 
 // StripNamespacesRequired disables historical input namespace stripping in DeepSeek prelude tests.
 func (*stubPreludePorts) StripNamespacesRequired(TransportDecision, bool) bool { return false }

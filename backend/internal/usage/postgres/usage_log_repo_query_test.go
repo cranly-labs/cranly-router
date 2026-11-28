@@ -225,10 +225,14 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
-			"user", []byte(nil), []byte(nil),
+			"user", []byte(nil), []byte(nil), []byte(`{"mode":"ir_converted","client_protocol":"anthropic_messages","upstream_protocol":"openai_responses","dialect":"openai","replay_scheme":"openai","loss_counts":{"cache_mark_dropped":2}}`),
 		}})
 		require.NoError(t, err)
 		require.Equal(t, 2, log.ImageCount)
+		require.NotNil(t, log.ProtocolConversion)
+		require.Equal(t, "ir_converted", log.ProtocolConversion.Mode)
+		require.Equal(t, "openai", log.ProtocolConversion.Dialect)
+		require.Equal(t, 2, log.ProtocolConversion.LossCounts["cache_mark_dropped"])
 		require.NotNil(t, log.ImageSize)
 		require.Equal(t, "4K", *log.ImageSize)
 		require.NotNil(t, log.ImageInputSize)
@@ -315,7 +319,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
-			"user", []byte(nil), []byte(nil),
+			"user", []byte(nil), []byte(nil), []byte(nil),
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -323,6 +327,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.Equal(t, usage.RequestTypeWSV2, log.RequestType)
 		require.True(t, log.Stream)
 		require.True(t, log.OpenAIWSMode)
+		require.Nil(t, log.ProtocolConversion)
 	})
 
 	t.Run("request_type_unknown_falls_back_to_legacy", func(t *testing.T) {
@@ -386,7 +391,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
-			"user", []byte(nil), []byte(nil),
+			"user", []byte(nil), []byte(nil), []byte(nil),
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -457,7 +462,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			"unknown",        // platform snapshot
 			sql.NullString{},
 			sql.NullBool{},
-			"user", []byte(nil), []byte(nil),
+			"user", []byte(nil), []byte(nil), []byte(nil),
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)

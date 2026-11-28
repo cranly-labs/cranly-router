@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLossKindsAndJSONSerialization checks all twenty-three canonical LossKind
+// TestLossKindsAndJSONSerialization checks all twenty-four canonical LossKind
 // constants for distinct non-empty wire spellings. It also verifies that Loss
 // omits empty Detail strings when marshaled and preserves non-empty Detail on round-trip.
 func TestLossKindsAndJSONSerialization(t *testing.T) {
@@ -22,6 +22,7 @@ func TestLossKindsAndJSONSerialization(t *testing.T) {
 		LossMediaUnsupported,
 		LossMediaRelocated,
 		LossToolLowered,
+		LossToolHistoryInlined,
 		LossToolChoiceApproximated,
 		LossHostedToolDropped,
 		LossSchemaApproximated,
@@ -36,7 +37,7 @@ func TestLossKindsAndJSONSerialization(t *testing.T) {
 		LossCandidateCountIgnored,
 		LossIDRewritten,
 	}
-	require.Len(t, kinds, 23)
+	require.Len(t, kinds, 24)
 
 	seen := make(map[LossKind]bool, len(kinds))
 	for _, kind := range kinds {
@@ -63,6 +64,7 @@ func TestLossKindsAndJSONSerialization(t *testing.T) {
 // detailed records. Empty paths must render as "<root>" and unrecognized kinds must fail.
 func TestLossKindIsValidAndString(t *testing.T) {
 	require.True(t, LossExtraDropped.IsValid())
+	require.True(t, LossToolHistoryInlined.IsValid())
 	require.True(t, LossIDRewritten.IsValid())
 	require.False(t, LossKind("").IsValid())
 	require.False(t, LossKind("invented_loss").IsValid())

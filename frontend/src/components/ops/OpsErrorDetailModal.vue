@@ -45,8 +45,25 @@
             }}</span>
             <span
               class="rounded-compact px-2 py-1 font-mono font-semibold"
-              :class="statusBadgeClass(detail.status_code)"
-              >{{ detail.status_code }}</span
+              :class="statusBadgeClass(detail.status_code || null)"
+              >{{ detail.status_code > 0 ? detail.status_code : '—' }}</span
+            >
+          </div>
+          <div
+            v-if="
+              detail.logical_status_code &&
+              detail.logical_status_code >= 400 &&
+              detail.logical_status_code !== detail.status_code
+            "
+            class="flex items-center gap-2"
+          >
+            <span class="text-gray-500 dark:text-dark-400">{{
+              t('admin.ops.errorDetail.logicalStatus')
+            }}</span>
+            <span
+              class="rounded-compact px-2 py-1 font-mono font-semibold"
+              :class="statusBadgeClass(detail.logical_status_code)"
+              >{{ detail.logical_status_code }}</span
             >
           </div>
           <div class="flex items-center gap-2">
@@ -60,6 +77,13 @@
             >
           </div>
         </div>
+        <p
+          v-if="showsLegacyStreamStatus(detail)"
+          class="mt-2 text-xs text-gray-500 dark:text-dark-400"
+          data-testid="historical-client-status-note"
+        >
+          {{ t('usage.errors.detail.historicalClientStatusFallback') }}
+        </p>
         <dl
           class="mt-4 grid min-w-0 grid-cols-1 gap-4 rounded-surface bg-gray-50 p-4 dark:bg-dark-950 sm:grid-cols-2"
         >
@@ -156,14 +180,8 @@
               >
               <span
                 class="rounded-compact px-2 py-1 font-mono text-xs font-semibold"
-                :class="
-                  statusBadgeClass(
-                    attempt.detail.upstream_status_code ?? attempt.detail.status_code,
-                  )
-                "
-                >{{
-                  attempt.detail.upstream_status_code ?? attempt.detail.status_code ?? '—'
-                }}</span
+                :class="statusBadgeClass(attempt.detail.upstream_status_code)"
+                >{{ attempt.detail.upstream_status_code ?? '—' }}</span
               >
               <time class="text-xs text-gray-500 dark:text-dark-400 sm:ml-auto">{{
                 formatDateTime(attempt.detail.created_at)
@@ -352,6 +370,7 @@ import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
 import { useClipboard } from '@/composables/useClipboard'
+import { showsLegacyStreamStatus } from '@/utils/errorBadges'
 import { formatDateTime } from '@/utils/format'
 import {
   formatErrorPayload,
@@ -502,9 +521,9 @@ function formatRequestType(value: number | null | undefined): string {
   }
 }
 
-/** statusBadgeClass applies status color while leaving missing codes neutral.
- * Callers retain the numeric status next to the color. A missing upstream status
- * uses neutral styling and is displayed separately as a placeholder.
+/** statusBadgeClass applies status color while leaving missing or zero codes neutral.
+ * Callers retain the numeric status or placeholder next to the badge. Unrecorded
+ * client statuses and missing upstream statuses both receive neutral styling.
  */
 function statusBadgeClass(code: number | null | undefined): string {
   if (code && code >= 500) return 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'

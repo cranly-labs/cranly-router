@@ -57,6 +57,12 @@
             }}</span>
           </p>
         </div>
+        <p
+          v-if="showsLegacyStreamStatus(detail)"
+          class="col-span-2 text-xs text-gray-500 dark:text-dark-400"
+        >
+          {{ t('usage.errors.detail.historicalClientStatusFallback') }}
+        </p>
         <!-- Error category -->
         <div>
           <span class="font-medium text-gray-500 dark:text-dark-400">{{
@@ -110,6 +116,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { getMyErrorDetail } from '@/api/usage'
+import { showsLegacyStreamStatus } from '@/utils/errorBadges'
 import { formatDateTime } from '@/utils/format'
 import type { UserErrorRequestDetail } from '@/api/usage.types'
 
