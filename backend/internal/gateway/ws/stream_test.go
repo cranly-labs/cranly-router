@@ -12,6 +12,8 @@ import (
 	"github.com/tidwall/gjson"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -392,10 +394,12 @@ func TestRelayTurn_PrepareNativeReplay(t *testing.T) {
 	// ClientPayload.PayloadRaw must retain intact pre-replay trc1: envelope for failover.
 	require.Equal(t, carrierAcct42, gjson.GetBytes(inSame.PayloadRaw, "input.1.encrypted_content").String())
 
-	// 3. Cross account (ID=99) strips mismatched encrypted_content and synthetic store=false id while retaining summary.
+	// 3. Cross account (ID=99) strips mismatched encrypted_content and synthetic store=false id while retaining summary,
+	// records native_replay on the turn scope, and replaces rather than double-counting on local turn retry.
+	turnCtx := telemetry.WithProtocolConversionScope(context.Background())
 	leaseCross := &streamReplayTestLease{events: [][]byte{completedFrame}}
-	portCross := &streamReplayTestPort{dialect: convert.Dialect{ReplayScheme: ir.SchemeOpenAI, ProviderID: 99}}
-	_, err = RelayTurn(context.Background(), portCross, leaseCross, ClientPayload{
+	portCross := &streamReplayTestPort{dialect: convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI, ProviderID: 99}}
+	resCross, err := RelayTurn(turnCtx, portCross, leaseCross, ClientPayload{
 		PayloadRaw:    carrierPayload,
 		PayloadBytes:  len(carrierPayload),
 		OriginalModel: "gpt-5.4",
@@ -406,4 +410,107 @@ func TestRelayTurn_PrepareNativeReplay(t *testing.T) {
 	require.False(t, gjson.GetBytes(leaseCross.written[0], "input.1.encrypted_content").Exists())
 	require.False(t, gjson.GetBytes(leaseCross.written[0], "input.1.id").Exists())
 	require.Equal(t, "message", gjson.GetBytes(leaseCross.written[0], "input.2.type").String())
+	require.NotNil(t, resCross.ProtocolConversion)
+	require.Equal(t, telemetry.ConversionModeNativeReplay, resCross.ProtocolConversion.Mode)
+	require.Equal(t, string(protocol.ProtocolResponsesWebSocket), resCross.ProtocolConversion.ClientProtocol)
+	require.Equal(t, map[string]int{string(ir.LossReplayTokenDropped): 2}, resCross.ProtocolConversion.LossCounts)
+	require.Equal(t, resCross.ProtocolConversion, telemetry.ProtocolConversionFromContext(turnCtx))
+
+	// Local turn retry on the same turnCtx must replace replay counts instead of summing to 4.
+	leaseRetry := &streamReplayTestLease{events: [][]byte{completedFrame}}
+	resRetry, err := RelayTurn(turnCtx, portCross, leaseRetry, ClientPayload{
+		PayloadRaw:    carrierPayload,
+		PayloadBytes:  len(carrierPayload),
+		OriginalModel: "gpt-5.4",
+		RoutingModel:  "gpt-5.4",
+	}, 1, StreamOptions{ProviderID: 99, WriteTimeout: time.Second, ReadTimeout: time.Second}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resRetry.ProtocolConversion)
+	require.Equal(t, map[string]int{string(ir.LossReplayTokenDropped): 2}, resRetry.ProtocolConversion.LossCounts)
+}
+
+// TestRelayTurn_LocalRetryClosesFailedFirstAttemptWithReplaySnapshot simulates
+// a pooled WebSocket turn where the first attempt sends a trc1 replay envelope
+// and disconnects before output, followed by a local retry that succeeds. Both
+// RequestRecord attempts must reflect their own outcomes and native_replay snapshots.
+func TestRelayTurn_LocalRetryClosesFailedFirstAttemptWithReplaySnapshot(t *testing.T) {
+	carrierAcct42, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeOpenAI,
+		Data:       "gAAAA_ws_retry_42",
+		ProviderID: 42,
+	})
+	require.NoError(t, err)
+	foreignCarrier, err := ir.FormatCarrier(ir.Carrier{
+		Scheme:     ir.SchemeXAI,
+		Data:       "xai_foreign_retry",
+		ProviderID: 42,
+	})
+	require.NoError(t, err)
+
+	carrierPayload := []byte(`{"type":"response.create","model":"gpt-5.4","store":false,"input":[{"type":"reasoning","id":"rs_keep","summary":[{"type":"summary_text","text":"pooled summary"}],"encrypted_content":"` + carrierAcct42 + `"},{"type":"reasoning","id":"rs_drop","summary":[],"encrypted_content":"` + foreignCarrier + `"}]}`)
+	completedFrame := []byte(`{"type":"response.completed","response":{"id":"resp_pool_retry_ok","status":"completed"}}`)
+
+	saved := make(map[string]telemetry.RequestRecord)
+	root := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{
+		RequestID: "ws_conn_retry",
+		StartedAt: time.Now(),
+		State:     "running",
+	}, func(rec telemetry.RequestRecord) {
+		saved[rec.RequestID] = rec
+	})
+	session := newEntryRequestRecords(root)
+	attempt := session.attempt()
+	turnCtx := attempt.context(root, 1)
+	reqID := telemetry.RequestIDValue(turnCtx)
+
+	port := &streamReplayTestPort{dialect: convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI, ProviderID: 99}}
+	payload := ClientPayload{
+		PayloadRaw:    carrierPayload,
+		PayloadBytes:  len(carrierPayload),
+		OriginalModel: "gpt-5.4",
+		RoutingModel:  "gpt-5.4",
+	}
+
+	// Attempt 1 fails with EOF before downstream output (retryable pre-output disconnect).
+	failedLease := &streamReplayTestLease{events: nil}
+	_, firstErr := RelayTurn(turnCtx, port, failedLease, payload, 1, StreamOptions{
+		ProviderID:   99,
+		WriteTimeout: time.Second,
+		ReadTimeout:  time.Second,
+	}, nil)
+	require.Error(t, firstErr)
+	require.True(t, IsIngressTurnRetryable(firstErr))
+
+	midRecord := saved[reqID]
+	require.Len(t, midRecord.Attempts, 1)
+	require.Equal(t, "failed", midRecord.Attempts[0].Outcome)
+	require.Contains(t, midRecord.Attempts[0].Reason, "EOF")
+	require.NotNil(t, midRecord.Attempts[0].DurationMs)
+	require.NotNil(t, midRecord.Attempts[0].ProtocolConversion)
+	require.Equal(t, telemetry.ConversionModeNativeReplay, midRecord.Attempts[0].ProtocolConversion.Mode)
+	require.Equal(t, map[string]int{string(ir.LossReplayTokenDropped): 2}, midRecord.Attempts[0].ProtocolConversion.LossCounts)
+
+	// Attempt 2 succeeds on local retry and AfterTurn finishes the logical request.
+	okLease := &streamReplayTestLease{events: [][]byte{completedFrame}}
+	res, secondErr := RelayTurn(turnCtx, port, okLease, payload, 1, StreamOptions{
+		ProviderID:   99,
+		WriteTimeout: time.Second,
+		ReadTimeout:  time.Second,
+	}, nil)
+	require.NoError(t, secondErr)
+	require.NotNil(t, res)
+	attempt.finish(root, TurnCapture{Turn: 1, OriginalModel: "gpt-5.4", Result: res}, 99, "openai", false)
+
+	finalRecord := saved[reqID]
+	require.Equal(t, "completed", finalRecord.State)
+	require.Len(t, finalRecord.Attempts, 2)
+	require.Equal(t, "failed", finalRecord.Attempts[0].Outcome)
+	require.NotNil(t, finalRecord.Attempts[0].ProtocolConversion)
+	require.Equal(t, telemetry.ConversionModeNativeReplay, finalRecord.Attempts[0].ProtocolConversion.Mode)
+	require.Equal(t, map[string]int{string(ir.LossReplayTokenDropped): 2}, finalRecord.Attempts[0].ProtocolConversion.LossCounts)
+
+	require.Equal(t, "completed", finalRecord.Attempts[1].Outcome)
+	require.NotNil(t, finalRecord.Attempts[1].ProtocolConversion)
+	require.Equal(t, telemetry.ConversionModeNativeReplay, finalRecord.Attempts[1].ProtocolConversion.Mode)
+	require.Equal(t, map[string]int{string(ir.LossReplayTokenDropped): 2}, finalRecord.Attempts[1].ProtocolConversion.LossCounts)
 }

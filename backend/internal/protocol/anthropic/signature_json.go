@@ -36,6 +36,13 @@ type rawSignatureMember struct {
 	value jsontext.Value // verbatim raw JSON value slice
 }
 
+// SignatureRetryLosses counts nonempty replay tokens and visible reasoning
+// text actually removed from a successfully encoded Messages recovery payload.
+type SignatureRetryLosses struct {
+	Tokens    int // removed nonempty signatures or redacted payloads
+	Reasoning int // removed blocks with nonempty reasoning text
+}
+
 // StripMessagesSignatureBlocksForRetryBytes removes rejected historical
 // thinking signatures or reasoning blocks from an Anthropic Messages request
 // body via ordered jsontext members and reports whether body changed. Empty,
@@ -48,32 +55,41 @@ type rawSignatureMember struct {
 // Passback routes (passback true) strip signature fields from non-empty
 // thinking blocks while dropping empty thinking and redacted_thinking blocks.
 func StripMessagesSignatureBlocksForRetryBytes(body []byte, passback bool) ([]byte, bool) {
+	rewritten, changed, _ := StripMessagesSignatureBlocksWithLosses(body, passback)
+	return rewritten, changed
+}
+
+// StripMessagesSignatureBlocksWithLosses applies the Messages signature retry
+// and counts what it removed from the outgoing payload. Partial rewrites return
+// the original body and zero losses, so diagnostics never describe an unsent draft.
+func StripMessagesSignatureBlocksWithLosses(body []byte, passback bool) ([]byte, bool, SignatureRetryLosses) {
 	if len(body) == 0 || (!bytes.Contains(body, []byte("thinking")) && !bytes.Contains(body, []byte(`\u`))) {
-		return body, false
+		return body, false, SignatureRetryLosses{}
 	}
 	rootMembers, err := parseOrderedSignatureObject(body)
 	if err != nil {
 		// Malformed or non-object request payloads cannot be repaired safely; keep
 		// the caller's original byte slice intact for standard HTTP 400 presentation.
-		return body, false
+		return body, false, SignatureRetryLosses{}
 	}
 	rawMsgs, ok := findSignatureMember(rootMembers, "messages")
 	if !ok || len(rawMsgs) == 0 || rawMsgs.Kind() != '[' {
-		return body, false
+		return body, false, SignatureRetryLosses{}
 	}
 	msgElems, err := parseSignatureArray(rawMsgs)
 	if err != nil || len(msgElems) == 0 {
-		return body, false
+		return body, false, SignatureRetryLosses{}
 	}
 
+	var losses SignatureRetryLosses
 	rebuiltMsgs := make([]jsontext.Value, len(msgElems))
 	anyMsgChanged := false
 	for i, elem := range msgElems {
-		rebuilt, changed, msgErr := stripAssistantSignatureBlocksInMessage(elem, passback)
+		rebuilt, changed, msgErr := stripAssistantSignatureBlocksInMessage(elem, passback, &losses)
 		if msgErr != nil {
 			// Abort the rewrite if any message element contains truncated JSON so
 			// callers never send a partially rewritten conversation upstream.
-			return body, false
+			return body, false, SignatureRetryLosses{}
 		}
 		rebuiltMsgs[i] = rebuilt
 		if changed {
@@ -85,7 +101,7 @@ func StripMessagesSignatureBlocksForRetryBytes(body []byte, passback bool) ([]by
 	if !passback && isSignatureTopThinkingEnabled(rootMembers) {
 		lacksLeading, loopErr := signatureToolLoopLacksLeadingThinking(rebuiltMsgs)
 		if loopErr != nil {
-			return body, false
+			return body, false, SignatureRetryLosses{}
 		}
 		if lacksLeading {
 			// Active [assistant(tool_use), user(tool_result)] loops fail Anthropic
@@ -97,20 +113,20 @@ func StripMessagesSignatureBlocksForRetryBytes(body []byte, passback bool) ([]by
 	}
 
 	if !anyMsgChanged && !topChanged {
-		return body, false
+		return body, false, SignatureRetryLosses{}
 	}
 	if anyMsgChanged {
 		encodedMsgs, encErr := encodeSignatureArray(rebuiltMsgs)
 		if encErr != nil {
-			return body, false
+			return body, false, SignatureRetryLosses{}
 		}
 		rootMembers = setSignatureMember(rootMembers, "messages", encodedMsgs)
 	}
 	out, err := encodeOrderedSignatureObject(rootMembers)
 	if err != nil {
-		return body, false
+		return body, false, SignatureRetryLosses{}
 	}
-	return out, true
+	return out, true, losses
 }
 
 // stripAssistantSignatureBlocksInMessage rewrites one assistant message element
@@ -118,7 +134,7 @@ func StripMessagesSignatureBlocksForRetryBytes(body []byte, passback bool) ([]by
 // messages, string content, and unrelated members byte-for-byte untouched.
 // Emptied assistant content arrays receive signatureRetryAssistantPlaceholder
 // so Anthropic does not reject empty content on retry.
-func stripAssistantSignatureBlocksInMessage(elem jsontext.Value, passback bool) (jsontext.Value, bool, error) {
+func stripAssistantSignatureBlocksInMessage(elem jsontext.Value, passback bool, losses *SignatureRetryLosses) (jsontext.Value, bool, error) {
 	if len(elem) == 0 || elem.Kind() != '{' {
 		return elem, false, nil
 	}
@@ -150,8 +166,11 @@ func stripAssistantSignatureBlocksInMessage(elem jsontext.Value, passback bool) 
 		bType, _ := readSignatureMemberString(bMembers, "type")
 		switch bType {
 		case "thinking":
+			if signature, _ := readSignatureMemberString(bMembers, "signature"); signature != "" {
+				losses.Tokens++
+			}
+			thinkText, _ := readSignatureMemberString(bMembers, "thinking")
 			if passback {
-				thinkText, _ := readSignatureMemberString(bMembers, "thinking")
 				if thinkText == "" {
 					// Empty passback thinking blocks carry no reasoning context and fail
 					// non-empty content rules once signature fields are stripped.
@@ -173,7 +192,13 @@ func stripAssistantSignatureBlocksInMessage(elem jsontext.Value, passback bool) 
 			}
 			changed = true
 
+			if thinkText != "" {
+				losses.Reasoning++
+			}
 		case "redacted_thinking":
+			if data, _ := readSignatureMemberString(bMembers, "data"); data != "" {
+				losses.Tokens++
+			}
 			changed = true
 
 		default:

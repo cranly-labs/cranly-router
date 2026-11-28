@@ -7,7 +7,7 @@
 - [提供商与凭据](#提供商与凭据)：OAuth/API Key 区别、凭据边界、Codex 指纹与会话头。
 - [协议与传输](#openai_protocol_dispatch)：支持的协议族、原生协议配置与报文转换规则。
 - [图片与 GIF](#images_url_backfill)：Images 流式/非流式转换、URL 回填、创作台适配与 GIF 计费。
-- [Fast 与推理档位](#openai_fast_policy)：Fast/Ultra Fast 优先级、免费 Fast 计费与推理强度上限。
+- [Fast 与推理档位](#openai_fast_policy)：Fast/Ultra Fast 策略优先级与推理强度上限。
 - [远程压缩协议](#远程压缩协议)：原生 `remote_compaction_v2` 与旧版 `/responses/compact` 对比。
 - [Responses 请求细节](#responses-请求细节)：WS 长连接与调参、预热续接、路由提示、回合状态、Lite、namespace 与 Chat 降级。
 - [模型与能力](#模型与能力)：完整型号规则、工具能力校验与图片模型检查。
@@ -145,13 +145,11 @@ API Key 提供商设置 `extra.images_url_to_b64_json=true`（默认关闭）后
 
 分组通过 `openai_fast_policy` 配置 `follow_request`、`force_priority`、`force_ultrafast` 或 `force_off`（兼容旧布尔字段 `force_openai_fast`：新字段优先，省略两者保留现值）。HTTP、Chat、Messages、passthrough 和 WS 共享同一判定顺序：
 
-1. 全局规则优先：先对请求中已有的合法 `service_tier` 执行全局过滤、阻断或强制（支持 `force_ultrafast`）。
-2. 分组策略：全局放行后，分组 `force_off` 移除 Fast/Ultra Fast 并阻止 Key 重开；`force_priority` / `force_ultrafast` 可为未带 tier 的请求注入档位（再受全局规则约束）。
-3. API Key 覆盖：Key 的 `force_off` 可关闭分组级加速；`force_on` 保留分组强制的 Ultra Fast；`force_ultrafast` 仅在 OpenAI 上游且模型定价声明了 Ultrafast 时将 Fast 升为 Ultrafast，改写后再次经过全局规则。
+1. 分组 `force_priority` 或 `force_ultrafast` 先选定待检查的档位，其他分组策略沿用请求档位。仅 OpenAI 提供商应用分组加速设置。
+2. 对已有档位执行系统规则，按付款用户、认证方式和上游型号匹配。过滤、阻断或强制动作立即生效。系统放行后，分组 `force_off` 移除加速档位并结束判定。
+3. 其余情况再应用 Key 策略。Key 的 `force_on` 保留分组强制的 Ultrafast，`force_ultrafast` 需要 OpenAI 上游和声明 Ultrafast 的模型价格。Key 新引入的档位再次接受系统规则检查。
 
-其他平台忽略此策略，公开分组接口不暴露该管理字段。认证快照缓存与失效见[提供商调度与缓存一致性](../architecture/provider_scheduling_and_cache.md)。
-
-免费 Fast（`free_openai_fast`）属于价格配置的用户计费策略，不改变出站 `service_tier`。当 OpenAI 提供商实际按 `priority` 或 `fast` 计费时，用户侧 `ActualCost` 与统一结算按同一模型、价卡、高峰和长上下文规则重算为 Standard 价格，Usage Log 的 `total_cost` 与提供商统计/额度仍记 Fast 成本（缺少 Standard 价格时走缺价零成本流程）。
+公开分组接口不暴露该管理字段。认证快照缓存与失效见[提供商调度与缓存一致性](../architecture/provider_scheduling_and_cache.md)。
 
 ### 推理档位上限
 

@@ -56,13 +56,14 @@ func TestOpenAIWSPairedStructured403SideEffectsCanBeDeduplicated(t *testing.T) {
 // counting toward SLA.
 func TestMarkOpenAIWSClientVisibleFailure_ResponseFailedNestedError(t *testing.T) {
 	c, _ := gin.CreateTestContext(nil)
-	markOpenAIWSClientVisibleFailure(c, "response.failed", []byte(`{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too long","status_code":400}}}`))
+	markOpenAIWSClientVisibleFailure(c, "response.failed", []byte(`{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too long","status_code":400}}}`), http.StatusOK)
 
 	got, ok := gatewayhttp.GetOpsStreamError(c)
 	require.True(t, ok)
 	require.True(t, got.CountTowardsSLA)
 	require.Equal(t, http.StatusBadRequest, got.IntendedStatus)
 	require.Equal(t, "invalid_request_error", got.ErrType)
+	require.Equal(t, new(http.StatusOK), got.WireUpstreamStatus)
 	require.Equal(t, "context_length_exceeded", got.Code)
 	require.Equal(t, "too long", got.Message)
 }
@@ -74,7 +75,7 @@ func TestMarkOpenAIWSClientVisibleFailure_ResponseFailedNestedError(t *testing.T
 func TestMarkOpenAIWSClientVisibleFailure_ErrorAndSuccessBoundary(t *testing.T) {
 	t.Run("error", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(nil)
-		markOpenAIWSClientVisibleFailure(c, "error", []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`))
+		markOpenAIWSClientVisibleFailure(c, "error", []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`), http.StatusOK)
 		got, ok := gatewayhttp.GetOpsStreamError(c)
 		require.True(t, ok)
 		require.Equal(t, http.StatusTooManyRequests, got.IntendedStatus)
@@ -82,7 +83,7 @@ func TestMarkOpenAIWSClientVisibleFailure_ErrorAndSuccessBoundary(t *testing.T) 
 
 	t.Run("completed does not mark", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(nil)
-		markOpenAIWSClientVisibleFailure(c, "response.completed", []byte(`{"type":"response.completed"}`))
+		markOpenAIWSClientVisibleFailure(c, "response.completed", []byte(`{"type":"response.completed"}`), http.StatusOK)
 		_, ok := gatewayhttp.GetOpsStreamError(c)
 		require.False(t, ok)
 	})

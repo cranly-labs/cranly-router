@@ -72,23 +72,37 @@ const q = ref('')
 // appliedRequestId before an identity query becomes active.
 const requestId = ref('')
 const appliedRequestId = ref('')
-const statusCode = ref<number | 'other' | null>(null)
+const clientStatusCode = ref<number | 'other' | null>(null)
+const upstreamStatusCode = ref<number | 'other' | null>(null)
 const phase = ref<string>('')
 const errorOwner = ref<string>('')
 const viewMode = ref<'errors' | 'excluded' | 'all'>('errors')
 
+// commonStatusCodes lists standard HTTP error statuses shared by the client and
+// upstream filter menus.
+const commonStatusCodes = [400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529]
+
 // Translated selector choices preserve API filter values for error ownership,
-// phase, status code, and inclusion mode.
+// phase, client and upstream status codes, and inclusion mode.
 const modalTitle = computed(() => {
   return props.errorType === 'upstream'
     ? t('admin.ops.errorDetails.upstreamErrors')
     : t('admin.ops.errorDetails.requestErrors')
 })
 
-const statusCodeSelectOptions = computed(() => {
-  const codes = [400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529]
+const clientStatusSelectOptions = computed(() => {
+  const codes = [200, ...commonStatusCodes]
   return [
-    { value: null, label: t('common.all') },
+    { value: null, label: t('admin.ops.errorDetails.allClientStatuses') },
+    ...codes.map((c) => ({ value: c, label: String(c) })),
+    { value: 'other', label: t('admin.ops.errorDetails.statusCodeOther') || 'Other' },
+  ]
+})
+
+const upstreamStatusSelectOptions = computed(() => {
+  const codes = [0, ...commonStatusCodes]
+  return [
+    { value: null, label: t('admin.ops.errorDetails.allUpstreamStatuses') },
     ...codes.map((c) => ({ value: c, label: String(c) })),
     { value: 'other', label: t('admin.ops.errorDetails.statusCodeOther') || 'Other' },
   ]
@@ -199,8 +213,13 @@ async function fetchErrorLogs() {
       delete params.start_time
       delete params.end_time
     }
-    if (statusCode.value === 'other') params.status_codes_other = '1'
-    else if (typeof statusCode.value === 'number') params.status_codes = String(statusCode.value)
+    if (clientStatusCode.value === 'other') params.status_codes_other = '1'
+    else if (typeof clientStatusCode.value === 'number')
+      params.status_codes = String(clientStatusCode.value)
+
+    if (upstreamStatusCode.value === 'other') params.upstream_status_codes_other = '1'
+    else if (typeof upstreamStatusCode.value === 'number')
+      params.upstream_status_codes = String(upstreamStatusCode.value)
 
     const phaseVal = String(phase.value || '').trim()
     if (phaseVal) params.phase = phaseVal
@@ -242,7 +261,8 @@ function resetFilters() {
   q.value = ''
   requestId.value = ''
   appliedRequestId.value = ''
-  statusCode.value = null
+  clientStatusCode.value = null
+  upstreamStatusCode.value = null
   phase.value = props.errorType === 'upstream' ? 'upstream' : ''
   errorOwner.value = ''
   viewMode.value = 'errors'
@@ -271,6 +291,7 @@ watch(
       props.customEndTime,
       props.platform,
       props.groupId,
+      props.errorType,
     ] as const,
   () => {
     if (!props.show) return
@@ -305,7 +326,14 @@ watch(
 )
 
 watch(
-  () => [statusCode.value, phase.value, errorOwner.value, viewMode.value] as const,
+  () =>
+    [
+      clientStatusCode.value,
+      upstreamStatusCode.value,
+      phase.value,
+      errorOwner.value,
+      viewMode.value,
+    ] as const,
   () => {
     if (!props.show) return
     page.value = 1
@@ -319,7 +347,7 @@ watch(
     <div class="flex h-full min-h-0 flex-col">
       <!-- Filters -->
       <div class="mb-4 flex-shrink-0 border-b border-gray-200 pb-4 dark:border-dark-700">
-        <div class="grid grid-cols-2 gap-2 md:grid-cols-10">
+        <div class="grid grid-cols-2 gap-2 md:grid-cols-6 xl:grid-cols-12">
           <div class="col-span-2 compact-select">
             <div class="relative">
               <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
@@ -347,18 +375,49 @@ watch(
             />
           </div>
 
-          <div class="compact-select">
+          <div class="col-span-1 xl:col-span-2 compact-select">
             <Select
-              :model-value="statusCode"
-              :options="statusCodeSelectOptions"
-              @update:model-value="statusCode = $event as any"
-            />
+              :model-value="clientStatusCode"
+              :options="clientStatusSelectOptions"
+              :aria-label="t('admin.ops.errorLog.status')"
+              @update:model-value="clientStatusCode = $event as any"
+            >
+              <template #selected="{ option }">
+                {{
+                  clientStatusCode === null
+                    ? option?.label || t('admin.ops.errorDetails.allClientStatuses')
+                    : t('admin.ops.errorDetails.selectedClientStatus', {
+                        status: option?.label ?? String(clientStatusCode),
+                      })
+                }}
+              </template>
+            </Select>
+          </div>
+
+          <div class="col-span-1 xl:col-span-2 compact-select">
+            <Select
+              :model-value="upstreamStatusCode"
+              :options="upstreamStatusSelectOptions"
+              :aria-label="t('admin.ops.errorLog.upstreamStatus')"
+              @update:model-value="upstreamStatusCode = $event as any"
+            >
+              <template #selected="{ option }">
+                {{
+                  upstreamStatusCode === null
+                    ? option?.label || t('admin.ops.errorDetails.allUpstreamStatuses')
+                    : t('admin.ops.errorDetails.selectedUpstreamStatus', {
+                        status: option?.label ?? String(upstreamStatusCode),
+                      })
+                }}
+              </template>
+            </Select>
           </div>
 
           <div class="compact-select">
             <Select
               :model-value="phase"
               :options="phaseSelectOptions"
+              :aria-label="t('admin.ops.errorLog.phase')"
               @update:model-value="phase = String($event ?? '')"
             />
           </div>
@@ -367,6 +426,7 @@ watch(
             <Select
               :model-value="errorOwner"
               :options="ownerSelectOptions"
+              :aria-label="t('admin.ops.errorDetail.classificationKeys.owner')"
               @update:model-value="errorOwner = String($event ?? '')"
             />
           </div>
@@ -375,12 +435,13 @@ watch(
             <Select
               :model-value="viewMode"
               :options="viewModeSelectOptions"
+              :aria-label="t('admin.ops.errorLog.type')"
               @update:model-value="viewMode = $event as any"
             />
           </div>
 
           <div
-            class="col-span-2 flex items-center justify-start gap-1 md:col-span-2 md:justify-end"
+            class="col-span-1 flex items-center justify-start gap-1 md:col-span-3 md:justify-end xl:col-span-1"
           >
             <button
               type="button"

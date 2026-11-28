@@ -391,7 +391,6 @@ export default {
       peak_end: 'Peak end',
       peak_rate_multiplier: 'Peak multiplier',
       long_context_pricing_enabled: 'Enable built-in long-context pricing',
-      free_openai_fast: 'Charge OpenAI Fast at Standard prices',
       batch_image_discount_multiplier: 'Batch image discount multiplier',
       batch_image_hold_multiplier: 'Batch image hold multiplier',
       web_search_price_per_call: 'Codex web search (USD/call)',
@@ -410,8 +409,6 @@ export default {
           'Apply built-in tiered pricing when input exceeds the model’s long-context threshold. Turning this off uses base prices; explicitly configured context intervals still apply.',
         peak_rate_enabled:
           'Apply an additional multiplier to token charges during the configured hours, using the server time zone. The end must be later than the start on the same day.',
-        free_openai_fast:
-          'Charge users Standard prices for OpenAI Fast requests while keeping the upstream Fast tier. Provider cost statistics retain the Fast cost.',
         batch_image_discount_multiplier:
           'Applies to Gemini API and Vertex batch image jobs. Multiply the regular per-image price by this value for settlement; 0 is free.',
         batch_image_hold_multiplier:

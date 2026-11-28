@@ -178,6 +178,7 @@
           :columns="visibleColumns"
           compact-user-column
           :show-ip-geo-toolbar="false"
+          :show-protocol-conversion="true"
           :server-side-sort="true"
           :default-sort-key="'created_at'"
           :default-sort-order="'desc'"
@@ -1097,6 +1098,7 @@ const errAllColumns = computed(() => [
   { key: 'type', label: t('admin.ops.errorLog.type') },
   { key: 'category', label: t('usage.errors.category') },
   { key: 'status', label: t('admin.ops.errorLog.status') },
+  { key: 'upstream_status', label: t('admin.ops.errorLog.upstreamStatus') },
   { key: 'message', label: t('admin.ops.errorLog.message') },
   { key: 'created_at', label: t('admin.ops.errorLog.time') },
   { key: 'user_agent', label: t('usage.userAgent') },
@@ -1267,6 +1269,10 @@ const loadAdminErrors = async () => {
       category: filters.value.error_category || undefined,
       status_codes:
         filters.value.status_code != null ? String(filters.value.status_code) : undefined,
+      upstream_status_codes:
+        filters.value.upstream_status_code != null
+          ? String(filters.value.upstream_status_code)
+          : undefined,
       sort_by: errSortBy.value,
       sort_order: errSortOrder.value,
     })

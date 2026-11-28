@@ -56,6 +56,9 @@ type RequestAttempt struct {
 	// FailureTimings retains bounded connection and failure-stage observations for an
 	// unsuccessful exchange. A usage-producing attempt stores its performance on usage.
 	FailureTimings map[string]int64 `json:"failure_timings,omitempty"`
+	// ProtocolConversion retains bounded protocol transformation metadata when this
+	// attempt ran cross-protocol IR conversion, client-tool lowering, or trc1 replay.
+	ProtocolConversion *ProtocolConversion `json:"protocol_conversion,omitempty"`
 
 	Number          int    `json:"number"`                               // upstream attempt ordinal
 	ProviderID      int64  `json:"provider_id,omitempty"`                // attempted provider database ID
@@ -121,8 +124,15 @@ type RequestCapture struct {
 	mu sync.Mutex // record and observer mutex
 	// record retains the supplied snapshot and its mutable values at creation.
 	// Callers transfer collection use to locked capture updates after attaching it.
-	record  RequestRecord       // current logical request snapshot
-	observe func(RequestRecord) // optional record publication callback
+	record          RequestRecord            // current logical request snapshot
+	observe         func(RequestRecord)      // optional record publication callback
+	conversionScope *protocolConversionScope // fallback conversion slot when no attempt scope is bound
+
+	// latestDispatch and wireStatus belong to the most recent generation dispatch.
+	// mu protects both fields. Each retry has a distinct reference even when
+	// bounded request history can no longer retain additional attempts.
+	latestDispatch *RequestAttemptRef // current dispatch identity
+	wireStatus     int                // status received in its response headers
 }
 
 // NewRequestID returns a randomly generated UUID with version-four and RFC
@@ -186,7 +196,8 @@ func WithoutRequestCapture(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, requestCaptureKey, (*RequestCapture)(nil))
+	ctx = context.WithValue(ctx, requestCaptureKey, (*RequestCapture)(nil))
+	return context.WithValue(ctx, requestConversionScopeKey, (*protocolConversionScope)(nil))
 }
 
 // UpdateRequest invokes a mutation under the capture mutex and publishes a
@@ -325,9 +336,21 @@ func cloneRequestRecord(record RequestRecord) RequestRecord {
 	record.Attempts = append([]RequestAttempt(nil), record.Attempts...)
 	for i := range record.Attempts {
 		record.Attempts[i].FailureTimings = maps.Clone(record.Attempts[i].FailureTimings)
+		record.Attempts[i].ProtocolConversion = record.Attempts[i].ProtocolConversion.Clone()
 	}
 	record.FailureTimings = maps.Clone(record.FailureTimings)
 	return record
+}
+
+// ensureFallbackConversionScope returns c's lazily initialized conversion slot
+// for single-attempt paths that did not bind an explicit provider scope.
+func (c *RequestCapture) ensureFallbackConversionScope() *protocolConversionScope {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conversionScope == nil {
+		c.conversionScope = &protocolConversionScope{}
+	}
+	return c.conversionScope
 }
 
 // MergeRequestRecord combines snapshots for the same logical ID, which
@@ -524,6 +547,7 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 		if len(record.Attempts[i].RequestID) > 255 || strings.ContainsAny(record.Attempts[i].RequestID, "\r\n\x00") {
 			record.Attempts[i].RequestID = ""
 		}
+		record.Attempts[i].ProtocolConversion = NormalizeProtocolConversion(record.Attempts[i].ProtocolConversion)
 	}
 	return record
 }

@@ -1038,11 +1038,14 @@ describe('admin UsageView errors tab filter forwarding', () => {
     vi.advanceTimersByTime(120)
     await flushPromises()
 
-    // Set the model, provider, and group filters before opening the error tab.
+    // Set the model, provider, group, client status, and upstream status filters
+    // before opening the error tab.
     const vm = wrapper.vm as any
     vm.filters.model = 'gpt-5.3-codex'
     vm.filters.provider_id = 7
     vm.filters.group_id = 3
+    vm.filters.status_code = 502
+    vm.filters.upstream_status_code = 429
     await flushPromises()
 
     // Opening the second tab triggers its error loader using the current shared filter values.
@@ -1056,8 +1059,12 @@ describe('admin UsageView errors tab filter forwarding', () => {
         model: 'gpt-5.3-codex',
         provider_id: 7,
         group_id: 3,
+        status_codes: '502',
+        upstream_status_codes: '429',
       }),
     )
+    expect(vm.errVisibleColumnKeys).toContain('status')
+    expect(vm.errVisibleColumnKeys).toContain('upstream_status')
   })
 })
 
@@ -1137,5 +1144,47 @@ describe('admin UsageView ranking tab', () => {
     expect((wrapper.vm as any).activeTab).toBe('usage')
     expect((wrapper.vm as any).filters.user_id).toBe(5)
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 5 }), expect.anything())
+  })
+
+  // Administrator /admin/usage must enable showProtocolConversion on the shared
+  // UsageTable so converted rows display their mode badge and diagnostic tooltip.
+  it('enables showProtocolConversion on the administrator UsageTable', async () => {
+    const AdminUsageTableStub = defineComponent({
+      name: 'UsageTable',
+      props: [
+        'showProtocolConversion', // administrator protocol-conversion visibility flag
+      ],
+      template: '<div data-test="admin-usage-table" />',
+    })
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: AdminUsageTableStub,
+          UsageExportDialog: UsageExportDialogStub,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          GroupDistributionChart: true,
+          EndpointDistributionChart: true,
+          UserTokenRanking: UserTokenRankingStub,
+          OpsErrorLogTable: true,
+          OpsErrorDetailModal: true,
+        },
+      },
+    })
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    const table = wrapper.findComponent(AdminUsageTableStub)
+    expect(table.exists()).toBe(true)
+    expect(table.props('showProtocolConversion')).toBe(true)
   })
 })

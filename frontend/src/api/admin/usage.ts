@@ -131,12 +131,14 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   sort_by?: string // Requested sort column.
   sort_order?: 'asc' | 'desc' // Requested ordering direction.
   /**
-   * Error-list filters share the usage view's filter object, but error_phase,
-   * error_category and status_code are consumed by the error request endpoint.
+   * Error-list filters share the usage view's filter object, while error_phase,
+   * error_category, status_code, and upstream_status_code are consumed by the
+   * error request endpoint.
    */
   error_phase?: string | null // Requested error phase.
   error_category?: string | null // Requested error category.
-  status_code?: number | null // HTTP status code.
+  status_code?: number | null // Client HTTP status code.
+  upstream_status_code?: number | null // Upstream HTTP status code.
   native_compaction_v2?: boolean | null // Native compaction v2.
 }
 

@@ -10,6 +10,13 @@ import SettingsNotice from '@/components/common/settings/SettingsNotice.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatDateTime, formatTokens } from '@/utils/format'
 import { formatTimingMs } from '@/utils/requestTiming'
+import {
+  formatProtocolConversionRoute,
+  getProtocolConversionBadgeClass,
+  getProtocolConversionLossItems,
+  getProtocolConversionModeLabel,
+  protocolConversionsEqual,
+} from '@/utils/protocolConversion'
 import type { IconName } from '@/components/icons/registry'
 import type { UsageLogTiming } from '@/api/usage.types'
 import type { RequestAlias, RequestDetail } from '@/api/requests'
@@ -19,12 +26,14 @@ import type { RequestAlias, RequestDetail } from '@/api/requests'
 // record retain separate timelines on the request scale because their observations belong
 // to different work.
 //
-// Identifier placement follows provider and attempt ownership. Classified response and
-// upstream-request aliases appear beneath their matching attempt, while unmatched aliases
-// retain their source and ownership in the related list. Historical unclassified upstream
-// aliases use a narrower value comparison when their attempt is absent. Equal identifier
-// strings from different providers or attempts remain distinct list identities.
-// Provider names label both attempts and related identifiers by their recorded provider ID.
+// Identifier placement and protocol-conversion attribution follow provider and attempt
+// ownership. Classified response and upstream-request aliases appear beneath their matching
+// attempt, while unmatched aliases retain their source and ownership in the related list.
+// Historical unclassified upstream aliases use a narrower value comparison when their attempt
+// is absent, and usage-level protocol conversion renders only when no matching attempt row
+// already displays the identical snapshot. Equal identifier strings from different providers
+// or attempts remain distinct list identities. Provider names label both attempts and related
+// identifiers by their recorded provider ID.
 
 // props supplies the request detail record whose nested collections drive the card sections
 // and timing views.
@@ -213,15 +222,43 @@ function aliasMeta(alias: RequestAlias) {
   return parts.join(' · ')
 }
 
-// attemptHasDetails reports whether upstream identity, reason, stage, or matching response
-// aliases require an expanded attempt detail list.
+// attemptHasDetails reports whether upstream identity, reason, stage, protocol conversion,
+// or matching response aliases require an expanded attempt detail list.
 const attemptHasDetails = (attempt: Attempt) =>
   Boolean(
     attempt.upstream_request_id ||
     attempt.reason ||
     attempt.stage ||
+    attempt.protocol_conversion ||
     attemptResponses(attempt).length,
   )
+
+// UsageEntry represents one linked usage record rendered inside RequestDetailCard.
+type UsageEntry = NonNullable<RequestDetail['usage']>[number]
+
+// translateKey adapts vue-i18n's overloaded t function to shared protocolConversion helpers.
+const translateKey = (key: string, fallback?: string): string =>
+  fallback !== undefined ? t(key, fallback) : t(key)
+
+// shouldShowUsageConversion reports whether usage carries protocol_conversion metadata that
+// is not already displayed identically on its producing attempt row (for example on legacy
+// records whose request_records entry has expired).
+function shouldShowUsageConversion(usage: UsageEntry): boolean {
+  const conv = usage.protocol_conversion
+  if (!conv) return false
+  const attemptNum = usage.timings?.values.attempt_number
+  if (attemptNum && attemptNum > 0) {
+    const matched = attemptRows.value.find((attempt) => attempt.number === attemptNum)
+    if (matched && protocolConversionsEqual(matched.protocol_conversion, conv)) {
+      return false
+    }
+  } else if (attemptRows.value.length === 1) {
+    if (protocolConversionsEqual(attemptRows.value[0].protocol_conversion, conv)) {
+      return false
+    }
+  }
+  return true
+}
 </script>
 
 <template>
@@ -414,6 +451,54 @@ const attemptHasDetails = (attempt: Attempt) =>
                   <span v-if="attempt.reason">{{ attempt.reason }}</span>
                 </dd>
               </template>
+              <template v-if="attempt.protocol_conversion">
+                <dt class="mt-1 text-gray-500 first:mt-0 dark:text-dark-400 sm:mt-0">{{
+                  t('requests.protocolConversion.title')
+                }}</dt>
+                <dd
+                  data-testid="attempt-protocol-conversion"
+                  class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-gray-700 dark:text-dark-100"
+                >
+                  <span
+                    class="inline-flex items-center rounded-compact px-1.5 py-0.5 text-xs font-medium"
+                    :class="getProtocolConversionBadgeClass(attempt.protocol_conversion.mode)"
+                    >{{
+                      getProtocolConversionModeLabel(attempt.protocol_conversion.mode, translateKey)
+                    }}</span
+                  >
+                  <span class="font-mono text-xs">{{
+                    formatProtocolConversionRoute(attempt.protocol_conversion, translateKey)
+                  }}</span>
+                  <span
+                    v-if="attempt.protocol_conversion.dialect"
+                    class="text-gray-500 dark:text-dark-300"
+                    >{{ t('requests.protocolConversion.dialect') }}:
+                    <span class="font-mono text-gray-800 dark:text-dark-100">{{
+                      attempt.protocol_conversion.dialect
+                    }}</span></span
+                  >
+                  <span
+                    v-if="attempt.protocol_conversion.replay_scheme"
+                    class="text-gray-500 dark:text-dark-300"
+                    >{{ t('requests.protocolConversion.replayScheme') }}:
+                    <span class="font-mono text-gray-800 dark:text-dark-100">{{
+                      attempt.protocol_conversion.replay_scheme
+                    }}</span></span
+                  >
+                  <span
+                    v-for="loss in getProtocolConversionLossItems(
+                      attempt.protocol_conversion,
+                      translateKey,
+                    )"
+                    :key="loss.kind"
+                    data-testid="attempt-protocol-conversion-loss"
+                    class="inline-flex items-center gap-1 rounded-compact bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30"
+                  >
+                    <span>{{ loss.label }}</span>
+                    <span class="font-mono tabular-nums">×{{ loss.count }}</span>
+                  </span>
+                </dd>
+              </template>
             </dl>
             <RequestTimeline
               v-if="attempt.failure_timings"
@@ -508,6 +593,53 @@ const attemptHasDetails = (attempt: Attempt) =>
                 }}</dd>
               </div>
             </dl>
+            <div
+              v-if="shouldShowUsageConversion(usage) && usage.protocol_conversion"
+              data-testid="usage-protocol-conversion"
+              class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-700 dark:text-dark-100"
+            >
+              <span class="text-gray-500 dark:text-dark-400"
+                >{{ t('requests.protocolConversion.title') }}:</span
+              >
+              <span
+                class="inline-flex items-center rounded-compact px-1.5 py-0.5 text-xs font-medium"
+                :class="getProtocolConversionBadgeClass(usage.protocol_conversion.mode)"
+                >{{
+                  getProtocolConversionModeLabel(usage.protocol_conversion.mode, translateKey)
+                }}</span
+              >
+              <span class="font-mono text-xs">{{
+                formatProtocolConversionRoute(usage.protocol_conversion, translateKey)
+              }}</span>
+              <span
+                v-if="usage.protocol_conversion.dialect"
+                class="text-gray-500 dark:text-dark-300"
+                >{{ t('requests.protocolConversion.dialect') }}:
+                <span class="font-mono text-gray-800 dark:text-dark-100">{{
+                  usage.protocol_conversion.dialect
+                }}</span></span
+              >
+              <span
+                v-if="usage.protocol_conversion.replay_scheme"
+                class="text-gray-500 dark:text-dark-300"
+                >{{ t('requests.protocolConversion.replayScheme') }}:
+                <span class="font-mono text-gray-800 dark:text-dark-100">{{
+                  usage.protocol_conversion.replay_scheme
+                }}</span></span
+              >
+              <span
+                v-for="loss in getProtocolConversionLossItems(
+                  usage.protocol_conversion,
+                  translateKey,
+                )"
+                :key="loss.kind"
+                data-testid="usage-protocol-conversion-loss"
+                class="inline-flex items-center gap-1 rounded-compact bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30"
+              >
+                <span>{{ loss.label }}</span>
+                <span class="font-mono tabular-nums">×{{ loss.count }}</span>
+              </span>
+            </div>
           </li>
         </ul>
       </section>
@@ -526,8 +658,18 @@ const attemptHasDetails = (attempt: Attempt) =>
               class="flex w-full items-center gap-4 px-4 py-3 text-left text-sm transition-colors hover:bg-gray-50 dark:hover:bg-dark-800"
               @click="emit('openError', failure.id)"
             >
-              <span class="font-mono text-xs font-medium" :class="statusClass(failure.status_code)"
-                >HTTP {{ failure.status_code }}</span
+              <span
+                class="font-mono text-xs font-medium"
+                :class="statusClass(failure.status_code)"
+                >{{ failure.status_code > 0 ? `HTTP ${failure.status_code}` : '—' }}</span
+              >
+              <span
+                v-if="
+                  failure.logical_status_code && failure.logical_status_code !== failure.status_code
+                "
+                class="text-xs text-gray-500 dark:text-dark-400"
+                >{{ t('admin.ops.errorDetail.logicalStatus') }}
+                {{ failure.logical_status_code }}</span
               >
               <span class="text-gray-700 dark:text-dark-100">{{ phaseLabel(failure.phase) }}</span>
               <span class="font-mono text-xs text-gray-400 dark:text-dark-400"

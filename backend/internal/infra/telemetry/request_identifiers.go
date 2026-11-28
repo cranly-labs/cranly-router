@@ -12,7 +12,9 @@ import (
 // source and upstream attempt ownership. Provider selection fixes one response
 // header before dispatch. Each HTTP exchange then receives an immutable reference
 // to its provider and ordinal, so responses from abandoned exchanges cannot write
-// their identifiers into a replacement attempt. Empty observations leave an
+// their identifiers into a replacement attempt. Final stream diagnostics read
+// the current dispatch's observed HTTP status under the same recorder lock.
+// Empty observations leave an
 // earlier identifier intact, and a configured header never falls back to another
 // response header. Transport failures and HTTP rejections finish the referenced
 // attempt even when no text timing collector or protocol error event exists.
@@ -40,6 +42,9 @@ type RequestAttemptRef struct {
 // WithRequestProvider snapshots the diagnostic header for one provider selection.
 // Blank configuration selects X-Request-ID. Call before dispatch and retain the
 // returned context for that selection; later provider mutations cannot alter it.
+// Every call attaches a fresh conversion scope so both cross-provider failover
+// and same-provider retries start cleanly without reusing an earlier attempt's
+// accumulated conversion losses while preserving already recorded attempts.
 // @project-doc docs/operations/request_lookup.md#request_identifier_sources
 func WithRequestProvider(ctx context.Context, providerID int64, header string) context.Context {
 	if ctx == nil {
@@ -50,7 +55,8 @@ func WithRequestProvider(ctx context.Context, providerID int64, header string) c
 		header = "X-Request-ID"
 	}
 	selection := RequestAttemptRef{ProviderID: providerID, Header: http.CanonicalHeaderKey(header)}
-	return context.WithValue(ctx, requestProviderKey, selection)
+	ctx = context.WithValue(ctx, requestProviderKey, selection)
+	return WithProtocolConversionScope(ctx)
 }
 
 // RequestProvider reads the immutable provider selection used by diagnostic capture.
@@ -79,6 +85,7 @@ func RequestProvider(ctx context.Context) RequestAttemptRef {
 func BeginRequestAttempt(ctx context.Context, number int) context.Context {
 	ref := RequestProvider(ctx)
 	ref.Number = number
+	capture, _ := ctx.Value(requestCaptureKey).(*RequestCapture)
 	UpdateRequest(ctx, func(record *RequestRecord) {
 		if ref.Number <= 0 {
 			if ref.ProviderID <= 0 {
@@ -93,13 +100,20 @@ func BeginRequestAttempt(ctx context.Context, number int) context.Context {
 				ref.Number = 1
 			}
 		}
+		// Publish an empty slot before dispatch. Delayed headers keep their
+		// original pointer even when a same-provider retry reuses an ordinal.
+		capture.latestDispatch = &ref
+		capture.wireStatus = 0
 		// Bound retained attempts using the existing diagnostic storage limit.
 		if len(record.Attempts) < 256 {
 			at := time.Now()
 			record.Attempts = append(record.Attempts, RequestAttempt{Number: ref.Number, ProviderID: ref.ProviderID, RequestIDHeader: ref.Header, StartedAt: &at, Outcome: "running"})
 		}
 	})
-	return context.WithValue(ctx, requestAttemptKey, ref)
+	if staged := bindConversionScopeAttempt(ctx, ref); staged != nil {
+		syncRecordedAttemptConversion(ctx, ref, staged)
+	}
+	return context.WithValue(ctx, requestAttemptKey, &ref)
 }
 
 // RequestAttemptFromContext returns the fixed reference attached to a dispatch.
@@ -109,8 +123,46 @@ func RequestAttemptFromContext(ctx context.Context) RequestAttemptRef {
 	if ctx == nil {
 		return RequestAttemptRef{}
 	}
-	ref, _ := ctx.Value(requestAttemptKey).(RequestAttemptRef)
-	return ref
+	if ref, _ := ctx.Value(requestAttemptKey).(*RequestAttemptRef); ref != nil {
+		return *ref
+	}
+	return RequestAttemptRef{}
+}
+
+// ResetUpstreamHTTPStatus starts a provider selection without a response.
+// Call before credential acquisition and dispatch. A selection that fails
+// locally must not inherit headers from an earlier attempt on the same provider.
+func ResetUpstreamHTTPStatus(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	capture, _ := ctx.Value(requestCaptureKey).(*RequestCapture)
+	if capture != nil {
+		capture.mu.Lock()
+		capture.latestDispatch = nil
+		capture.wireStatus = 0
+		capture.mu.Unlock()
+	}
+}
+
+// UpstreamHTTPStatus returns the current dispatch's observed HTTP response status.
+// A missing recorder, provider mismatch or dispatch without headers returns nil.
+// The returned value is independent of later attempts and logical stream errors.
+func UpstreamHTTPStatus(ctx context.Context, providerID int64) *int {
+	if ctx == nil || providerID <= 0 {
+		return nil
+	}
+	capture, _ := ctx.Value(requestCaptureKey).(*RequestCapture)
+	if capture == nil {
+		return nil
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.latestDispatch == nil || capture.latestDispatch.ProviderID != providerID || capture.wireStatus <= 0 {
+		return nil
+	}
+	status := capture.wireStatus
+	return &status
 }
 
 // RequestAttemptFromResponse reads the dispatch reference retained by net/http.
@@ -173,11 +225,18 @@ func FindRequestAttempt(ctx context.Context, number int, providerID int64, heade
 // observations only add evidence. Alias publication occurs in the same mutation,
 // so a persisted snapshot contains both the attempt value and its lookup alias.
 func ObserveRequestHeaders(ctx context.Context, ref RequestAttemptRef, headers http.Header, status int) {
-	if ref.Number <= 0 || ref.Header == "" {
+	if ctx == nil || ref.Number <= 0 || ref.Header == "" {
 		return
 	}
 	id := strings.TrimSpace(headers.Get(ref.Header))
+	capture, _ := ctx.Value(requestCaptureKey).(*RequestCapture)
+	dispatch, _ := ctx.Value(requestAttemptKey).(*RequestAttemptRef)
 	UpdateRequest(ctx, func(record *RequestRecord) {
+		// Completion can publish identifiers again without response headers. Only
+		// the transport on the current dispatch supplies its raw HTTP status.
+		if status > 0 && dispatch != nil && capture.latestDispatch == dispatch && *dispatch == ref {
+			capture.wireStatus = status
+		}
 		for i := range record.Attempts {
 			attempt := &record.Attempts[i]
 			if attempt.Number != ref.Number || attempt.ProviderID != ref.ProviderID {

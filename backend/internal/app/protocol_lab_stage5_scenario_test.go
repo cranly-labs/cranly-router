@@ -504,6 +504,12 @@ func TestProtocolLabIRStage5ResponsesClientToolsMatrix(t *testing.T) {
 		// Top-level "python" function is aliased for OAuth, "nb" namespace is flattened, and "image_gen" stays exempted.
 		require.Contains(t, string(wireBody), `"python__tokenrouter"`)
 		require.Contains(t, string(wireBody), `"name":"image_gen"`)
+		require.Contains(t, string(wireBody), `"name":"nb__python"`)
+		logs := lab.UsageLogs()
+		require.Len(t, logs, 1)
+		require.NotNil(t, logs[0].ProtocolConversion)
+		require.Equal(t, "tool_adapted", logs[0].ProtocolConversion.Mode)
+		require.Equal(t, 1, logs[0].ProtocolConversion.LossCounts[string(ir.LossToolLowered)])
 
 		frames, fErr := readAllSSEFrames(respBytes)
 		require.NoError(t, fErr)

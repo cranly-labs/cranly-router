@@ -62,7 +62,9 @@ func (b *Buffer) Write(frame sse.Frame) error {
 
 // Close finalizes the upstream stream decoder with cause and encodes the folded
 // ir.Response into client wire JSON bytes. Non-nil cause errors or upstream
-// stream EventError terminations return an error rather than emitting truncated JSON.
+// stream EventError terminations return an error rather than emitting truncated
+// JSON, while still committing any response-side losses observed before closure
+// onto the owning Exchange.
 func (b *Buffer) Close(cause error) ([]byte, error) {
 	if b.closed {
 		return nil, errors.New("convert: Buffer already closed")
@@ -71,6 +73,11 @@ func (b *Buffer) Close(cause error) ([]byte, error) {
 	if b.exchange.upstreamErr != nil {
 		return nil, b.exchange.upstreamErr
 	}
+	// Commit accumulated response-side losses onto the owning Exchange even when
+	// stream termination fails so diagnostic accounting reflects observed work.
+	defer func() {
+		b.exchange.appendLosses(b.losses)
+	}()
 
 	tail := b.decoder.Close(cause)
 	if err := b.foldEvents(tail); err != nil {
@@ -94,7 +101,6 @@ func (b *Buffer) Close(cause error) ([]byte, error) {
 		return nil, err
 	}
 	b.losses = remapResponseLosses(b.losses, encLosses, b.sealer.outPartToOrig)
-	b.exchange.appendLosses(b.losses)
 	return encoded, nil
 }
 

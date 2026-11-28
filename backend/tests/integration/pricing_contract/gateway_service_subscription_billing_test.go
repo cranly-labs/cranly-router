@@ -53,11 +53,6 @@ type contractSettlementInput struct {
 	// interface value and does not invoke its methods.
 	APIKeyService provider.QuotaUpdater // key quota update capability
 	Platform      string                // unused fixture platform label
-	// BillingBaseAmountUSD overrides Cost.TotalCost for user funding
-	// allocation, including an explicit zero amount; nil uses Cost.TotalCost.
-	// Provider quota still uses the row's provider-statistics
-	// amount or Cost.TotalCost.
-	BillingBaseAmountUSD *float64 // user allocation base USD
 }
 
 // TestBuildUsageBillingCommand_BillableAmountTracksActualCost varies the
@@ -327,24 +322,22 @@ func TestBuildUsageBillingCommand_TokenModeKeepsAllocationRates(t *testing.T) {
 	}
 }
 
-// TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast supplies a
-// Standard funding base alongside Fast total and provider-statistics amounts.
-// It checks the user allocation base, billable amount, and separately
-// multiplied provider quota cost.
-func TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast(t *testing.T) {
-	standardBase := 0.4
-	fastTotal := 1.2
-	standardActual := 0.2
-	providerStatsCost := fastTotal
+// TestBuildUsageBillingCommand_SeparatesUserBaseFromProviderStatsCost supplies
+// distinct user model total and provider-statistics amounts. It checks the user
+// allocation base, billable amount, and separately multiplied provider quota cost.
+func TestBuildUsageBillingCommand_SeparatesUserBaseFromProviderStatsCost(t *testing.T) {
+	userTotal := 0.4
+	providerTotal := 1.2
+	userActual := 0.2
+	providerStatsCost := providerTotal
 	groupID := int64(88)
 	providerRate := 1.5
 
-	cmd := buildContractBillingCommand("req-free-fast-base", &usage.UsageLog{ProviderStatsCost: &providerStatsCost}, &contractSettlementInput{
+	cmd := buildContractBillingCommand("req-provider-stats-base", &usage.UsageLog{ProviderStatsCost: &providerStatsCost}, &contractSettlementInput{
 		Cost: &pricing.CostBreakdown{
-			TotalCost:  fastTotal,
-			ActualCost: standardActual,
+			TotalCost:  userTotal,
+			ActualCost: userActual,
 		},
-		BillingBaseAmountUSD:   &standardBase,
 		User:                   &identity.User{ID: 1},
 		APIKey:                 &apikey.APIKey{ID: 2, GroupID: &groupID},
 		Provider:               &provider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 3, Type: capability.ProviderTypeAPIKey, Extra: map[string]any{"quota_limit": 100}}},
@@ -354,16 +347,16 @@ func TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast(t *testing.T
 	if cmd == nil {
 		t.Fatal("buildContractBillingCommand returned nil")
 	}
-	if cmd.BaseAmountUSD != standardBase {
-		t.Fatalf("BaseAmountUSD = %v, want %v", cmd.BaseAmountUSD, standardBase)
+	if cmd.BaseAmountUSD != userTotal {
+		t.Fatalf("BaseAmountUSD = %v, want %v", cmd.BaseAmountUSD, userTotal)
 	}
-	if cmd.BillableAmountUSD != standardActual {
-		t.Fatalf("BillableAmountUSD = %v, want %v", cmd.BillableAmountUSD, standardActual)
+	if cmd.BillableAmountUSD != userActual {
+		t.Fatalf("BillableAmountUSD = %v, want %v", cmd.BillableAmountUSD, userActual)
 	}
 	// Dollar tolerance allows binary rounding in the
 	// independent quota product.
-	if diff := cmd.ProviderQuotaCost - fastTotal*providerRate; diff > 1e-12 || diff < -1e-12 {
-		t.Fatalf("ProviderQuotaCost = %v, want %v", cmd.ProviderQuotaCost, fastTotal*providerRate)
+	if diff := cmd.ProviderQuotaCost - providerTotal*providerRate; diff > 1e-12 || diff < -1e-12 {
+		t.Fatalf("ProviderQuotaCost = %v, want %v", cmd.ProviderQuotaCost, providerTotal*providerRate)
 	}
 }
 
@@ -375,9 +368,9 @@ func buildContractBillingCommand(requestID string, usageLog *usage.UsageLog, p *
 }
 
 // projectContractSettlement converts fixture records into completion
-// settlement metadata and returns nil for nil input. Cost, Subscription, and
-// BillingBaseAmountUSD remain shared with the fixture; APIKeyService's
-// interface presence becomes the captured quota-update capability.
+// settlement metadata and returns nil for nil input. Cost and Subscription
+// remain shared with the fixture; APIKeyService's interface presence becomes
+// the captured quota-update capability.
 func projectContractSettlement(p *contractSettlementInput) *completion.SettlementInput {
 	if p == nil {
 		return nil
@@ -394,6 +387,5 @@ func projectContractSettlement(p *contractSettlementInput) *completion.Settlemen
 		SubscriptionRateMultiplierScale: p.SubscriptionRateMultiplierScale,
 		BalanceRateMultiplier:           p.BalanceRateMultiplier,
 		QuotaUpdates:                    p.APIKeyService != nil,
-		BillingBaseAmountUSD:            p.BillingBaseAmountUSD,
 	}
 }

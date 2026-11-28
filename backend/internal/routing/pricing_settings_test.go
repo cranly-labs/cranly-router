@@ -49,14 +49,13 @@ func TestSharedBillingSettingsCRUDAndCache(t *testing.T) {
 	// Apply settings to a configuration with no model cards so the following
 	// reads demonstrate that card matching is independent of shared billing
 	// switches and explicitly supplied free operation prices.
-	zero, enabled, disabled := 0.0, true, false
+	zero, disabled := 0.0, false
 	_, err = svc.Update(ctx, created.ID, &UpdatePricingConfigInput{BillingSettingsPatch: BillingSettingsPatch{
-		FreeOpenAIFast: &enabled, LongContextPricingEnabled: &disabled, WebSearchPricePerCall: PriceUpdate{Set: true, Value: &zero},
+		LongContextPricingEnabled: &disabled, WebSearchPricePerCall: PriceUpdate{Set: true, Value: &zero},
 	}})
 	require.NoError(t, err)
 	for _, id := range []int64{7, 8} {
 		got := svc.GetEffectiveBillingSettings(ctx, id)
-		require.True(t, got.FreeOpenAIFast)
 		require.False(t, got.LongContextPricingEnabled)
 		require.NotNil(t, got.WebSearchPricePerCall)
 		require.Zero(t, *got.WebSearchPricePerCall)
@@ -66,7 +65,7 @@ func TestSharedBillingSettingsCRUDAndCache(t *testing.T) {
 	_, err = svc.Update(ctx, created.ID, &UpdatePricingConfigInput{BillingSettingsPatch: BillingSettingsPatch{WebSearchPricePerCall: PriceUpdate{Set: true}}})
 	require.NoError(t, err)
 	require.Nil(t, svc.GetEffectiveBillingSettings(ctx, 7).WebSearchPricePerCall)
-	require.True(t, svc.GetEffectiveBillingSettings(ctx, 7).FreeOpenAIFast)
+	require.False(t, svc.GetEffectiveBillingSettings(ctx, 7).LongContextPricingEnabled)
 	// Reset recorded invalidations before replacing membership so the assertion
 	// can identify exactly the departed, retained, and newly associated groups
 	// affected by that update.
@@ -76,7 +75,7 @@ func TestSharedBillingSettingsCRUDAndCache(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, []int64{7, 8, 9}, invalidator.groups)
 	require.Equal(t, pricing.DefaultBillingSettings(), svc.GetEffectiveBillingSettings(ctx, 7))
-	require.True(t, svc.GetEffectiveBillingSettings(ctx, 9).FreeOpenAIFast)
+	require.False(t, svc.GetEffectiveBillingSettings(ctx, 9).LongContextPricingEnabled)
 	_, err = svc.Update(ctx, created.ID, &UpdatePricingConfigInput{Status: StatusDisabled})
 	require.NoError(t, err)
 	require.Equal(t, pricing.DefaultBillingSettings(), svc.GetEffectiveBillingSettings(ctx, 9))

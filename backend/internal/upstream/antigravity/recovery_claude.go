@@ -3,15 +3,18 @@ package antigravity
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // recovery_claude.go retries rejected Antigravity Claude exchanges with staged
@@ -154,8 +157,8 @@ func RecoverClaudeIR(
 		// Try thinking-only removal ahead of tool-block downgrading so structured
 		// functionCall and functionResponse turns survive whenever possible.
 		stages := []struct {
-			name   string                                            // diagnostic recovery stage label
-			mutate func(*ir.Request, *convert.Dialect) (bool, error) // detached IR mutation stage
+			name   string                                                                     // diagnostic recovery stage label
+			mutate func(*ir.Request, *convert.Dialect, *convert.ReencodeEditor) (bool, error) // detached IR mutation stage
 		}{
 			{name: "thinking-only", mutate: stripIRThinkingForClaudeRecovery},
 			{name: "thinking+tools", mutate: stripIRThinkingAndToolsForClaudeRecovery},
@@ -163,7 +166,7 @@ func RecoverClaudeIR(
 
 		lastGeminiBody := input.InitialGeminiBody
 		for _, stage := range stages {
-			reencodedGemini, changed, txErr := input.Exchange.ReencodeUpstream(stage.mutate)
+			reencodedGemini, stageLosses, changed, txErr := input.Exchange.ReencodeUpstreamLosses(stage.mutate)
 			if txErr != nil || !changed || (len(lastGeminiBody) > 0 && bytes.Equal(reencodedGemini, lastGeminiBody)) {
 				continue
 			}
@@ -178,6 +181,12 @@ func RecoverClaudeIR(
 			if wrapErr != nil || options.Retry == nil {
 				continue
 			}
+
+			// Adopt the degraded request's remapped losses before dispatching the
+			// replacement attempt so retry attempts and final usage reflect the
+			// actually accepted wire payload without double-counting prior stages.
+			input.Exchange.ReplaceRequestLosses(stageLosses)
+			telemetry.ReplaceProtocolConversion(ctx, upstream.ExchangeConversion(input.Exchange))
 
 			logger.LegacyPrintf("service.antigravity_gateway", "Antigravity provider %d: detected signature-related 400, retrying once (%s)", input.ProviderID, stage.name)
 
@@ -274,7 +283,7 @@ func RecoverClaudeIR(
 				})
 			}
 
-			reencodedBudget, changed, txErr := input.Exchange.ReencodeUpstream(func(req *ir.Request, dialect *convert.Dialect) (bool, error) {
+			reencodedBudget, budgetLosses, changed, txErr := input.Exchange.ReencodeUpstreamLosses(func(req *ir.Request, dialect *convert.Dialect, _ *convert.ReencodeEditor) (bool, error) {
 				return applyIRBudgetRectification(req, dialect, options.BudgetTokens, options.MinMaxTokens, options.MaxTokens), nil
 			})
 			if txErr == nil && changed && options.Retry != nil {
@@ -285,6 +294,10 @@ func RecoverClaudeIR(
 					reencodedBudget,
 				)
 				if wrapErr == nil {
+					// Adopt the budget-rectified request losses before dispatching the
+					// retry so final conversion diagnostics match the sent payload.
+					input.Exchange.ReplaceRequestLosses(budgetLosses)
+					telemetry.ReplaceProtocolConversion(ctx, upstream.ExchangeConversion(input.Exchange))
 					logger.LegacyPrintf("service.antigravity_gateway", "Antigravity provider %d: detected budget_tokens constraint error, retrying with rectified budget (budget_tokens=%d, max_tokens=%d)", input.ProviderID, options.BudgetTokens, options.MaxTokens)
 					retryResp, retryErr := options.Retry(wrappedBudget)
 					if retryErr == nil {
@@ -322,9 +335,11 @@ func RecoverClaudeIR(
 
 // stripIRThinkingForClaudeRecovery disables top-level reasoning, clears any
 // tool-call replay tokens, converts readable historical reasoning segments to
-// plain text parts, and removes redacted reasoning parts. Messages emptied by
-// reasoning removal receive a "(content removed)" placeholder part.
-func stripIRThinkingForClaudeRecovery(req *ir.Request, _ *convert.Dialect) (bool, error) {
+// plain text parts, removes redacted reasoning parts, and records recovery-stage
+// ir.Loss entries while keeping source part coordinates aligned through edit.
+// Messages emptied by reasoning removal receive a synthetic "(content removed)"
+// placeholder part.
+func stripIRThinkingForClaudeRecovery(req *ir.Request, _ *convert.Dialect, edit *convert.ReencodeEditor) (bool, error) {
 	if req == nil {
 		return false, nil
 	}
@@ -340,29 +355,52 @@ func stripIRThinkingForClaudeRecovery(req *ir.Request, _ *convert.Dialect) (bool
 			continue
 		}
 		filtered := make([]ir.Part, 0, len(msg.Parts))
+		sourceParts := make([]convert.ReencodePartSource, 0, len(msg.Parts))
 		modifiedMsg := false
-		for _, part := range msg.Parts {
+		for p, part := range msg.Parts {
 			switch part.Kind {
 			case ir.PartReasoning:
 				modifiedMsg = true
-				if part.Reasoning != nil && !part.Reasoning.Redacted {
-					if text := strings.Join(part.Reasoning.Segments, ""); text != "" {
-						filtered = append(filtered, ir.Part{
-							Kind: ir.PartText,
-							Text: text,
-						})
+				if part.Cache != nil {
+					// Record cache_mark_dropped when removing or inlining a cached
+					// reasoning block so the dropped breakpoint remains accounted for.
+					edit.RecordPartLoss(m, p, ir.LossCacheMarkDropped)
+				}
+				if part.Reasoning != nil {
+					hasToken := part.Reasoning.Token != nil && part.Reasoning.Token.Data != ""
+					if hasToken || part.Reasoning.Redacted {
+						edit.RecordPartLoss(m, p, ir.LossReplayTokenDropped)
+					}
+					if !part.Reasoning.Redacted {
+						if text := strings.Join(part.Reasoning.Segments, ""); text != "" {
+							filtered = append(filtered, ir.Part{
+								Kind: ir.PartText,
+								Text: text,
+							})
+							sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p})
+							edit.RecordPartLoss(m, p, ir.LossReasoningTextInlined)
+						} else if !hasToken {
+							edit.RecordPartLoss(m, p, ir.LossReasoningTextDropped)
+						}
 					}
 				}
 			case ir.PartToolCall:
 				if part.Call != nil && part.Call.Token != nil {
+					if part.Call.Token.Data != "" {
+						edit.RecordPartLoss(m, p, ir.LossReplayTokenDropped)
+					}
 					callCopy := *part.Call
 					callCopy.Token = nil
 					part.Call = &callCopy
-					changed = true
+					// Mark the message modified so tool-only turns write back the cleared
+					// call copy rather than leaving the rejected signature on msg.Parts.
+					modifiedMsg = true
 				}
 				filtered = append(filtered, part)
+				sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p})
 			default:
 				filtered = append(filtered, part)
+				sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p})
 			}
 		}
 		if !modifiedMsg {
@@ -375,18 +413,25 @@ func stripIRThinkingForClaudeRecovery(req *ir.Request, _ *convert.Dialect) (bool
 				Kind: ir.PartText,
 				Text: "(content removed)",
 			})
+			sourceParts = append(sourceParts, convert.ReencodePartSource{Part: -1})
 		}
-		msg.Parts = filtered
+		if edit != nil {
+			edit.SetMessageParts(m, filtered, sourceParts)
+		} else {
+			msg.Parts = filtered
+		}
 		changed = true
 	}
 	return changed, nil
 }
 
-// stripIRThinkingAndToolsForClaudeRecovery disables top-level reasoning and
+// stripIRThinkingAndToolsForClaudeRecovery disables top-level reasoning,
 // downgrades historical reasoning, tool calls, and tool results into readable
-// text parts for the second Claude signature recovery stage. Dedicated RoleTool
-// messages convert to RoleUser while retaining embedded media attachments.
-func stripIRThinkingAndToolsForClaudeRecovery(req *ir.Request, _ *convert.Dialect) (bool, error) {
+// text parts for the second Claude signature recovery stage, and records
+// recovery-stage ir.Loss entries while keeping source part coordinates aligned
+// through edit. Dedicated RoleTool messages convert to RoleUser while retaining
+// embedded media attachments.
+func stripIRThinkingAndToolsForClaudeRecovery(req *ir.Request, _ *convert.Dialect, edit *convert.ReencodeEditor) (bool, error) {
 	if req == nil {
 		return false, nil
 	}
@@ -402,36 +447,79 @@ func stripIRThinkingAndToolsForClaudeRecovery(req *ir.Request, _ *convert.Dialec
 			continue
 		}
 		filtered := make([]ir.Part, 0, len(msg.Parts))
+		sourceParts := make([]convert.ReencodePartSource, 0, len(msg.Parts))
 		modifiedMsg := false
-		for _, part := range msg.Parts {
+		for p, part := range msg.Parts {
 			switch part.Kind {
 			case ir.PartReasoning:
 				modifiedMsg = true
-				if part.Reasoning != nil && !part.Reasoning.Redacted {
-					if text := strings.Join(part.Reasoning.Segments, ""); text != "" {
-						filtered = append(filtered, ir.Part{
-							Kind: ir.PartText,
-							Text: text,
-						})
+				if part.Cache != nil {
+					// Record cache_mark_dropped when removing or inlining a cached
+					// reasoning block so the dropped breakpoint remains accounted for.
+					edit.RecordPartLoss(m, p, ir.LossCacheMarkDropped)
+				}
+				if part.Reasoning != nil {
+					hasToken := part.Reasoning.Token != nil && part.Reasoning.Token.Data != ""
+					if hasToken || part.Reasoning.Redacted {
+						edit.RecordPartLoss(m, p, ir.LossReplayTokenDropped)
+					}
+					if !part.Reasoning.Redacted {
+						if text := strings.Join(part.Reasoning.Segments, ""); text != "" {
+							filtered = append(filtered, ir.Part{
+								Kind: ir.PartText,
+								Text: text,
+							})
+							sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p})
+							edit.RecordPartLoss(m, p, ir.LossReasoningTextInlined)
+						} else if !hasToken {
+							edit.RecordPartLoss(m, p, ir.LossReasoningTextDropped)
+						}
 					}
 				}
 			case ir.PartToolCall:
 				if part.Call == nil {
 					continue
 				}
+				if part.Call.Token != nil && part.Call.Token.Data != "" {
+					edit.RecordPartLoss(m, p, ir.LossReplayTokenDropped)
+				}
+				recordInlinedToolHistoryLosses(edit, m, p, part)
 				modifiedMsg = true
 				filtered = append(filtered, ir.Part{
 					Kind: ir.PartText,
 					Text: formatDowngradedIRToolCall(part.Call),
 				})
+				sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p})
 			case ir.PartToolResult:
 				if part.Result == nil {
 					continue
 				}
+				recordInlinedToolHistoryLosses(edit, m, p, part)
 				modifiedMsg = true
-				filtered = append(filtered, formatDowngradedIRToolResultParts(part.Result)...)
+				filtered = append(filtered, ir.Part{Kind: ir.PartText, Text: formatDowngradedIRToolResult(part.Result)})
+				sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p})
+				for i, child := range part.Result.Content {
+					suffix := fmt.Sprintf(".result.content[%d]", i)
+					if child.Kind == ir.PartMedia {
+						// Keep the attachment and its nested source address together so
+						// later encoder losses on separate images retain distinct paths.
+						filtered = append(filtered, child)
+						sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p, Suffix: suffix})
+						continue
+					}
+					// Only the child's text survives in the joined header. Record any
+					// discarded metadata before the original content slots disappear.
+					path := fmt.Sprintf("messages[%d].parts[%d]%s", m, p, suffix)
+					if child.Cache != nil {
+						edit.RecordLoss(ir.Loss{Kind: ir.LossCacheMarkDropped, Path: path})
+					}
+					if !child.Extra.IsZero() {
+						edit.RecordLoss(ir.Loss{Kind: ir.LossExtraDropped, Path: path})
+					}
+				}
 			default:
 				filtered = append(filtered, part)
+				sourceParts = append(sourceParts, convert.ReencodePartSource{Part: p})
 			}
 		}
 		if !modifiedMsg {
@@ -449,11 +537,39 @@ func stripIRThinkingAndToolsForClaudeRecovery(req *ir.Request, _ *convert.Dialec
 				Kind: ir.PartText,
 				Text: "(content removed)",
 			})
+			sourceParts = append(sourceParts, convert.ReencodePartSource{Part: -1})
 		}
-		msg.Parts = filtered
+		if edit != nil {
+			edit.SetMessageParts(m, filtered, sourceParts)
+		} else {
+			msg.Parts = filtered
+		}
 		changed = true
 	}
 	return changed, nil
+}
+
+// recordInlinedToolHistoryLosses attributes the replacement of a structured
+// history block to its source slot. The rendered text contains the correlation
+// ID in its header, while optional item IDs, cache breakpoints and provider
+// extensions on the original block have no representation in that text.
+func recordInlinedToolHistoryLosses(edit *convert.ReencodeEditor, m, p int, part ir.Part) {
+	// A past call may no longer have a declaration. Its resolved name still
+	// belongs to the conversion evidence so verification can check the rendered header.
+	loss := ir.Loss{Kind: ir.LossToolHistoryInlined, Path: fmt.Sprintf("messages[%d].parts[%d]", m, p)}
+	if part.Call != nil {
+		loss.Detail = part.Call.Tool.Name
+	}
+	edit.RecordLoss(loss)
+	if part.Cache != nil {
+		edit.RecordPartLoss(m, p, ir.LossCacheMarkDropped)
+	}
+	if !part.Extra.IsZero() {
+		edit.RecordPartLoss(m, p, ir.LossExtraDropped)
+	}
+	if part.ID != "" {
+		edit.RecordLoss(ir.Loss{Kind: ir.LossIDRewritten, Path: fmt.Sprintf("messages[%d].parts[%d].id", m, p)})
+	}
 }
 
 // formatDowngradedIRToolCall renders a structured IR ToolCall into the readable
@@ -474,10 +590,10 @@ func formatDowngradedIRToolCall(call *ir.ToolCall) string {
 	return text
 }
 
-// formatDowngradedIRToolResultParts renders an IR ToolResult into a readable
-// "(tool_result)" text part followed by any preserved media attachments. Error
-// results append "is_error=true" to the header before joining non-empty text lines.
-func formatDowngradedIRToolResultParts(res *ir.ToolResult) []ir.Part {
+// formatDowngradedIRToolResult joins the tool correlation header and its
+// nonempty text children into the visible user message used during recovery.
+// The caller emits media as separate parts in their original order.
+func formatDowngradedIRToolResult(res *ir.ToolResult) string {
 	header := "(tool_result)"
 	if res.CallID != "" {
 		header += " tool_use_id=" + res.CallID
@@ -486,29 +602,13 @@ func formatDowngradedIRToolResultParts(res *ir.ToolResult) []ir.Part {
 		header += " is_error=true"
 	}
 
-	var textLines []string
-	var mediaParts []ir.Part
-	for _, sub := range res.Content {
-		switch sub.Kind {
-		case ir.PartText:
-			if sub.Text != "" {
-				textLines = append(textLines, sub.Text)
-			}
-		case ir.PartMedia:
-			mediaParts = append(mediaParts, sub)
+	lines := []string{header}
+	for _, child := range res.Content {
+		if child.Kind == ir.PartText && child.Text != "" {
+			lines = append(lines, child.Text)
 		}
 	}
-	if len(textLines) > 0 {
-		header += "\n" + strings.Join(textLines, "\n")
-	}
-
-	out := make([]ir.Part, 0, 1+len(mediaParts))
-	out = append(out, ir.Part{
-		Kind: ir.PartText,
-		Text: header,
-	})
-	out = append(out, mediaParts...)
-	return out
+	return strings.Join(lines, "\n")
 }
 
 // applyIRBudgetRectification configures explicit enabled thinking with

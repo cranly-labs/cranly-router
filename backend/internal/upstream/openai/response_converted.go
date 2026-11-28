@@ -15,6 +15,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
@@ -62,10 +63,11 @@ type CompatResponseResult struct {
 	RequestID, Model, UpstreamModel, UpstreamResponseModel, ServiceTier string
 	// UpstreamHeaders shares the response header map with the executor; callers
 	// clone it before edits that would alter another consumer's observation.
-	UpstreamHeaders http.Header
-	Usage           wire.ForwardUsage // observed upstream billing usage
-	Stream          bool              // client streaming response mode
-	Duration        time.Duration     // total response handling duration
+	UpstreamHeaders    http.Header
+	Usage              wire.ForwardUsage             // observed upstream billing usage
+	Stream             bool                          // client streaming response mode
+	Duration           time.Duration                 // total response handling duration
+	ProtocolConversion *telemetry.ProtocolConversion // bounded protocol transformation diagnostics
 
 	SearchCount int // observed native search calls
 }
@@ -188,7 +190,7 @@ func ReadConvertedBuffered(
 	options ConvertedResponseOptions,
 	originalModel, upstreamModel string,
 	startTime time.Time,
-) (*CompatResponseResult, error) {
+) (result *CompatResponseResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("upstream response body is nil")
 	}
@@ -196,8 +198,22 @@ func ReadConvertedBuffered(
 		return nil, errors.New("conversion exchange is nil")
 	}
 
+	reqCtx := convertedRequestContext(options.RequestContext, resp)
 	requestID := firstNonEmptyConvertedHeader(resp.Header, "x-request-id", "xai-request-id")
 	buf := exchange.Buffer()
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(reqCtx, exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
+	defer func() {
+		if err != nil {
+			// Ensure buffered sealer losses commit onto exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = buf.Close(err)
+		}
+	}()
 	lifecycle := newResponseStreamLifecycleTracker(options.CodexFailureTerminal)
 	var modelTracker convertedResponseModelTracker
 	var usage wire.ForwardUsage
@@ -532,7 +548,7 @@ func ReadConvertedStreaming(
 	options ConvertedResponseOptions,
 	originalModel, upstreamModel string,
 	startTime time.Time,
-) (*CompatResponseResult, error) {
+) (result *CompatResponseResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("upstream response body is nil")
 	}
@@ -540,6 +556,7 @@ func ReadConvertedStreaming(
 		return nil, errors.New("conversion exchange is nil")
 	}
 
+	reqCtx := convertedRequestContext(options.RequestContext, resp)
 	requestID := firstNonEmptyConvertedHeader(resp.Header, "x-request-id", "xai-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, func(dst, src http.Header) {
 		if options.Headers != nil {
@@ -548,6 +565,19 @@ func ReadConvertedStreaming(
 	})
 
 	stream := exchange.Stream()
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(reqCtx, exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
+	defer func() {
+		if err != nil {
+			// Flush any unclosed stream sealer losses onto exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = stream.Close(err)
+		}
+	}()
 	lifecycle := newResponseStreamLifecycleTracker(options.CodexFailureTerminal)
 	var modelTracker convertedResponseModelTracker
 	var usage wire.ForwardUsage
@@ -1467,6 +1497,27 @@ func logExchangeLossesDebug(exchange *convert.Exchange, requestID string) {
 		zap.String("request_id", requestID),
 		zap.Int("loss_count", len(losses)),
 	)
+}
+
+// convertedRequestContext prefers resp.Request.Context() when the dispatched
+// upstream request carries an active attempt reference or conversion scope so
+// recursive retries finalize response losses on the actual retry attempt rather
+// than a stale outer Gin context. Otherwise it selects ctx when non-nil,
+// falling back to resp's request context or context.Background.
+func convertedRequestContext(ctx context.Context, resp *http.Response) context.Context {
+	if resp != nil && resp.Request != nil {
+		if reqCtx := resp.Request.Context(); telemetry.RequestAttemptFromContext(reqCtx).Number > 0 ||
+			telemetry.ProtocolConversionFromContext(reqCtx) != nil {
+			return reqCtx
+		}
+	}
+	if ctx != nil {
+		return ctx
+	}
+	if resp != nil && resp.Request != nil {
+		return resp.Request.Context()
+	}
+	return context.Background()
 }
 
 // firstNonEmptyConvertedHeader returns the first trimmed non-empty header value

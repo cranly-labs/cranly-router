@@ -156,6 +156,10 @@ type OpsMeta struct {
 	UpstreamEndpoint string // captured selected upstream endpoint
 	UserAgent        string // captured client User-Agent text
 	APIKeyPrefix     string // caller-supplied API key identification prefix
+	// ClientStatus holds the committed HTTP wire status returned to the client
+	// when positive; zero means no per-request HTTP status was committed yet or
+	// the warning occurred on a WebSocket turn.
+	ClientStatus int // optional committed client HTTP status
 	// UserID and APIKeyID become Ops pointers only when positive. ProviderID
 	// follows that rule for policy entries, while the local session-block
 	// builder omits provider ownership.
@@ -280,8 +284,9 @@ func (r Runtime) MarkBeforeScope(plan BlockPlan) {
 
 // BuildPolicyOpsEntry returns an upstream-warning Ops row or nil for a nil
 // mark. It uses upstream_http/provider origin, request-phase cyber
-// classification, P3 severity and the mark's upstream status, with business
-// limitation set.
+// classification, P3 severity, the mark's upstream status on both logical
+// StatusCode and UpstreamStatusCode when positive, and any committed
+// ClientStatus on ClientStatusCode, with business limitation set.
 //
 // Positive user, key and provider IDs become optional pointers, GroupID is
 // copied and nonempty ClientIP is retained. Request/model/endpoint metadata
@@ -294,6 +299,10 @@ func BuildPolicyOpsEntry(meta OpsMeta, mark *Mark) *ops.OpsInsertErrorLogInput {
 	}
 	// Encode cyber-blocked request type in the Ops int16 representation.
 	rt := int16(usage.RequestTypeCyberBlocked)
+	logicalStatus := mark.UpstreamStatus
+	if logicalStatus <= 0 && meta.ClientStatus > 0 {
+		logicalStatus = meta.ClientStatus
+	}
 	entry := &ops.OpsInsertErrorLogInput{
 		RequestID:         meta.RequestID,
 		ClientRequestID:   meta.ClientRequestID,
@@ -310,13 +319,21 @@ func BuildPolicyOpsEntry(meta OpsMeta, mark *Mark) *ops.OpsInsertErrorLogInput {
 		ErrorPhase:        "request",
 		ErrorType:         "cyber_policy",
 		Severity:          "P3",
-		StatusCode:        mark.UpstreamStatus,
+		StatusCode:        logicalStatus,
 		IsBusinessLimited: true,
 		ErrorMessage:      "cyber_policy: " + strings.TrimSpace(mark.Message),
 		ErrorBody:         mark.Body,
 		ErrorSource:       "upstream_http",
 		ErrorOwner:        "provider",
 		CreatedAt:         meta.CreatedAt,
+	}
+	if meta.ClientStatus > 0 {
+		clientStatus := meta.ClientStatus
+		entry.ClientStatusCode = &clientStatus
+	}
+	if mark.UpstreamStatus > 0 {
+		upstreamStatus := mark.UpstreamStatus
+		entry.UpstreamStatusCode = &upstreamStatus
 	}
 	if meta.UserID > 0 {
 		entry.UserID = &meta.UserID
@@ -337,9 +354,11 @@ func BuildPolicyOpsEntry(meta OpsMeta, mark *Mark) *ops.OpsInsertErrorLogInput {
 }
 
 // BuildSessionBlockedOpsEntry returns a locally rejected session Ops row
-// with status 403. It uses gateway_local/platform origin, P3 severity and
-// cyber-blocked request classification, with business limitation set and
-// the session key in ErrorBody.
+// with logical status 403 and ClientStatusCode set from committed ClientStatus
+// when available. WebSocket rejections leave the wire status absent. The entry
+// uses gateway_local/platform origin, P3 severity and cyber-blocked
+// request classification, with business limitation set and the session key in
+// ErrorBody.
 //
 // Positive user and key IDs become optional pointers, GroupID is copied and
 // nonempty ClientIP is retained. ProviderID and UpstreamEndpoint are
@@ -371,6 +390,9 @@ func BuildSessionBlockedOpsEntry(meta OpsMeta) *ops.OpsInsertErrorLogInput {
 		ErrorSource:       "gateway_local",
 		ErrorOwner:        "platform",
 		CreatedAt:         meta.CreatedAt,
+	}
+	if meta.ClientStatus > 0 {
+		entry.ClientStatusCode = &meta.ClientStatus
 	}
 	if meta.UserID > 0 {
 		entry.UserID = &meta.UserID

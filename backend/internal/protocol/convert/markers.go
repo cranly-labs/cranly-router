@@ -38,9 +38,12 @@ const (
 // sourceCoords maps current working-request slice positions back to their
 // original indices in the freshly decoded client ir.Request.
 type sourceCoords struct {
-	systemIdx []int   // working System[i] -> original System index
-	msgIdx    []int   // working Messages[m] -> original Messages index
-	partIdx   [][]int // working Messages[m].Parts[p] -> original Parts index
+	// editedPartPaths supplies complete source paths for rebuilt recovery
+	// messages. Empty entries denote synthesized parts with no client source.
+	editedPartPaths map[int][]string
+	systemIdx       []int   // working System[i] -> original System index
+	msgIdx          []int   // working Messages[m] -> original Messages index
+	partIdx         [][]int // working Messages[m].Parts[p] -> original Parts index
 	// toolIdx maps working Tools[t] to its original Tools index, or -1 when a
 	// tool declaration was promoted from historical tool_search_output items.
 	toolIdx []int
@@ -85,13 +88,29 @@ func (sc *sourceCoords) origSystemPath(i int) string {
 	return fmt.Sprintf("system[%d]", orig)
 }
 
-// origPartPath formats the original IR path for working Messages[m].Parts[p].
+// origPartPath formats the original IR path for a working message part.
+// Recovery edits can point into a nested tool result. An edited slot without
+// an origin returns an empty path so callers omit synthetic losses.
 func (sc *sourceCoords) origPartPath(m, p int) string {
+	if sc != nil {
+		if paths, edited := sc.editedPartPaths[m]; edited {
+			if p < 0 || p >= len(paths) {
+				return ""
+			}
+			return paths[p]
+		}
+	}
 	origM, origP := m, p
 	if sc != nil && m >= 0 && m < len(sc.msgIdx) {
 		origM = sc.msgIdx[m]
+		if origM < 0 && origM != relocatedSystemMsgSentinel {
+			return ""
+		}
 		if p >= 0 && p < len(sc.partIdx[m]) {
 			origP = sc.partIdx[m][p]
+		}
+		if origP < 0 {
+			return ""
 		}
 		if origM == relocatedSystemMsgSentinel {
 			return fmt.Sprintf("system[%d]", origP)
@@ -255,8 +274,9 @@ func remapEncoderLosses(prior []ir.Loss, encLosses []ir.Loss, coords *sourceCoor
 }
 
 // remapSingleLossPath translates system[i], messages[m].parts[p], and tools[t]
-// prefixes in path through coords, returning keep=false when tools[t] refers to
-// a promoted discovery tool absent from the original decoded request.
+// prefixes in path through coords. Promoted discovery tools and synthesized
+// parts have no source slot and return keep=false. Recovery media can resolve
+// to individual result.content indices, retaining suffixes such as .id.
 func remapSingleLossPath(path string, coords *sourceCoords) (string, bool) {
 	if coords == nil || path == "" {
 		return path, true
@@ -289,22 +309,22 @@ func remapSingleLossPath(path string, coords *sourceCoords) (string, bool) {
 			return path, true
 		}
 		origM := coords.msgIdx[mIdx]
-		if origM == relocatedSystemMsgSentinel {
-			if strings.HasPrefix(afterMsg, ".parts[") {
-				pIdx, afterPart, okPart := parseLeadingBracketIndex(afterMsg[len(".parts"):])
-				if okPart && mIdx < len(coords.partIdx) && pIdx >= 0 && pIdx < len(coords.partIdx[mIdx]) {
-					origP := coords.partIdx[mIdx][pIdx]
-					return fmt.Sprintf("system[%d]%s", origP, afterPart), true
-				}
-			}
-			return "system", true
+		if origM < 0 && origM != relocatedSystemMsgSentinel {
+			return "", false
 		}
-		if strings.HasPrefix(afterMsg, ".parts[") {
-			pIdx, afterPart, okPart := parseLeadingBracketIndex(afterMsg[len(".parts"):])
-			if okPart && mIdx < len(coords.partIdx) && pIdx >= 0 && pIdx < len(coords.partIdx[mIdx]) {
-				origP := coords.partIdx[mIdx][pIdx]
-				return fmt.Sprintf("messages[%d].parts[%d]%s", origM, origP, afterPart), true
+		if partSuffix, ok := strings.CutPrefix(afterMsg, ".parts"); ok {
+			if pIdx, rest, parsed := parseLeadingBracketIndex(partSuffix); parsed {
+				source := coords.origPartPath(mIdx, pIdx)
+				if source == "" {
+					// Recovery placeholders have no corresponding client part, so their
+					// encoder losses cannot be applied to the source semantic summary.
+					return "", false
+				}
+				return source + rest, true
 			}
+		}
+		if origM == relocatedSystemMsgSentinel {
+			return "system", true
 		}
 		return fmt.Sprintf("messages[%d]%s", origM, afterMsg), true
 	}

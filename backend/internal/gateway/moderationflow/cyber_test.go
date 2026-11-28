@@ -92,6 +92,9 @@ func TestPolicyDispatchFreezesMetadataAndKeepsIndependentBudget(t *testing.T) {
 	require.Equal(t, int64(4), *effects.entry.GroupID)
 	require.Equal(t, "original", effects.entry.Model)
 	require.Equal(t, "cyber_policy: observed", effects.entry.ErrorMessage)
+	require.Equal(t, 403, effects.entry.StatusCode)
+	require.NotNil(t, effects.entry.UpstreamStatusCode)
+	require.Equal(t, 403, *effects.entry.UpstreamStatusCode)
 	require.Equal(t, []string{"scope"}, effects.keys)
 	saved, ok := modeltrace.FromContext(effects.ctx)
 	require.True(t, ok)
@@ -126,4 +129,44 @@ func TestModerationContentSnapshotIsolatesAllCollections(t *testing.T) {
 	require.Equal(t, "image", out.Images[0])
 	require.Equal(t, "tool", out.Items[0].Text)
 	require.Equal(t, "ref", out.ImageItems[0].Reference)
+}
+
+// TestBuildPolicyOpsEntryPopulatesUpstreamAndCommittedClientStatus constructs
+// policy entries for synchronous 403 and already-committed 200 stream paths. It
+// protects separate UpstreamStatusCode and ClientStatusCode pointers alongside
+// local session-block omission of UpstreamStatusCode.
+func TestBuildPolicyOpsEntryPopulatesUpstreamAndCommittedClientStatus(t *testing.T) {
+	syncEntry := BuildPolicyOpsEntry(
+		OpsMeta{Model: "gpt-5", ClientStatus: 403},
+		&Mark{Message: "blocked", Body: `{"error":"cyber"}`, UpstreamStatus: 403},
+	)
+	require.NotNil(t, syncEntry)
+	require.Equal(t, 403, syncEntry.StatusCode)
+	require.NotNil(t, syncEntry.ClientStatusCode)
+	require.Equal(t, 403, *syncEntry.ClientStatusCode)
+	require.NotNil(t, syncEntry.UpstreamStatusCode)
+	require.Equal(t, 403, *syncEntry.UpstreamStatusCode)
+
+	streamEntry := BuildPolicyOpsEntry(
+		OpsMeta{Model: "gpt-5", Stream: true, ClientStatus: 200},
+		&Mark{Message: "blocked mid-stream", Body: `{"error":"cyber"}`, UpstreamStatus: 403},
+	)
+	require.NotNil(t, streamEntry)
+	require.Equal(t, 403, streamEntry.StatusCode)
+	require.NotNil(t, streamEntry.ClientStatusCode)
+	require.Equal(t, 200, *streamEntry.ClientStatusCode)
+	require.NotNil(t, streamEntry.UpstreamStatusCode)
+	require.Equal(t, 403, *streamEntry.UpstreamStatusCode)
+
+	blockedEntry := BuildSessionBlockedOpsEntry(OpsMeta{Model: "gpt-5", Stream: true, ClientStatus: 200, SessionBlockKey: "k1"})
+	require.Equal(t, 403, blockedEntry.StatusCode)
+	require.NotNil(t, blockedEntry.ClientStatusCode)
+	require.Equal(t, 200, *blockedEntry.ClientStatusCode)
+	require.Nil(t, blockedEntry.UpstreamStatusCode)
+
+	// A blocked session on an upgraded connection emits a WebSocket frame.
+	// Its logical forbidden status is available even though no HTTP response was sent.
+	wsEntry := BuildSessionBlockedOpsEntry(OpsMeta{SessionBlockKey: "blocked"})
+	require.Equal(t, 403, wsEntry.StatusCode)
+	require.Nil(t, wsEntry.ClientStatusCode)
 }

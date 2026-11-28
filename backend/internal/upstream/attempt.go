@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 )
 
 // attempt.go defines platform execution inputs and the result observations
@@ -102,6 +104,9 @@ type AttemptResult struct {
 	// Timings carries the shared collector's observations for this exchange.
 	// Nil means no collector was installed; completion clones recorded maps before asynchronous use.
 	Timings *timing.Performance // frozen exchange performance observations
+	// ProtocolConversion carries bounded protocol transformation diagnostics when
+	// this exchange ran IR conversion, client-tool lowering, or trc1 carrier replay.
+	ProtocolConversion *telemetry.ProtocolConversion
 	// ServiceTier: recorded service tier. ReasoningEffort: recorded reasoning effort.
 	ServiceTier, ReasoningEffort string
 }
@@ -129,6 +134,9 @@ func (r *AttemptResult) Finish(ctx context.Context, failure error) {
 		return
 	}
 	telemetry.ObserveRequestResult(ctx, r.RequestAttempt, failure)
+	if r.ProtocolConversion == nil {
+		r.ProtocolConversion = telemetry.ProtocolConversionFromContext(ctx)
+	}
 	r.Timings = timing.PerformanceFromContext(ctx)
 	if r.Timings == nil {
 		return
@@ -148,4 +156,135 @@ func (r *AttemptResult) Finish(ctx context.Context, failure error) {
 // fixed reference to close the same diagnostic exchange on success or failure.
 func (r *AttemptResult) CaptureRequestAttempt(response *http.Response) {
 	r.RequestAttempt = telemetry.RequestAttemptFromResponse(response)
+}
+
+// ExchangeConversion builds a normalized ir_converted diagnostic snapshot from
+// ex's resolved route and cumulative request-and-response LossCounts. Nil
+// exchanges return nil.
+func ExchangeConversion(ex *convert.Exchange) *telemetry.ProtocolConversion {
+	if ex == nil {
+		return nil
+	}
+	route := ex.Route()
+	return telemetry.NewProtocolConversion(
+		telemetry.ConversionModeIRConverted,
+		string(route.Client),
+		string(route.Upstream),
+		route.Dialect.Name,
+		route.Dialect.ReplayScheme,
+		ex.LossCounts(),
+	)
+}
+
+// ObserveExchangeConversion records ex's initial request-side ir_converted
+// snapshot on ctx so failed pre-response HTTP exchanges retain route and loss
+// diagnostics in request_records.
+func ObserveExchangeConversion(ctx context.Context, ex *convert.Exchange) *telemetry.ProtocolConversion {
+	snap := ExchangeConversion(ex)
+	if snap != nil {
+		telemetry.ObserveProtocolConversion(ctx, snap)
+	}
+	return snap
+}
+
+// StageSignatureRetry records the wire losses of the replacement body before
+// its HTTP dispatch. The rejected exchange keeps its original snapshot, and
+// subsequent response finalization includes the same retry counts exactly once.
+func StageSignatureRetry(ctx context.Context, ex *convert.Exchange, tokens, reasoning int) {
+	if ex == nil {
+		return
+	}
+	ex.SetSignatureRetryLosses(tokens, reasoning)
+	telemetry.ReplaceProtocolConversion(ctx, ExchangeConversion(ex))
+}
+
+// FinalizeExchangeConversion replaces ctx's staged attempt conversion snapshot
+// with ex's combined request-and-response diagnostics after stream, buffer, or
+// unary response conversion finishes and returns that detached snapshot.
+func FinalizeExchangeConversion(ctx context.Context, ex *convert.Exchange) *telemetry.ProtocolConversion {
+	snap := ExchangeConversion(ex)
+	if snap != nil {
+		telemetry.ReplaceProtocolConversion(ctx, snap)
+	}
+	return snap
+}
+
+// ObserveToolAdaptedConversion records a tool_adapted diagnostic snapshot on ctx
+// only when HasResponsesToolAdaptation confirms that client tools or namespaces
+// were lowered rather than merely inherited as plain functions.
+func ObserveToolAdaptedConversion(
+	ctx context.Context,
+	clientProto protocol.ProtocolID,
+	upstreamProto protocol.ProtocolID,
+	dialect convert.Dialect,
+	tools *convert.ToolMap,
+	losses []ir.Loss,
+) *telemetry.ProtocolConversion {
+	if !convert.HasResponsesToolAdaptation(tools, losses) {
+		return nil
+	}
+	return ObserveToolConversionCounts(ctx, clientProto, upstreamProto, dialect, CountLosses(losses))
+}
+
+// ObserveToolConversionCounts stages a tool adaptation confirmed by a request
+// transformer. Callers supply only edits applied to the outbound bytes so
+// native replay and namespace lowering can share the attempt's diagnostic scope.
+func ObserveToolConversionCounts(ctx context.Context, clientProto, upstreamProto protocol.ProtocolID, dialect convert.Dialect, counts map[string]int) *telemetry.ProtocolConversion {
+	snap := telemetry.NewProtocolConversion(
+		telemetry.ConversionModeToolAdapted,
+		string(clientProto),
+		string(upstreamProto),
+		dialect.Name,
+		dialect.ReplayScheme,
+		counts,
+	)
+	if snap != nil {
+		telemetry.ObserveProtocolConversion(ctx, snap)
+	}
+	return snap
+}
+
+// ObserveNativeReplayConversion records a native_replay diagnostic snapshot on
+// ctx when PrepareNativeReplayWithStatus matched and unpacked or stripped at
+// least one trc1 continuity envelope on protocol token paths.
+func ObserveNativeReplayConversion(
+	ctx context.Context,
+	route convert.Route,
+	losses []ir.Loss,
+	applied bool,
+) *telemetry.ProtocolConversion {
+	if !applied {
+		return nil
+	}
+	snap := telemetry.NewProtocolConversion(
+		telemetry.ConversionModeNativeReplay,
+		string(route.Client),
+		string(route.Upstream),
+		route.Dialect.Name,
+		route.Dialect.ReplayScheme,
+		CountLosses(losses),
+	)
+	if snap != nil {
+		telemetry.ObserveProtocolConversion(ctx, snap)
+	}
+	return snap
+}
+
+// CountLosses aggregates losses into positive counts keyed by LossKind,
+// returning nil when no valid LossKind entries are present.
+func CountLosses(losses []ir.Loss) map[string]int {
+	if len(losses) == 0 {
+		return nil
+	}
+	var counts map[string]int
+	for _, loss := range losses {
+		if loss.Kind == "" {
+			continue
+		}
+		if counts == nil {
+			counts = make(map[string]int, min(len(losses), 8))
+		}
+		counts[string(loss.Kind)]++
+	}
+	return counts
 }

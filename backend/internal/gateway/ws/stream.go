@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
@@ -43,7 +45,7 @@ import (
 // until terminal and marks the lease broken. Performance captures useful upstream
 // content independently of diagnostic event-label counts. Model and tier are
 // observed before client rewriting.
-func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input ClientPayload, turn int, o StreamOptions, hooks *StreamHooks) (*ForwardResult, error) {
+func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input ClientPayload, turn int, o StreamOptions, hooks *StreamHooks) (result *ForwardResult, retErr error) {
 	payload, payloadBytes, originalModel, routingModel := input.PayloadRaw, input.PayloadBytes, input.OriginalModel, input.RoutingModel
 	imageBillingModel, imageSizeTier, imageInputSize := input.ImageBillingModel, input.ImageSizeTier, input.ImageInputSize
 	requestedReasoningEffort := input.RequestedReasoningEffort
@@ -54,6 +56,16 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 	}
 	turnStart := time.Now()
 	performance := timing.BeginPerformance(ctx, o.ProviderID, turnStart)
+	attemptNumber := int(performance.Values["attempt_number"])
+	// Reset ctx's turn conversion snapshot before preparing this dispatch and
+	// close the registered attempt on any error return so local pooled retries
+	// never leave the failed first attempt running or missing its replay snapshot.
+	telemetry.ReplaceProtocolConversion(ctx, nil)
+	defer func() {
+		if retErr != nil {
+			recordFailedRelayAttempt(ctx, o.ProviderID, attemptNumber, retErr)
+		}
+	}()
 	wroteDownstream := false
 	needModelReplace := false
 	mappedModel := ""
@@ -133,6 +145,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 			ResponseHeaders:             lease.Headers(),
 			Duration:                    time.Since(turnStart),
 			Timings:                     performance.Clone(),
+			ProtocolConversion:          telemetry.ProtocolConversionFromContext(ctx),
 		}
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.WSReplayInput = replayInput
@@ -412,4 +425,42 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 			return result, nil
 		}
 	}
+}
+
+// recordFailedRelayAttempt writes the failed outcome, sanitized reason, elapsed
+// duration, and staged conversion snapshot onto the RequestAttempt registered
+// by BeginPerformance when RelayTurn exits with an error. Closing the attempt
+// here ensures local pooled retries record failed first attempts accurately
+// even though IngressHooks.AfterTurn runs only once for the logical turn.
+func recordFailedRelayAttempt(ctx context.Context, providerID int64, attemptNumber int, relayErr error) {
+	if ctx == nil || attemptNumber <= 0 || relayErr == nil {
+		return
+	}
+	finalErr := relayErr
+	var turnErr *IngressTurnError
+	if errors.As(relayErr, &turnErr) && turnErr.Unwrap() != nil {
+		finalErr = turnErr.Unwrap()
+	}
+	reason := logredact.SanitizeUpstreamQueries(logredact.RedactText(finalErr.Error()))
+	stagedConversion := telemetry.ProtocolConversionFromContext(ctx)
+	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+		for i := range record.Attempts {
+			attempt := &record.Attempts[i]
+			if attempt.Number != attemptNumber || attempt.ProviderID != providerID {
+				continue
+			}
+			attempt.Outcome = "failed"
+			if attempt.ProtocolConversion == nil && stagedConversion != nil {
+				attempt.ProtocolConversion = stagedConversion.Clone()
+			}
+			if reason != "" {
+				attempt.Reason = reason
+			}
+			if attempt.StartedAt != nil && attempt.DurationMs == nil {
+				ms := time.Since(*attempt.StartedAt).Milliseconds()
+				attempt.DurationMs = &ms
+			}
+			return
+		}
+	})
 }

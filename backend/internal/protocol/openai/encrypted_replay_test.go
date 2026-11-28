@@ -219,7 +219,8 @@ func TestStripResponsesEncryptedReasoningBytes_LosslessCleanup(t *testing.T) {
 
 	t.Run("drops encrypted compaction and keeps empty input array when only skeleton existed", func(t *testing.T) {
 		raw := []byte(`{"model":"grok-4.5","input":[{"type":"compaction","id":"cmp_1","encrypted_content":"enc_cmp"},{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"enc_r"}]}`)
-		stripped, changed := StripResponsesEncryptedReasoningBytes(raw)
+		stripped, changed, dropped := StripResponsesEncryptedReasoningWithCount(raw)
+		require.Equal(t, 2, dropped)
 		require.True(t, changed)
 		assert.Equal(t, `{"model":"grok-4.5","input":[]}`, string(stripped))
 	})

@@ -7,8 +7,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
+	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
 // model_catalogue.go adapts provider configuration into protocol-aware
@@ -29,7 +31,11 @@ import (
 // catalogueRules adapts prepared execution model rules to routing catalogue
 // queries.
 type catalogueRules struct {
-	policy ModelPolicy /* prepared catalogue execution policy */
+	policy ModelPolicy // prepared catalogue execution policy
+	// fastBetaHeaderSet and fastBetaHeaderEnabled capture the same filtered
+	// provider override used by request builders, once per provider snapshot.
+	fastBetaHeaderSet     bool // explicit beta override present
+	fastBetaHeaderEnabled bool // override includes Fast beta
 }
 
 // AttributeTarget constructs the attribute identity for a catalogue route with
@@ -48,7 +54,12 @@ func (v catalogueRules) AttributeTarget(requested, model string, source, target 
 	if source == capability.ProtocolResponsesCompact && v.policy.Record.IsOpenAI() {
 		_, model = v.policy.ForwardMappedModels(requested, true)
 	}
-	return v.policy.Record.ModelAttributeRoute(model, string(source), string(target))
+	route := v.policy.Record.ModelAttributeRoute(model, string(source), string(target))
+	if target == capability.ProtocolAnthropicMessages {
+		route.FastBetaHeaderSet = v.fastBetaHeaderSet
+		route.FastBetaHeaderEnabled = v.fastBetaHeaderEnabled
+	}
+	return route
 }
 
 // ConfiguredModels returns concrete request model candidates from the prepared
@@ -85,7 +96,12 @@ func (v catalogueRules) UpstreamModels(ctx context.Context, model string) []stri
 // reuses its snapshot; the provider record remains borrowed for other
 // decisions.
 func (p ModelPolicy) CatalogueRules() routing.CatalogueRules {
-	return catalogueRules{policy: p.Prepared()}
+	header, set := provideradapter.HeaderOverrideValue(p.Record, "anthropic-beta")
+	return catalogueRules{
+		policy:                p.Prepared(),
+		fastBetaHeaderSet:     set,
+		fastBetaHeaderEnabled: anthropic.ContainsBetaToken(header, anthropic.BetaFastMode),
+	}
 }
 
 // CatalogueProvider prepares one nonnil provider for a catalogue query,
@@ -99,7 +115,7 @@ func CatalogueProvider(value *provider.Record, route requeststate.AttemptRoute) 
 	for i, g := range value.ProviderGroups {
 		groups[i] = g.GroupID
 	}
-	return routing.CatalogueProvider{ProviderSnapshot: snapshot, GroupIDs: slices.Clone(value.GroupIDs), ProviderGroupIDs: groups, Passthrough: value.IsOpenAIPassthroughEnabled(), Rules: catalogueRules{policy}}
+	return routing.CatalogueProvider{ProviderSnapshot: snapshot, GroupIDs: slices.Clone(value.GroupIDs), ProviderGroupIDs: groups, Passthrough: value.IsOpenAIPassthroughEnabled(), Rules: policy.CatalogueRules()}
 }
 
 // CatalogueProviders prepares each supplied record with an empty attempt route

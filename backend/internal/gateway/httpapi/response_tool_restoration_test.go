@@ -214,8 +214,10 @@ func TestIRResponsesToolRestorationComposesWithCodexAliasAndNativeNamespace(t *t
 	// Seed Codex alias ("python__tokenrouter" -> "python"), native namespace
 	// ("crm__lookup" -> crm.lookup), and IR ToolMap (custom "exec" + namespace "nb" with aliased python).
 	SetCodexToolNameReverse(c, map[string]string{openai.CodexPythonToolAlias: openai.CodexReservedPythonToolName})
-	_, err := FlattenOpenAIResponsesNamespaces(c, []byte(`{"tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}]}`))
+	flattened, report, err := FlattenOpenAIResponsesNamespaces(c, []byte(`{"sequence":9007199254740993,"tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}]}`))
 	require.NoError(t, err)
+	require.Contains(t, string(flattened), `"sequence":9007199254740993`)
+	require.Equal(t, 1, report.Lowered)
 
 	irReq := []byte(`{"model":"gpt-5.4","tools":[{"type":"custom","name":"exec"},{"type":"namespace","name":"nb","tools":[{"type":"function","name":"python__tokenrouter","parameters":{"type":"object"}}]}]}`)
 	_, toolMap, _, err := convert.AdaptResponsesTools(irReq, convert.Dialect{Tools: ir.ToolSupportFunction}, nil)

@@ -393,20 +393,26 @@ func PrepareNativeReplayWithResolution(
 	}
 	resolved := baseResult.ForRequest(ModelRequestState(body))
 	dialect := ConversionDialect(ctx, target, resolved, upstreamProto)
-	rewritten, losses, err := convert.PrepareNativeReplay(convert.Route{
+	route := convert.Route{
 		Client:   clientProto,
 		Upstream: upstreamProto,
 		Dialect:  dialect,
-	}, body)
-	if err == nil && len(losses) > 0 {
-		logging.L().Debug(
-			"gateway.native_replay_losses",
-			zap.String("client_protocol", string(clientProto)),
-			zap.String("upstream_protocol", string(upstreamProto)),
-			zap.String("dialect", dialect.Name),
-			zap.Int64("provider_id", dialect.ProviderID),
-			zap.Int("loss_count", len(losses)),
-		)
+	}
+	rewritten, losses, applied, err := convert.PrepareNativeReplayWithStatus(route, body)
+	if err == nil {
+		if applied {
+			upstream.ObserveNativeReplayConversion(ctx, route, losses, applied)
+		}
+		if len(losses) > 0 {
+			logging.L().Debug(
+				"gateway.native_replay_losses",
+				zap.String("client_protocol", string(clientProto)),
+				zap.String("upstream_protocol", string(upstreamProto)),
+				zap.String("dialect", dialect.Name),
+				zap.Int64("provider_id", dialect.ProviderID),
+				zap.Int("loss_count", len(losses)),
+			)
+		}
 	}
 	return rewritten, losses, err
 }

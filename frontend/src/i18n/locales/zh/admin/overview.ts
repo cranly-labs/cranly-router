@@ -1058,8 +1058,6 @@ export default {
       forceUltrafast: '强制使用 Ultra Fast',
       forceOff: '强制关闭 Fast / Ultra Fast',
       hint: '强制关闭会移除 Fast 和 Ultra Fast，并禁止 API Key 重新开启。强制开启仍允许 API Key 关闭；全局过滤、拦截和强制规则具有最终优先级。',
-      free: '免费 Fast',
-      freeHint: '请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。',
     },
     invalidRequestFallback: {
       title: '无效请求兜底分组',

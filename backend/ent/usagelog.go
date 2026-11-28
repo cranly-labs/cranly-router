@@ -89,6 +89,8 @@ type UsageLog struct {
 	CacheCreation12hTokens *int `json:"cache_creation_12h_tokens,omitempty"`
 	// CacheWriteAnomaly holds the value of the "cache_write_anomaly" field.
 	CacheWriteAnomaly map[string]interface{} `json:"cache_write_anomaly,omitempty"`
+	// ProtocolConversion holds the value of the "protocol_conversion" field.
+	ProtocolConversion map[string]interface{} `json:"protocol_conversion,omitempty"`
 	// InputCost holds the value of the "input_cost" field.
 	InputCost float64 `json:"input_cost,omitempty"`
 	// OutputCost holds the value of the "output_cost" field.
@@ -243,7 +245,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usagelog.FieldSystemUsage, usagelog.FieldCacheWriteAnomaly, usagelog.FieldBillingAllocations, usagelog.FieldTimings, usagelog.FieldImageSizeBreakdown:
+		case usagelog.FieldSystemUsage, usagelog.FieldCacheWriteAnomaly, usagelog.FieldProtocolConversion, usagelog.FieldBillingAllocations, usagelog.FieldTimings, usagelog.FieldImageSizeBreakdown:
 			values[i] = new([]byte)
 		case usagelog.FieldUpstreamModelMismatch, usagelog.FieldLongContextBillingApplied, usagelog.FieldStream, usagelog.FieldCacheTTLOverridden:
 			values[i] = new(sql.NullBool)
@@ -487,6 +489,14 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 			} else if value != nil && len(*value) > 0 {
 				if err := json.Unmarshal(*value, &_m.CacheWriteAnomaly); err != nil {
 					return fmt.Errorf("unmarshal field cache_write_anomaly: %w", err)
+				}
+			}
+		case usagelog.FieldProtocolConversion:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field protocol_conversion", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.ProtocolConversion); err != nil {
+					return fmt.Errorf("unmarshal field protocol_conversion: %w", err)
 				}
 			}
 		case usagelog.FieldInputCost:
@@ -874,6 +884,9 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cache_write_anomaly=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CacheWriteAnomaly))
+	builder.WriteString(", ")
+	builder.WriteString("protocol_conversion=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ProtocolConversion))
 	builder.WriteString(", ")
 	builder.WriteString("input_cost=")
 	builder.WriteString(fmt.Sprintf("%v", _m.InputCost))

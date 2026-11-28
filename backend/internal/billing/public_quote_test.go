@@ -147,3 +147,95 @@ func TestConfiguredVideoQuoteKeepsMissingDimensionsUnavailable(t *testing.T) {
 		})
 	}
 }
+
+// TestPublicQuoteRestrictsDisallowedServiceTiers quotes catalog and card-backed
+// token models under nil and selective route service-tier filters. Disallowed
+// Fast, Flex, and Ultrafast quotes are omitted while standard prices, calendar
+// adjustments, and settlement resolutions remain intact.
+func TestPublicQuoteRestrictsDisallowedServiceTiers(t *testing.T) {
+	fastFactor := 2.0
+	flexFactor := 0.5
+	ultrafastFactor := 4.0
+	calendarFactor := 1.25
+	catalog := defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
+		"tiered-chat": {
+			Source:              "models.dev",
+			InputCostPerToken:   2e-6,
+			OutputCostPerToken:  8e-6,
+			SupportsServiceTier: true,
+			CatalogRules: pricing.CatalogRules{
+				ServiceTierPrices: []pricing.CatalogServicePrice{
+					{Tier: "", After: "2020-01-01", Zone: "UTC", Factor: &calendarFactor},
+					{Tier: "priority", Factor: &fastFactor},
+					{Tier: "flex", Factor: &flexFactor},
+					{Tier: "ultrafast", Factor: &ultrafastFactor},
+				},
+			},
+		},
+	}}
+	calculator := NewCalculator(catalog, CalculatorOptions{})
+	resolver := NewPriceResolver(nil, calculator, nil, nil)
+	input := PricingInput{Model: "tiered-chat"}
+
+	unrestricted := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: 1})
+	require.InDelta(t, 2.5e-6, unrestricted.InputPricePerToken, 1e-12)
+	require.InDelta(t, 5e-6, unrestricted.FastInputPricePerToken, 1e-12)
+	require.NotNil(t, unrestricted.Flex)
+	require.InDelta(t, 1.25e-6, unrestricted.Flex.Input, 1e-12)
+	require.NotNil(t, unrestricted.Ultrafast)
+	require.InDelta(t, 10e-6, unrestricted.Ultrafast.Input, 1e-12)
+
+	none := resolver.PublicQuote(context.Background(), PublicQuoteInput{
+		PricingInput:   input,
+		RateMultiplier: 1,
+		ServiceTiers:   &pricing.ServiceTierSupport{},
+	})
+	require.InDelta(t, 2.5e-6, none.InputPricePerToken, 1e-12)
+	require.Zero(t, none.FastInputPricePerToken)
+	require.Zero(t, none.FastOutputPricePerToken)
+	require.Nil(t, none.Flex)
+	require.Nil(t, none.Ultrafast)
+
+	flexOnly := resolver.PublicQuote(context.Background(), PublicQuoteInput{
+		PricingInput:   input,
+		RateMultiplier: 1,
+		ServiceTiers:   &pricing.ServiceTierSupport{Flex: true},
+	})
+	require.Zero(t, flexOnly.FastInputPricePerToken)
+	require.NotNil(t, flexOnly.Flex)
+	require.InDelta(t, 1.25e-6, flexOnly.Flex.Input, 1e-12)
+	require.Nil(t, flexOnly.Ultrafast)
+
+	// Card-configured Fast and Flex multipliers on interval cards must also be
+	// cleared on a restricted copy without mutating the stored card.
+	groupID := int64(7)
+	stdIn := 3e-6
+	stdOut := 9e-6
+	boundary := 100000
+	cardFast := 3.0
+	cardFlex := 0.4
+	card := &ModelPricingEntry{
+		BillingMode:    pricing.BillingModeToken,
+		InputPrice:     &stdIn,
+		OutputPrice:    &stdOut,
+		FastMultiplier: &cardFast,
+		FlexMultiplier: &cardFlex,
+		Intervals: []pricing.PricingInterval{
+			{MinTokens: 0, MaxTokens: &boundary, InputPrice: &stdIn, OutputPrice: &stdOut},
+			{MinTokens: boundary, InputPrice: &stdIn, OutputPrice: &stdOut},
+		},
+	}
+	cardResolver := NewPriceResolver(mediaPriceCards{card: card}, calculator, nil, nil)
+	cardInput := PricingInput{Model: "tiered-chat", GroupID: &groupID}
+	restrictedCard := cardResolver.PublicQuote(context.Background(), PublicQuoteInput{
+		PricingInput:   cardInput,
+		RateMultiplier: 1,
+		ServiceTiers:   &pricing.ServiceTierSupport{},
+	})
+	require.Empty(t, restrictedCard.ContextIntervals)
+	require.InDelta(t, stdIn, restrictedCard.InputPricePerToken, 1e-12)
+	require.Zero(t, restrictedCard.FastInputPricePerToken)
+	require.Nil(t, restrictedCard.Flex)
+	require.NotNil(t, card.FastMultiplier)
+	require.NotNil(t, card.FlexMultiplier)
+}

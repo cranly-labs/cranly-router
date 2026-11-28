@@ -91,7 +91,7 @@ func buildMCPMetadataFields() map[string]mcpMetadataKind {
 			api_key_id api_key_count api_key_limit default_user_api_key_limit active_api_keys total_api_keys
 			pre_block_api_key_active pre_block_api_key_available_count pre_block_api_key_total_calls rebound_api_key_count
 			token_id mcp_token_id token_version chatgpt_oauth_token_tls_fingerprint_profile_id refresh_token_expire_time
-			apikey_max_conns_factor max_ingress_connections_per_api_key`,
+			apikey_max_conns_factor max_ingress_connections_per_api_key replay_token_dropped`,
 		metadataBoolean: `has_api_key has_access_token has_refresh_token has_id_token has_password
 			has_agent_private_key has_security_oauth_token has_machine_token has_session_key
 			has_new_api_user_access_token has_clearTextPassword has_aws_secret_access_key has_aws_session_token

@@ -41,9 +41,6 @@ type billingSettingsRequest struct {
 	// LongContextPricingEnabled controls catalog context rules; configured
 	// price-card intervals remain applicable when the supplied setting is false.
 	LongContextPricingEnabled *bool `json:"long_context_pricing_enabled"` // built-in context pricing patch
-	// FreeOpenAIFast selects Standard funding amounts for eligible OpenAI Fast
-	// usage while reported Fast costs retain their own calculation.
-	FreeOpenAIFast *bool `json:"free_openai_fast"` // OpenAI Fast funding patch
 	// BatchImageDiscountMultiplier and BatchImageHoldMultiplier scale batch
 	// settlement and reservation amounts. Nil retains the current factors;
 	// BillingSettingsPatch.Apply rejects a hold factor smaller than the discount
@@ -86,7 +83,6 @@ func (r billingSettingsRequest) patch() routing.BillingSettingsPatch {
 		PeakEnd:                      r.PeakEnd,
 		PeakRateMultiplier:           r.PeakRateMultiplier,
 		LongContextPricingEnabled:    r.LongContextPricingEnabled,
-		FreeOpenAIFast:               r.FreeOpenAIFast,
 		BatchImageDiscountMultiplier: r.BatchImageDiscountMultiplier,
 		BatchImageHoldMultiplier:     r.BatchImageHoldMultiplier,
 		WebSearchPricePerCall:        r.WebSearchPricePerCall.PriceUpdate,

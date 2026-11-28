@@ -120,7 +120,7 @@ const sections = [
   },
   {
     id: 'openai',
-    toggles: ['free_openai_fast'],
+    toggles: [],
     prices: ['web_search_price_per_call'],
   },
   {

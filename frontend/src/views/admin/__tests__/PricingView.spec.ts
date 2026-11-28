@@ -249,7 +249,7 @@ describe('PricingView billing settings', () => {
       model_pricing: [],
       provider_stats_pricing_rules: [],
       web_search_price_per_call: 0.2,
-      free_openai_fast: true,
+      long_context_pricing_enabled: false,
     })
     await wrapper.get('#pricing-tab-billing').trigger('click')
     expect(
@@ -264,7 +264,7 @@ describe('PricingView billing settings', () => {
       9,
       expect.objectContaining({
         web_search_price_per_call: null,
-        free_openai_fast: true,
+        long_context_pricing_enabled: false,
       }),
     )
     wrapper.unmount()

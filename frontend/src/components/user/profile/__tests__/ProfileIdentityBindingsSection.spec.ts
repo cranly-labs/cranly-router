@@ -715,4 +715,55 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.find('[data-testid="profile-binding-linuxdo-action"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="profile-binding-oidc-action"]').exists()).toBe(false)
   })
+
+  // The administrator enabled no external provider, while the account stays bound to a
+  // since-disabled LinuxDo identity. The test protects hiding of unbound disabled provider
+  // rows and continued display of the bound row and the email row.
+  it('hides unbound providers that the administrator has not enabled', () => {
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser({
+          auth_bindings: {
+            email: { bound: true },
+            linuxdo: { bound: true },
+          },
+        }),
+        linuxdoEnabled: false,
+        dingtalkEnabled: false,
+        oidcEnabled: false,
+        wechatEnabled: false,
+      },
+    })
+
+    expect(wrapper.find('[data-testid="profile-binding-email-status"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="profile-binding-linuxdo-status"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="profile-binding-dingtalk-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="profile-binding-oidc-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="profile-binding-wechat-status"]').exists()).toBe(false)
+  })
+
+  // Only the WeChat public-account flow is enabled, so a desktop browser cannot start it.
+  // The test protects the visible WeChat row, because the administrator did enable WeChat,
+  // while the bind action stays hidden.
+  it('keeps the WeChat row when only the public-account flow is enabled', () => {
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser(),
+        linuxdoEnabled: false,
+        oidcEnabled: false,
+        wechatEnabled: true,
+        wechatOpenEnabled: false,
+        wechatMpEnabled: true,
+      },
+    })
+
+    expect(wrapper.find('[data-testid="profile-binding-wechat-status"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="profile-binding-wechat-action"]').exists()).toBe(false)
+  })
 })

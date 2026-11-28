@@ -142,10 +142,10 @@ func (p *wsStreamAdapter) ParseUsage(body []byte, usage *wire.ForwardUsage) {
 	wire.ParseWSResponseUsageFromCompletedEvent(body, usage)
 }
 
-// MarkCyber records Cyber evidence with already parsed usage under the
-// accepted stream's HTTP status.
+// MarkCyber records policy evidence and parsed usage for a pooled upstream
+// WebSocket turn. Each frame arrives after upgrade and has no HTTP status.
 func (p *wsStreamAdapter) MarkCyber(body []byte, usage *wire.ForwardUsage) {
-	gatewayhttp.MarkOpenAICyberPolicyEvent(p.request, body, http.StatusOK, usage)
+	gatewayhttp.MarkOpenAICyberPolicyEvent(p.request, body, 0, usage)
 }
 
 // SchedulingModel returns the provider's effort-aware canonical model key used

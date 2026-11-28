@@ -114,3 +114,25 @@ func TestRequestFailureKeepsObservedIdentity(t *testing.T) {
 	require.Equal(t, "completed", saved.Attempts[0].Outcome)
 	require.Len(t, saved.Aliases, 1)
 }
+
+// TestUpstreamHTTPStatusFollowsCurrentDispatch retries a provider and delivers the
+// abandoned attempt's headers late. Only the final dispatch can supply a wire
+// status, including when a later selection stops before opening a connection.
+func TestUpstreamHTTPStatusFollowsCurrentDispatch(t *testing.T) {
+	root := WithRequestCapture(t.Context(), RequestRecord{}, nil)
+	provider := WithRequestProvider(root, 7, "")
+	first := BeginRequestAttempt(provider, 0)
+	ObserveRequestHeaders(first, RequestAttemptFromContext(first), nil, 502)
+	require.Equal(t, new(502), UpstreamHTTPStatus(root, 7))
+
+	second := BeginRequestAttempt(provider, 0)
+	ObserveRequestHeaders(first, RequestAttemptFromContext(first), nil, 503)
+	require.Nil(t, UpstreamHTTPStatus(root, 7))
+	ObserveRequestHeaders(second, RequestAttemptFromContext(second), nil, 200)
+	require.Equal(t, new(200), UpstreamHTTPStatus(root, 7))
+	require.Nil(t, UpstreamHTTPStatus(root, 8))
+
+	ResetUpstreamHTTPStatus(provider)
+	ObserveRequestHeaders(second, RequestAttemptFromContext(second), nil, 200)
+	require.Nil(t, UpstreamHTTPStatus(root, 7))
+}

@@ -117,7 +117,7 @@ func (r *entryRequestRecords) attempt() *entryAttemptRecords {
 // locate its terminal exchange within this range even when the transport already
 // marked the failure and returned no completion result.
 func captureEntryTurn(ctx context.Context) entryTurnRecord {
-	turn := entryTurnRecord{context: ctx, firstAttempt: 1}
+	turn := entryTurnRecord{context: telemetry.WithProtocolConversionScope(ctx), firstAttempt: 1}
 	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
 		for _, attempt := range record.Attempts {
 			turn.firstAttempt = max(turn.firstAttempt, attempt.Number+1)
@@ -158,7 +158,8 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 	}
 	mode := timing.ModeFromContext(ctx)
 	base = timing.WithModeReader(base, func(context.Context) string { return mode })
-	return telemetry.CopyRequestCapture(base, ctx)
+	base = telemetry.CopyRequestCapture(base, ctx)
+	return telemetry.CopyProtocolConversionScope(base, ctx)
 }
 
 // finish records the current attempt and either retains or finishes its logical
@@ -180,6 +181,10 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 	a.mu.Lock()
 	firstAttempt := a.turns[max(capture.Turn, 1)].firstAttempt
 	a.mu.Unlock()
+	stagedConversion := telemetry.ProtocolConversionFromContext(ctx)
+	if capture.Result != nil && capture.Result.ProtocolConversion != nil {
+		stagedConversion = capture.Result.ProtocolConversion.Clone()
+	}
 	var ref telemetry.RequestAttemptRef
 	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
 		record.Model = capture.OriginalModel
@@ -215,6 +220,9 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 		if index >= 0 {
 			attempt := &record.Attempts[index]
 			attempt.Outcome = outcome
+			if attempt.ProtocolConversion == nil && stagedConversion != nil {
+				attempt.ProtocolConversion = stagedConversion.Clone()
+			}
 			if capture.Err != nil {
 				attempt.Reason = logredact.SanitizeUpstreamQueries(logredact.RedactText(capture.Err.Error()))
 			}

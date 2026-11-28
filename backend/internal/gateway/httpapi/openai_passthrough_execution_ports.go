@@ -521,14 +521,23 @@ func (p *openAIPassthroughExecutionAdapter) AdaptClientTools(ctx context.Context
 		WriteOpenAIForwardRejection(p.c, http.StatusBadRequest, "invalid_request_error", err.Error(), "tools")
 		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(err)
 	}
+	reqCtx := p.resolveContext(ctx)
 	if len(losses) > 0 {
-		logging.FromContext(p.resolveContext(ctx)).Debug(
+		logging.FromContext(reqCtx).Debug(
 			"gateway.openai_passthrough_tool_adaptation_losses",
 			zap.Int64("provider_id", p.provider.Record.ID),
 			zap.String("model", model),
 			zap.Int("loss_count", len(losses)),
 		)
 	}
+	upstream.ObserveToolAdaptedConversion(
+		reqCtx,
+		protocol.ProtocolOpenAIResponses,
+		protocol.ProtocolOpenAIResponses,
+		dialect,
+		toolMap,
+		losses,
+	)
 	// Publish the active ToolMap only after lowering succeeds so response
 	// restoration matches the outgoing request bytes adopted by RunPassthrough.
 	SetOpenAIResponsesClientToolMap(p.c, toolMap)

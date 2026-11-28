@@ -177,6 +177,35 @@ func (r *ResolvedPricing) SupportsUltrafast() bool {
 		hasCatalogServiceTier(r.BasePricing, openai.ServiceTierUltrafast)
 }
 
+// RestrictServiceTiers returns a shallow copy of token resolution with
+// disallowed Fast, Flex, and Ultrafast modifiers and directory rules removed.
+// Nil receivers return nil, and non-token or unrestricted resolutions return
+// the receiver unchanged.
+//
+// Base pricing and any retained configuration card are copied before clearing
+// disallowed multipliers so interval conversion and flat display quotes obey
+// the same route-level tier support without mutating shared resolver state.
+func (r *ResolvedPricing) RestrictServiceTiers(allowed ServiceTierSupport) *ResolvedPricing {
+	if r == nil || r.Mode != BillingModeToken || (allowed.Fast && allowed.Flex && allowed.Ultrafast) {
+		return r
+	}
+	out := *r
+	out.BasePricing = restrictModelPricingServiceTiers(r.BasePricing, allowed)
+	if r.ConfigPricing != nil && (!allowed.Fast || !allowed.Flex) {
+		card := r.ConfigPricing.Clone()
+		if !allowed.Fast {
+			card.FastMultiplier = nil
+			card.FastModeMultiplier = nil
+		}
+		if !allowed.Flex {
+			card.FlexMultiplier = nil
+		}
+		out.ConfigPricing = &card
+	}
+	out.SupportsServiceTier = out.BasePricing != nil && out.BasePricing.SupportsServiceTier
+	return &out
+}
+
 // hasBaseTokenPricing reports an available base pointer, including explicit
 // free amounts. Nil records, absent pointers, and BasePricingUnavailable return
 // false, so a placeholder carrying only modifiers cannot supply a default

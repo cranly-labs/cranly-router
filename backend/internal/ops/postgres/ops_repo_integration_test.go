@@ -131,12 +131,13 @@ func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, plain.APIKeyPrefix)
 	validID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
-		ErrorPhase:   "request",
-		ErrorType:    "api_error",
-		Severity:     "error",
-		StatusCode:   402,
-		CreatedAt:    time.Now(),
-		APIKeyPrefix: "sk-valid",
+		ErrorPhase:       "request",
+		ErrorType:        "api_error",
+		Severity:         "error",
+		StatusCode:       402,
+		ClientStatusCode: new(402),
+		CreatedAt:        time.Now(),
+		APIKeyPrefix:     "sk-valid",
 	})
 	require.NoError(t, err)
 
@@ -149,6 +150,7 @@ func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 		ErrorType:          "upstream_error",
 		Severity:           "error",
 		StatusCode:         503,
+		ClientStatusCode:   new(503),
 		UpstreamStatusCode: &zero,
 		CreatedAt:          time.Now(),
 	})
@@ -156,8 +158,274 @@ func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 
 	credentialFailure, err := repo.GetErrorLogByID(ctx, credentialFailureID)
 	require.NoError(t, err)
+	require.Equal(t, 503, credentialFailure.StatusCode)
 	require.NotNil(t, credentialFailure.UpstreamStatusCode)
 	require.Zero(t, *credentialFailure.UpstreamStatusCode)
+
+	upstreamForbidden := 403
+	failedUpstreamID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
+		ErrorPhase:         "upstream",
+		ErrorType:          "upstream_error",
+		ErrorOwner:         "provider",
+		Severity:           "error",
+		StatusCode:         502,
+		ClientStatusCode:   new(502),
+		UpstreamStatusCode: &upstreamForbidden,
+		CreatedAt:          time.Now(),
+	})
+	require.NoError(t, err)
+
+	failedUpstream, err := repo.GetErrorLogByID(ctx, failedUpstreamID)
+	require.NoError(t, err)
+	require.Equal(t, 502, failedUpstream.StatusCode)
+	require.NotNil(t, failedUpstream.UpstreamStatusCode)
+	require.Equal(t, 403, *failedUpstream.UpstreamStatusCode)
+
+	upstreamRateLimit := 429
+	recoveredID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
+		ErrorPhase:         "upstream",
+		ErrorType:          "upstream_error",
+		ErrorOwner:         "provider",
+		Severity:           "warning",
+		StatusCode:         200,
+		ClientStatusCode:   new(200),
+		UpstreamStatusCode: &upstreamRateLimit,
+		CreatedAt:          time.Now(),
+	})
+	require.NoError(t, err)
+
+	recoveredList, err := repo.ListErrorLogs(ctx, &ops.OpsErrorLogFilter{
+		Phase:                    "upstream",
+		IncludeRecoveredUpstream: true,
+		StatusCodes:              []int{200},
+		UpstreamStatusCodes:      []int{429},
+		View:                     "all",
+	})
+	require.NoError(t, err)
+	require.Len(t, recoveredList.Errors, 1)
+	require.Equal(t, recoveredID, recoveredList.Errors[0].ID)
+	require.Equal(t, 200, recoveredList.Errors[0].StatusCode)
+	require.NotNil(t, recoveredList.Errors[0].UpstreamStatusCode)
+	require.Equal(t, 429, *recoveredList.Errors[0].UpstreamStatusCode)
+
+	// Other buckets must exclude client 200 on recovered rows and upstream 0 on
+	// credential failures while retaining genuinely unlisted status codes.
+	clientTeapotID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
+		ErrorPhase:       "request",
+		ErrorType:        "invalid_request_error",
+		Severity:         "warning",
+		StatusCode:       418,
+		ClientStatusCode: new(418),
+		CreatedAt:        time.Now(),
+	})
+	require.NoError(t, err)
+
+	upstreamTimeout524 := 524
+	upstreamOtherID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
+		ErrorPhase:         "upstream",
+		ErrorType:          "upstream_error",
+		ErrorOwner:         "provider",
+		Severity:           "error",
+		StatusCode:         502,
+		ClientStatusCode:   new(502),
+		UpstreamStatusCode: &upstreamTimeout524,
+		CreatedAt:          time.Now(),
+	})
+	require.NoError(t, err)
+
+	clientOtherList, err := repo.ListErrorLogs(ctx, &ops.OpsErrorLogFilter{
+		Phase:                    "upstream",
+		IncludeRecoveredUpstream: true,
+		StatusCodesOther:         true,
+		View:                     "all",
+	})
+	require.NoError(t, err)
+	for _, row := range clientOtherList.Errors {
+		require.NotEqual(t, recoveredID, row.ID, "recovered client 200 must not match client Other")
+	}
+
+	allClientOtherList, err := repo.ListErrorLogs(ctx, &ops.OpsErrorLogFilter{
+		StatusCodesOther: true,
+		View:             "all",
+	})
+	require.NoError(t, err)
+	clientOtherIDs := make([]int64, 0, len(allClientOtherList.Errors))
+	for _, row := range allClientOtherList.Errors {
+		clientOtherIDs = append(clientOtherIDs, row.ID)
+	}
+	require.Contains(t, clientOtherIDs, clientTeapotID)
+	require.Contains(t, clientOtherIDs, validID)
+
+	upstreamOtherList, err := repo.ListErrorLogs(ctx, &ops.OpsErrorLogFilter{
+		UpstreamStatusCodesOther: true,
+		View:                     "all",
+	})
+	require.NoError(t, err)
+	upstreamOtherIDs := make([]int64, 0, len(upstreamOtherList.Errors))
+	for _, row := range upstreamOtherList.Errors {
+		upstreamOtherIDs = append(upstreamOtherIDs, row.ID)
+	}
+	require.NotContains(t, upstreamOtherIDs, credentialFailureID, "provider_auth upstream 0 must not match upstream Other")
+	require.Contains(t, upstreamOtherIDs, upstreamOtherID)
+}
+
+// TestListAndDetailErrorLogs_StreamClientStatusAndHistoricalCyberPolicyFallback
+// stores an SSE terminal error with wire status 200 and logical 400, a legacy
+// stream error lacking client_status_code, and new/legacy/local cyber_policy
+// rows. It protects client 200 filtering on SLA-admitted stream errors, legacy
+// status fallback, and upstream 403 matching on upstream cyber_policy rows.
+func TestListAndDetailErrorLogs_StreamClientStatusAndHistoricalCyberPolicyFallback(t *testing.T) {
+	ctx := context.Background()
+	var migrationCount int
+	require.NoError(
+		t,
+		integrationDB.QueryRowContext(
+			ctx,
+			"SELECT COUNT(*) FROM schema_migrations WHERE filename = '318_ops_error_logs_client_status_code.sql'",
+		).Scan(&migrationCount),
+	)
+	require.Equal(t, 1, migrationCount)
+
+	// Reset shared error rows before inserting stream and policy fixtures.
+	// Truncation errors are suppressed while subsequent inserts and queries govern
+	// the test outcome.
+	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE ops_error_logs RESTART IDENTITY CASCADE")
+	repo := NewOpsRepository(integrationDB)
+
+	wireOK := 200
+	logicalBadRequest := 400
+	sseErrorID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
+		ErrorPhase:         "request",
+		ErrorType:          "invalid_request_error",
+		ErrorOwner:         "provider",
+		ErrorSource:        "upstream_http",
+		Severity:           "P2",
+		StatusCode:         logicalBadRequest,
+		ClientStatusCode:   &wireOK,
+		UpstreamStatusCode: &wireOK,
+		Stream:             true,
+		ErrorMessage:       "input exceeds the context window",
+		CreatedAt:          time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	// An upgraded WebSocket returns a close frame. The stored logical 403
+	// must stay available without matching a filter for a client HTTP 403.
+	wsID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
+		ErrorPhase: "request", ErrorType: "cyber_policy_session_blocked", Severity: "P3",
+		StatusCode: 403, IsBusinessLimited: true, CreatedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	ws, err := repo.GetErrorLogByID(ctx, wsID)
+	require.NoError(t, err)
+	require.Nil(t, ws.ClientStatusCode)
+	require.Zero(t, ws.StatusCode)
+	require.Equal(t, 403, ws.LogicalStatusCode)
+	clientForbidden, err := repo.ListErrorLogs(ctx, &ops.OpsErrorLogFilter{StatusCodes: []int{403}, View: "all"})
+	require.NoError(t, err)
+	require.Empty(t, clientForbidden.Errors)
+
+	var legacyStreamID int64
+	err = integrationDB.QueryRowContext(ctx, `
+		INSERT INTO ops_error_logs (
+			error_phase, error_type, error_owner, error_source, severity,
+			status_code, upstream_status_code, stream, error_message, created_at
+		) VALUES (
+			'request', 'invalid_request_error', 'provider', 'upstream_http', 'P2',
+			400, 400, true, 'legacy stream failure', NOW()
+		) RETURNING id`,
+	).Scan(&legacyStreamID)
+	require.NoError(t, err)
+
+	sseDetail, err := repo.GetErrorLogByID(ctx, sseErrorID)
+	require.NoError(t, err)
+	require.Equal(t, 200, sseDetail.StatusCode)
+	require.NotNil(t, sseDetail.ClientStatusCode)
+	require.Equal(t, 200, *sseDetail.ClientStatusCode)
+	require.Equal(t, 400, sseDetail.LogicalStatusCode)
+	require.NotNil(t, sseDetail.UpstreamStatusCode)
+	require.Equal(t, 200, *sseDetail.UpstreamStatusCode)
+
+	legacyDetail, err := repo.GetErrorLogByID(ctx, legacyStreamID)
+	require.NoError(t, err)
+	require.Equal(t, 400, legacyDetail.StatusCode)
+	require.Nil(t, legacyDetail.ClientStatusCode)
+	require.Equal(t, 400, legacyDetail.LogicalStatusCode)
+
+	client200Errors, err := repo.ListErrorLogs(ctx, &ops.OpsErrorLogFilter{
+		StatusCodes: []int{200},
+		View:        "errors",
+	})
+	require.NoError(t, err)
+	require.Len(t, client200Errors.Errors, 1)
+	require.Equal(t, sseErrorID, client200Errors.Errors[0].ID)
+	require.Equal(t, 200, client200Errors.Errors[0].StatusCode)
+	require.Equal(t, 400, client200Errors.Errors[0].LogicalStatusCode)
+
+	upstreamForbidden := 403
+	newCyberID, err := repo.InsertErrorLog(ctx, &ops.OpsInsertErrorLogInput{
+		ErrorPhase:         "request",
+		ErrorType:          "cyber_policy",
+		ErrorOwner:         "provider",
+		ErrorSource:        "upstream_http",
+		Severity:           "P3",
+		StatusCode:         403,
+		ClientStatusCode:   &wireOK,
+		UpstreamStatusCode: &upstreamForbidden,
+		IsBusinessLimited:  true,
+		Stream:             true,
+		ErrorMessage:       "cyber_policy: streamed block",
+		CreatedAt:          time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	var legacyCyberID int64
+	err = integrationDB.QueryRowContext(ctx, `
+		INSERT INTO ops_error_logs (
+			error_phase, error_type, error_owner, error_source, severity,
+			status_code, is_business_limited, error_message, created_at
+		) VALUES (
+			'request', 'cyber_policy', 'provider', 'upstream_http', 'P3',
+			403, true, 'cyber_policy: legacy block', NOW()
+		) RETURNING id`,
+	).Scan(&legacyCyberID)
+	require.NoError(t, err)
+
+	var localSessionBlockID int64
+	err = integrationDB.QueryRowContext(ctx, `
+		INSERT INTO ops_error_logs (
+			error_phase, error_type, error_owner, error_source, severity,
+			status_code, is_business_limited, error_message, created_at
+		) VALUES (
+			'request', 'cyber_policy_session_blocked', 'platform', 'gateway_local', 'P3',
+			403, true, 'cyber_policy_session_blocked: local block', NOW()
+		) RETURNING id`,
+	).Scan(&localSessionBlockID)
+	require.NoError(t, err)
+
+	legacyCyberDetail, err := repo.GetErrorLogByID(ctx, legacyCyberID)
+	require.NoError(t, err)
+	require.Equal(t, 403, legacyCyberDetail.StatusCode)
+	require.NotNil(t, legacyCyberDetail.UpstreamStatusCode)
+	require.Equal(t, 403, *legacyCyberDetail.UpstreamStatusCode)
+
+	localBlockDetail, err := repo.GetErrorLogByID(ctx, localSessionBlockID)
+	require.NoError(t, err)
+	require.Equal(t, 403, localBlockDetail.StatusCode)
+	require.Nil(t, localBlockDetail.UpstreamStatusCode)
+
+	excludedUpstream403, err := repo.ListErrorLogs(ctx, &ops.OpsErrorLogFilter{
+		UpstreamStatusCodes: []int{403},
+		View:                "excluded",
+	})
+	require.NoError(t, err)
+	matchedIDs := make([]int64, 0, len(excludedUpstream403.Errors))
+	for _, row := range excludedUpstream403.Errors {
+		matchedIDs = append(matchedIDs, row.ID)
+		require.NotNil(t, row.UpstreamStatusCode)
+		require.Equal(t, 403, *row.UpstreamStatusCode)
+	}
+	require.ElementsMatch(t, []int64{newCyberID, legacyCyberID}, matchedIDs)
 }
 
 // TestOpsRepositoryBatchInsertErrorLogs inserts two prepared observations with

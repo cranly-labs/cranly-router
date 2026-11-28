@@ -580,6 +580,7 @@ func (a *convertedAttempt) ReadConverted(
 		ReasoningEffort:             res.ReasoningEffort,
 		Stream:                      res.Stream,
 		Duration:                    res.Duration,
+		ProtocolConversion:          res.ProtocolConversion,
 		ClientDisconnect:            res.ClientDisconnect,
 	}, err
 }

@@ -1084,9 +1084,6 @@ export default {
       forceUltrafast: 'Force Ultra Fast',
       forceOff: 'Force Fast / Ultra Fast off',
       hint: 'Force off removes Fast and Ultra Fast and prevents API keys from re-enabling them. API keys may disable a group-forced tier. Global filter, block, and force rules take precedence.',
-      free: 'Free Fast',
-      freeHint:
-        'Fast requests still use the priority tier, but customers are charged the equivalent Standard price.',
     },
     invalidRequestFallback: {
       title: 'Invalid Request Fallback Group',

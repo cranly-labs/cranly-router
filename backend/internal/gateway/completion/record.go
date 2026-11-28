@@ -214,6 +214,7 @@ func (s *Recorder) BuildRecordUsageLog(
 	requestID := input.RequestID
 	usageLog := &UsageLog{
 		Timings:               result.Timings.Clone(),
+		ProtocolConversion:    result.ProtocolConversion.Clone(),
 		UserID:                actorID(apiKey, user),
 		BillingUserID:         user.ID,
 		TeamID:                apiKey.TeamID,
@@ -293,15 +294,14 @@ func (s *Recorder) BuildRecordUsageLog(
 // a nonnil eligible provider can have forbidden evidence reset before later validation.
 // Callers own the input result during normalization or use Record to snapshot it.
 //
-// Credential-parent evidence controls OAuth tier and free-Fast eligibility while
+// Credential-parent evidence identifies OAuth default-tier echoes while
 // attribution uses the executing provider. A nonzero PricingAt fixes this turn's
 // price instant; otherwise the recorder clock supplies it. Cache read and write
 // buckets are subtracted once from total input, with a zero floor for excess cache
 // counts. Missing-price errors retain a mode-tagged zero cost, whereas other price
 // errors stop before funds or analysis persistence.
 //
-// Free Fast recalculates the standard user base while retaining premium TotalCost
-// for provider statistics. Apply then resolves final funding before WriteUsage;
+// Apply allocates the effective service-tier charge before WriteUsage;
 // a settlement error writes measured work with ActualCost zero and is returned,
 // while log errors are observed after the financial result and do not resettle.
 func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
@@ -401,40 +401,6 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		cost = &CostBreakdown{BillingMode: mode}
 	}
 
-	// Recalculate a standard user base independently of the premium model cost,
-	// then pass that base to subscription/balance allocation while statistics retain TotalCost.
-	var billingBaseAmountUSD *float64
-	if GroupBillsOpenAIFastAtStandard(apiKey, billingProvider, serviceTier) && cost != nil {
-		standardCost, standardErr := s.CalculateOpenAIRecordUsageCostAt(
-			ctx,
-			result,
-			apiKey,
-			billingModels,
-			multiplier,
-			imageMultiplier,
-			videoMultiplier,
-			baseMultiplier,
-			tokens,
-			"",
-			rateNow,
-		)
-		if standardErr != nil {
-			if !IsUsagePricingUnavailableError(standardErr) {
-				return standardErr
-			}
-			// A missing standard price makes the user allocation base zero; premium TotalCost
-			// remains available to provider statistics and its separate quota-cost calculation.
-			s.observeEvent(BillingEvent{Kind: "standard_pricing_missing", Component: "service.openai_gateway", RequestID: input.RequestID, Err: standardErr})
-			standardCost = &CostBreakdown{}
-		}
-		standardBase := standardCost.TotalCost
-		billingBaseAmountUSD = &standardBase
-		cost.ActualCost = standardCost.ActualCost
-		if standardCost.CacheWrite != nil {
-			cost.CacheWrite = standardCost.CacheWrite
-		}
-	}
-
 	// This preliminary subscription choice supplies row metadata before Apply; an
 	// applied transaction result replaces it with the allocation that actually funded usage.
 	isSubscriptionBilling := subscription != nil
@@ -460,6 +426,7 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 
 	usageLog := &UsageLog{
 		Timings:               result.Timings.Clone(),
+		ProtocolConversion:    result.ProtocolConversion.Clone(),
 		UserID:                actorID(apiKey, user),
 		BillingUserID:         user.ID,
 		TeamID:                apiKey.TeamID,
@@ -598,7 +565,6 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 			SubscriptionRateMultiplierScale: subscriptionMultiplierScale,
 			BalanceRateMultiplier:           balanceMultiplier,
 			QuotaUpdates:                    input.QuotaUpdates,
-			BillingBaseAmountUSD:            billingBaseAmountUSD,
 		})
 		return err
 	}()

@@ -357,7 +357,8 @@ func (s *Calculator) DisplayPricing(model string, rateMultiplier float64) ModelD
 		return unknownDisplayPricing()
 	}
 
-	return buildTokenDisplayPricing(s.applyCatalogTimePricing(pricing, s.options.Now()), rateMultiplier)
+	at := s.options.Now()
+	return purepricing.BuildTokenDisplayPricingAt(s.applyCatalogTimePricing(pricing, at), rateMultiplier, at)
 }
 
 // DisplayPricingWithResolvedMultipliers builds video, image, per-request or token
@@ -390,7 +391,7 @@ func (s *Calculator) DisplayPricingWithResolvedMultipliers(model string, rateMul
 		return unknownDisplayPricing()
 	}
 	if resolved != nil && (resolved.Mode == purepricing.BillingModePerRequest || resolved.Mode == purepricing.BillingModeVideo) {
-		if quote, ok := displayPricingFromResolved(model, rateMultiplier, resolved); ok {
+		if quote, ok := purepricing.DisplayPricingFromResolvedAt(model, rateMultiplier, resolved, s.options.Now()); ok {
 			return quote
 		}
 		return unknownDisplayPricing()
@@ -414,12 +415,13 @@ func (s *Calculator) DisplayPricingWithResolvedMultipliers(model string, rateMul
 		}
 		return unknownDisplayPricing()
 	}
-	if resolved != nil && resolved.Source == PricingSourceCatalog && resolved.BasePricing != nil {
+	at := s.options.Now()
+	if resolved.Source == PricingSourceCatalog && resolved.BasePricing != nil {
 		copy := *resolved
-		copy.BasePricing = s.applyCatalogTimePricing(resolved.BasePricing, s.options.Now())
+		copy.BasePricing = s.applyCatalogTimePricing(resolved.BasePricing, at)
 		resolved = &copy
 	}
-	if pricing, ok := displayPricingFromResolved(model, rateMultiplier, resolved); ok {
+	if pricing, ok := purepricing.DisplayPricingFromResolvedAt(model, rateMultiplier, resolved, at); ok {
 		return pricing
 	}
 	return s.DisplayPricing(model, rateMultiplier)
@@ -465,22 +467,6 @@ func (s *Calculator) imageDisplayPricingWithResolved(model string, rateMultiplie
 	result := buildImageDisplayPricing(prices[0], prices[1], prices[2])
 	result.ImagePriceSizes = sizes
 	return result, found
-}
-
-// displayPricingFromResolved delegates resolved-price display and reports
-// whether an available view can be built. Nil or unsupported pricing can
-// return false, allowing the owning caller to choose its catalog or unknown
-// result.
-func displayPricingFromResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
-	return purepricing.DisplayPricingFromResolved(model, rateMultiplier, resolved)
-}
-
-// buildTokenDisplayPricing delegates token-unit display from a non-nil
-// normalized price record. The caller supplies a finite effective rate and
-// validates availability before this builder marks its returned token view as
-// priced.
-func buildTokenDisplayPricing(pricing *ModelPricing, rateMultiplier float64) ModelDisplayPricing {
-	return purepricing.BuildTokenDisplayPricing(pricing, rateMultiplier)
 }
 
 // buildImageDisplayPricing delegates 1K, 2K and 4K image-unit display

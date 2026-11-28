@@ -196,3 +196,37 @@ func TestPluginSecretPresenceMarkersRemainVisible(t *testing.T) {
 	require.Equal(t, "***", values["token"])
 	require.True(t, publicMCPField("plugins.get", "response/data/manifest/config/fields/*/key", "key", "password"))
 }
+
+// TestProtocolConversionLossCountsRetainReplayTokenDroppedCounter verifies that
+// MCP result redaction preserves integer replay_token_dropped counters inside
+// protocol_conversion.loss_counts while still masking string values under that key.
+func TestProtocolConversionLossCountsRetainReplayTokenDroppedCounter(t *testing.T) {
+	h := NewHandler(nil, nil, nil, nil, nil, Options{})
+	input := map[string]any{
+		"data": map[string]any{
+			"items": []any{
+				map[string]any{
+					"protocol_conversion": map[string]any{
+						"mode":              "ir_converted",
+						"client_protocol":   "anthropic_messages",
+						"upstream_protocol": "openai_chat_completions",
+						"dialect":           "openai",
+						"loss_counts": map[string]any{
+							"replay_token_dropped": json.Number("3"),
+							"tool_lowered":         json.Number("1"),
+						},
+					},
+					"FakeReplayTokenDropped": "secret-string",
+				},
+			},
+		},
+	}
+	output := jsonTestValue[map[string]any](t, h.redact("usage.list", input, "response", 0))
+	items := jsonTestValue[[]any](t, jsonTestValue[map[string]any](t, output["data"])["items"])
+	row := jsonTestValue[map[string]any](t, items[0])
+	conv := jsonTestValue[map[string]any](t, row["protocol_conversion"])
+	losses := jsonTestValue[map[string]any](t, conv["loss_counts"])
+	require.Equal(t, json.Number("3"), losses["replay_token_dropped"])
+	require.Equal(t, json.Number("1"), losses["tool_lowered"])
+	require.Equal(t, "***", row["FakeReplayTokenDropped"])
+}

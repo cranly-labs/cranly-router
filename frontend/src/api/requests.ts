@@ -1,4 +1,5 @@
 import apiClient from './client'
+import type { ProtocolConversion } from './usage.types'
 
 /**
  * requests.ts retrieves administrator request diagnostics and their linked usage
@@ -57,6 +58,7 @@ export interface RequestDetail {
     stage?: string // Recorded attempt stage.
     reason?: string // Server-provided outcome reason.
     failure_timings?: Record<string, number> // Recorded failure timings.
+    protocol_conversion?: ProtocolConversion | null // Recorded attempt protocol conversion.
   }[] // Recorded upstream attempts.
   usage:
     | {
@@ -68,6 +70,7 @@ export interface RequestDetail {
         duration_ms?: number | null // Duration in milliseconds.
         ttft_ms?: number | null // TTFT in milliseconds.
         tps?: number | null // Tokens per second.
+        protocol_conversion?: ProtocolConversion | null // Persisted usage protocol conversion.
         timings?: {
           ttft_mode: string // Recorded ttft mode.
           upstream_stream: boolean // Recorded upstream stream.
@@ -78,7 +81,8 @@ export interface RequestDetail {
   errors:
     | {
         id: number // Record identifier value.
-        status_code: number // HTTP status code.
+        status_code: number // Effective client HTTP status.
+        logical_status_code?: number // Error classification for this observation.
         phase: string // Recorded lifecycle phase.
       }[]
     | null // Recorded failure details.

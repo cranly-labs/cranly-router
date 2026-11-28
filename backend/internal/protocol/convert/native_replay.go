@@ -53,6 +53,17 @@ type rawMember struct {
 // assistant turns receive fallback text placeholders and active tool loops
 // lacking a leading thinking block downgrade remaining thinking blocks cleanly.
 func PrepareNativeReplay(route Route, body []byte) ([]byte, []ir.Loss, error) {
+	rewritten, losses, _, err := PrepareNativeReplayWithStatus(route, body)
+	return rewritten, losses, err
+}
+
+// PrepareNativeReplayWithStatus unpacks matching trc1 continuity envelopes or
+// strips foreign envelopes identically to PrepareNativeReplay and reports via
+// applied whether at least one valid trc1 envelope was found and rewritten at a
+// protocol token path. Matching envelopes unpacked without loss still report
+// applied == true, whereas literal "trc1:" substrings in user text or non-create
+// WebSocket frames return applied == false with body untouched.
+func PrepareNativeReplayWithStatus(route Route, body []byte) ([]byte, []ir.Loss, bool, error) {
 	target := route.Upstream
 	if target == "" {
 		target = route.Client
@@ -62,25 +73,33 @@ func PrepareNativeReplay(route Route, body []byte) ([]byte, []ir.Loss, error) {
 		protocol.ProtocolOpenAIResponses,
 		protocol.ProtocolResponsesWebSocket:
 	default:
-		return body, nil, nil
+		return body, nil, false, nil
 	}
 
 	if !bytes.Contains(body, []byte(ir.CarrierPrefix)) {
-		return body, nil, nil
+		return body, nil, false, nil
 	}
 
 	hasCarrier, err := scanNativeTokenPaths(target, body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if !hasCarrier {
-		return body, nil, nil
+		return body, nil, false, nil
 	}
 
 	if target == protocol.ProtocolAnthropicMessages {
-		return rewriteNativeMessagesBody(body, route.Dialect)
+		rewritten, losses, rewriteErr := rewriteNativeMessagesBody(body, route.Dialect)
+		if rewriteErr != nil {
+			return nil, nil, false, rewriteErr
+		}
+		return rewritten, losses, true, nil
 	}
-	return rewriteNativeResponsesBody(body, route.Dialect)
+	rewritten, losses, rewriteErr := rewriteNativeResponsesBody(body, route.Dialect)
+	if rewriteErr != nil {
+		return nil, nil, false, rewriteErr
+	}
+	return rewritten, losses, true, nil
 }
 
 // scanNativeTokenPaths inspects only protocol signature and encrypted_content

@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	billingpricing "github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	billingtestkit "github.com/TokenFlux/TokenRouter/internal/billing/testkit"
+	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/modelidentity"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/provider"
@@ -69,6 +70,7 @@ type marketplaceLoadingObservations struct {
 // marketplaceLoadingPrices records quote requests and legacy modality-reader
 // call counts.
 type marketplaceLoadingPrices struct {
+	policyReads   int                               // listing policy snapshot count
 	requests      []routing.MarketplaceQuoteRequest // recorded market quote inputs
 	modalityCalls int                               // recorded legacy modality query count
 }
@@ -187,6 +189,7 @@ func TestMarketplaceBatchAttributesAndOptionalCapacity(t *testing.T) {
 			require.Equal(t, 1, calls)
 			require.Zero(t, prices.modalityCalls)
 			require.Len(t, prices.requests, 2)
+			require.Equal(t, 1, prices.policyReads)
 			require.Equal(t, "priced", prices.requests[0].Model)
 			require.Equal(t, float64(2), result[0].Models[0].Pricing.InputPricePerToken)
 			require.Equal(t, marketplaceLoadingProtocols, result[0].Models[0].Protocols)
@@ -1008,6 +1011,12 @@ func (o *marketplaceLoadingObservations) GetSummaryByGroupIDs(_ context.Context,
 	return map[int64]*routing.GroupAvailabilitySummary{1: {WindowDays: 3}}, nil
 }
 
+// ServiceTierPolicy uses the gateway's default public rules for offline quotes.
+func (p *marketplaceLoadingPrices) ServiceTierPolicy(context.Context) routing.MarketplaceTierPolicy {
+	p.policyReads++
+	return gatewayprovider.MarketplaceTierPolicy(nil, nil)
+}
+
 // Quote records the request and returns a priced input token amount equal to
 // its RateMultiplier for marketplace forwarding assertions.
 func (p *marketplaceLoadingPrices) Quote(_ context.Context, request routing.MarketplaceQuoteRequest) billingpricing.ModelDisplayPricing {
@@ -1041,9 +1050,14 @@ func testMediaModelPricing(mode routing.BillingMode, prices map[string]*float64)
 	return []routing.ModelPricingEntry{card}
 }
 
-// Quote sends the selected model, group ID, factor, and free-Fast flag
-// through the shared PublicQuote calculation. A nil resolver constructs a
-// catalog-only resolver from calculator for this call.
+// ServiceTierPolicy uses the gateway's default public rules for offline quotes.
+func (p marketplaceQuoteFixture) ServiceTierPolicy(context.Context) routing.MarketplaceTierPolicy {
+	return gatewayprovider.MarketplaceTierPolicy(nil, nil)
+}
+
+// Quote sends the selected model, group ID, factor, and optional route
+// service-tier filter through the shared PublicQuote calculation. A nil
+// resolver constructs a catalog-only resolver from calculator for this call.
 func (p marketplaceQuoteFixture) Quote(ctx context.Context, req routing.MarketplaceQuoteRequest) billingpricing.ModelDisplayPricing {
 	resolver := p.resolver
 	// Construct a resolver when this quote adapter has no supplied one, letting
@@ -1054,7 +1068,7 @@ func (p marketplaceQuoteFixture) Quote(ctx context.Context, req routing.Marketpl
 			slog.Debug("failed to get model pricing from model catalog, using fallback", "model", model, "error", err)
 		})
 	}
-	return resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{Model: req.Model, GroupID: &req.GroupID}, RateMultiplier: req.RateMultiplier, FreeFastApplicable: req.FreeFastApplicable})
+	return resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{Model: req.Model, GroupID: &req.GroupID}, RateMultiplier: req.RateMultiplier, ServiceTiers: req.ServiceTiers})
 }
 
 // GetModelModalities delegates legacy price-metadata lookup to the supplied
@@ -1141,5 +1155,188 @@ func TestMarketplaceExclusiveVisibility(t *testing.T) {
 		denied, err := svc.ListVisible(context.Background(), []int64{99}, routing.MarketplaceListOptions{})
 		require.NoError(t, err)
 		require.Equal(t, public, denied)
+	}
+}
+
+// TestMarketplaceServiceTiersFollowRouteAndPolicy evaluates marketplace display
+// quotes across Gemini, Claude, Antigravity, Grok, OpenCode, and OpenAI group
+// policies. Only service tiers executable by at least one resolved group target
+// remain visible in the returned model quote.
+func TestMarketplaceServiceTiersFollowRouteAndPolicy(t *testing.T) {
+	fastFactor := 2.0
+	flexFactor := 0.5
+	ultrafastFactor := 4.0
+	tieredCatalog := &billingpricing.CatalogModelPricing{
+		Source:              "models.dev",
+		InputCostPerToken:   2e-6,
+		OutputCostPerToken:  8e-6,
+		SupportsServiceTier: true,
+		CatalogRules: billingpricing.CatalogRules{
+			ServiceTierPrices: []billingpricing.CatalogServicePrice{
+				{Tier: "priority", Factor: &fastFactor},
+				{Tier: "flex", Factor: &flexFactor},
+				{Tier: "ultrafast", Factor: &ultrafastFactor},
+			},
+		},
+	}
+	catalogSvc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
+		"gemini-2.5-pro":  tieredCatalog,
+		"claude-opus-4-8": tieredCatalog,
+		"gpt-5.4":         tieredCatalog,
+		"grok-4":          tieredCatalog,
+	}})
+	svc := newMarketplaceFixture(nil, nil, newMarketplaceCalculator(catalogSvc, nil), nil)
+
+	cases := []struct {
+		name          string              // scenario description
+		model         string              // quoted catalog model
+		policy        string              // group OpenAI fast policy
+		targets       []modelrules.Target // resolved group route targets
+		wantFast      bool                // expected Fast display availability
+		wantFlex      bool                // expected Flex display availability
+		wantUltrafast bool                // expected Ultrafast display availability
+	}{
+		{
+			name:  "gemini_apikey_oauth_vertex_hide_all_tiers",
+			model: "gemini-2.5-pro",
+			targets: []modelrules.Target{
+				{Platform: capability.PlatformGemini, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolGeminiGenerateContent)},
+				{Platform: capability.PlatformGemini, ProviderType: capability.ProviderTypeOAuth, UpstreamProtocol: string(capability.ProtocolGeminiGenerateContent)},
+				{Platform: capability.PlatformGemini, ProviderType: capability.ProviderTypeServiceAccount, UpstreamProtocol: string(capability.ProtocolGeminiGenerateContent)},
+			},
+		},
+		{
+			name:  "antigravity_hides_all_tiers",
+			model: "claude-opus-4-8",
+			targets: []modelrules.Target{
+				{Platform: capability.PlatformAntigravity, ProviderType: capability.ProviderTypeOAuth, UpstreamProtocol: string(capability.ProtocolGeminiGenerateContent)},
+			},
+		},
+		{
+			name:  "anthropic_hosted_routes_hide_fast",
+			model: "claude-opus-4-8",
+			targets: []modelrules.Target{
+				{Platform: capability.PlatformAnthropic, ProviderType: capability.ProviderTypeBedrock, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)},
+				{Platform: capability.PlatformAnthropic, ProviderType: capability.ProviderTypeServiceAccount, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)},
+			},
+		},
+		{
+			name:     "anthropic_setup_token_retains_transparent_fast",
+			model:    "claude-opus-4-8",
+			targets:  []modelrules.Target{{Platform: capability.PlatformAnthropic, ProviderType: capability.ProviderTypeSetupToken, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)}},
+			wantFast: true,
+		},
+		{
+			name:     "anthropic_oauth_retains_transparent_fast",
+			model:    "claude-opus-4-8",
+			targets:  []modelrules.Target{{Platform: capability.PlatformAnthropic, ProviderType: capability.ProviderTypeOAuth, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)}},
+			wantFast: true,
+		},
+		{
+			name:     "anthropic_apikey_keeps_fast_only",
+			model:    "claude-opus-4-8",
+			targets:  []modelrules.Target{{Platform: capability.PlatformAnthropic, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)}},
+			wantFast: true,
+		},
+		{
+			name:  "mixed_anthropic_apikey_and_oauth_unions_fast",
+			model: "claude-opus-4-8",
+			targets: []modelrules.Target{
+				{Platform: capability.PlatformAnthropic, ProviderType: capability.ProviderTypeOAuth, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)},
+				{Platform: capability.PlatformAnthropic, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)},
+			},
+			wantFast: true,
+		},
+		{
+			name:     "opencode_anthropic_messages_keeps_fast_only",
+			model:    "claude-opus-4-8",
+			targets:  []modelrules.Target{{Platform: capability.PlatformOpenCode, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolAnthropicMessages)}},
+			wantFast: true,
+		},
+		{
+			name:          "opencode_openai_responses_keeps_all_tiers",
+			model:         "gpt-5.4",
+			targets:       []modelrules.Target{{Platform: capability.PlatformOpenCode, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolOpenAIResponses)}},
+			wantFast:      true,
+			wantFlex:      true,
+			wantUltrafast: true,
+		},
+		{
+			name:    "opencode_gemini_hides_all_tiers",
+			model:   "gemini-2.5-pro",
+			targets: []modelrules.Target{{Platform: capability.PlatformOpenCode, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolGeminiGenerateContent)}},
+		},
+		{
+			name:          "grok_chat_accepts_service_tiers",
+			model:         "grok-4",
+			targets:       []modelrules.Target{{Platform: capability.PlatformGrok, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolOpenAIResponses)}},
+			wantFast:      true,
+			wantFlex:      true,
+			wantUltrafast: true,
+		},
+		{
+			name:  "embeddings_only_omits_configured_tiers",
+			model: "gpt-5.4",
+			targets: []modelrules.Target{{
+				Platform: capability.PlatformOpenAI, ProviderType: capability.ProviderTypeAPIKey,
+				ClientProtocol: string(capability.ProtocolEmbeddings), UpstreamProtocol: string(capability.ProtocolEmbeddings),
+			}},
+		},
+		{
+			name:  "messages_to_responses_can_request_fast",
+			model: "gpt-5.4",
+			targets: []modelrules.Target{{
+				Platform: capability.PlatformOpenAI, ProviderType: capability.ProviderTypeAPIKey,
+				ClientProtocol: string(capability.ProtocolAnthropicMessages), UpstreamProtocol: string(capability.ProtocolOpenAIResponses),
+			}},
+			wantFast: true,
+		},
+		{
+			name:          "openai_follow_request_keeps_all_tiers",
+			model:         "gpt-5.4",
+			policy:        routing.GroupOpenAIFastPolicyFollowRequest,
+			targets:       []modelrules.Target{{Platform: capability.PlatformOpenAI, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolOpenAIResponses)}},
+			wantFast:      true,
+			wantFlex:      true,
+			wantUltrafast: true,
+		},
+		{
+			name:     "openai_force_off_keeps_flex_only",
+			model:    "gpt-5.4",
+			policy:   routing.GroupOpenAIFastPolicyForceOff,
+			targets:  []modelrules.Target{{Platform: capability.PlatformOpenAI, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolOpenAIResponses)}},
+			wantFlex: true,
+		},
+		{
+			name:     "openai_force_priority_quotes_priority",
+			model:    "gpt-5.4",
+			policy:   routing.GroupOpenAIFastPolicyForcePriority,
+			targets:  []modelrules.Target{{Platform: capability.PlatformOpenAI, ProviderType: capability.ProviderTypeAPIKey, UpstreamProtocol: string(capability.ProtocolOpenAIResponses)}},
+			wantFast: true,
+		},
+		{
+			name:          "openai_force_ultrafast_quotes_ultrafast",
+			model:         "gpt-5.4",
+			policy:        routing.GroupOpenAIFastPolicyForceUltrafast,
+			targets:       []modelrules.Target{{Platform: capability.PlatformOpenAI, ProviderType: capability.ProviderTypeOAuth, UpstreamProtocol: string(capability.ProtocolOpenAIResponses)}},
+			wantUltrafast: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			group := &routing.Group{ID: 1, RateMultiplier: 1, OpenAIFastPolicy: tc.policy}
+			models := svc.BuildPublicModels(context.Background(), group, []routing.MarketplaceModelDef{{
+				ID:               tc.model,
+				AttributeTargets: tc.targets,
+			}})
+			require.Len(t, models, 1)
+			quote := models[0].Pricing
+			require.Equal(t, "priced", quote.PriceStatus)
+			require.InDelta(t, 2e-6, quote.InputPricePerToken, 1e-12)
+			require.Equal(t, tc.wantFast, quote.FastInputPricePerToken > 0)
+			require.Equal(t, tc.wantFlex, quote.Flex != nil)
+			require.Equal(t, tc.wantUltrafast, quote.Ultrafast != nil)
+		})
 	}
 }

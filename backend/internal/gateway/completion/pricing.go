@@ -707,25 +707,6 @@ func OpenAIUsageBillingModel(result *Result, fields PricingUsageFields) string {
 	return billingModel
 }
 
-// GroupBillsOpenAIFastAtStandard reports eligibility for standard-priced premium
-// OpenAI usage. The key group must enable free Fast and support it, the billing
-// provider must be OpenAI, and the normalized tier must be priority or fast.
-// Missing key, group, or provider evidence returns false.
-func GroupBillsOpenAIFastAtStandard(apiKey *KeySnapshot, provider *ProviderSnapshot, serviceTier string) bool {
-	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.FreeOpenAIFast {
-		return false
-	}
-	if provider == nil || !provider.OpenAI || !apiKey.Group.SupportsOpenAIFast {
-		return false
-	}
-	switch normalizeBillingServiceTier(serviceTier) {
-	case "priority", "fast":
-		return true
-	default:
-		return false
-	}
-}
-
 // imageBillingUnits selects observed frames only for image-priced output.
 // Per-request cards retain file counts, and token cards ignore this quantity.
 // Historical and static results have no frame observation and keep image counts.

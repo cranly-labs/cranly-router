@@ -131,26 +131,27 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 	upstreamStatus := 503
 	src := &OpsErrorLogDetail{
 		OpsErrorLog: OpsErrorLog{
-			ID:               999,
-			CreatedAt:        time.Unix(1000, 0).UTC(),
-			Model:            "gpt-4",
-			RequestedModel:   "gpt-4-turbo",
-			InboundEndpoint:  "/v1/chat/completions",
-			StatusCode:       502,
-			Platform:         "openai",
-			Phase:            "upstream",
-			Type:             "api_error",
-			Message:          "upstream error",
-			UserID:           &uid,
-			UserEmail:        "secret@example.com",
-			ClientIP:         func() *string { s := "1.2.3.4"; return &s }(),
-			UpstreamEndpoint: "https://api.openai.com/v1/chat/completions",
-			UserAgent:        "codex_cli_rs/0.125.0",
-			GroupName:        "grp-a",
-			Stream:           true,
+			ID:                 999,
+			CreatedAt:          time.Unix(1000, 0).UTC(),
+			Model:              "gpt-4",
+			RequestedModel:     "gpt-4-turbo",
+			InboundEndpoint:    "/v1/chat/completions",
+			StatusCode:         502,
+			ClientStatusCode:   new(502),
+			UpstreamStatusCode: &upstreamStatus,
+			Platform:           "openai",
+			Phase:              "upstream",
+			Type:               "api_error",
+			Message:            "upstream error",
+			UserID:             &uid,
+			UserEmail:          "secret@example.com",
+			ClientIP:           func() *string { s := "1.2.3.4"; return &s }(),
+			UpstreamEndpoint:   "https://api.openai.com/v1/chat/completions",
+			UserAgent:          "codex_cli_rs/0.125.0",
+			GroupName:          "grp-a",
+			Stream:             true,
 		},
-		ErrorBody:          `{"error":{"message":"upstream failed","type":"server_error"}}`,
-		UpstreamStatusCode: &upstreamStatus,
+		ErrorBody: `{"error":{"message":"upstream failed","type":"server_error"}}`,
 	}
 
 	out := ToUserErrorRequestDetail(src)
@@ -167,6 +168,9 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 	}
 	if out.ErrorBody != src.ErrorBody {
 		t.Errorf("ErrorBody mismatch")
+	}
+	if out.ClientStatusCode == nil || *out.ClientStatusCode != 502 {
+		t.Fatal("missing client wire status")
 	}
 	if out.UpstreamStatusCode == nil || *out.UpstreamStatusCode != 503 {
 		t.Errorf("UpstreamStatusCode mismatch")

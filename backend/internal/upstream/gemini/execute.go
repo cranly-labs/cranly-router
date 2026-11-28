@@ -230,6 +230,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		} else {
 			usage, err = adapter.ReadConvertedBuffered(output, resp, conv, target.UpstreamStream, target.OAuth)
 		}
+		result.ProtocolConversion = upstream.ExchangeConversion(conv.Exchange)
 	}
 	if usage != nil {
 		result.Usage = *usage

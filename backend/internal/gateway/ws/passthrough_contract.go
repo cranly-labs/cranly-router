@@ -6,10 +6,12 @@ import (
 	"time"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // passthrough_contract.go defines provider operations and session inputs for
@@ -56,6 +58,9 @@ type DialResult struct {
 // PassthroughHooks supplies inherited turn callbacks and initial session
 // observation values.
 type PassthroughHooks struct {
+	// ContextForTurn resolves the logical turn's telemetry context so outbound
+	// native replay observations bind to that turn's conversion scope.
+	ContextForTurn func(int) context.Context
 	// ClientDisconnected freezes the active logical request before upstream usage drain.
 	ClientDisconnected func(int, time.Time)
 
@@ -292,12 +297,14 @@ func stripOutboundEffort(ctx context.Context, port any, routingModel string, bod
 }
 
 // prepareOutboundNativeReplay unpacks matching trc1 continuity envelopes or
-// strips incompatible items on an outbound Responses WebSocket frame. Frames
-// without the "trc1:" prefix or without a valid carrier on response.create
-// token paths (including session.update frames and literal user text) return
-// body byte-for-byte unchanged.
+// strips incompatible items on an outbound Responses WebSocket frame and updates
+// ctx's turn conversion scope with the resulting native_replay observation.
+// Frames without the "trc1:" prefix or without a valid carrier on
+// response.create token paths clear any stale replay snapshot on ctx and return
+// body byte-for-byte unchanged so local turn retries never double-count losses.
 func prepareOutboundNativeReplay(ctx context.Context, port any, providerID int64, model string, body []byte) ([]byte, error) {
 	if !bytes.Contains(body, []byte(ir.CarrierPrefix)) {
+		telemetry.ReplaceProtocolConversion(ctx, nil)
 		return body, nil
 	}
 	dialect := convert.Dialect{
@@ -311,11 +318,28 @@ func prepareOutboundNativeReplay(ctx context.Context, port any, providerID int64
 		}
 		dialect = resolved
 	}
-	rewritten, _, err := convert.PrepareNativeReplay(convert.Route{
+	route := convert.Route{
 		Client:   protocol.ProtocolResponsesWebSocket,
 		Upstream: protocol.ProtocolResponsesWebSocket,
 		Dialect:  dialect,
-	}, body)
+	}
+	rewritten, losses, applied, err := convert.PrepareNativeReplayWithStatus(route, body)
+	if err == nil {
+		if applied {
+			// Replace ctx's turn conversion snapshot rather than merging so local
+			// WebSocket turn retries never accumulate duplicate replay losses.
+			telemetry.ReplaceProtocolConversion(ctx, telemetry.NewProtocolConversion(
+				telemetry.ConversionModeNativeReplay,
+				string(route.Client),
+				string(route.Upstream),
+				route.Dialect.Name,
+				route.Dialect.ReplayScheme,
+				upstream.CountLosses(losses),
+			))
+		} else {
+			telemetry.ReplaceProtocolConversion(ctx, nil)
+		}
+	}
 	return rewritten, err
 }
 

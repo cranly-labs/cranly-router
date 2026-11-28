@@ -152,6 +152,7 @@ type AdminUsageLog struct {
 	UpstreamResponseModel *string                    `json:"upstream_response_model,omitempty"` // optional upstream response model
 	UpstreamModelMismatch *bool                      `json:"upstream_model_mismatch,omitempty"` // optional response model difference flag
 	CacheWriteAnomaly     *billing.CacheWriteAnomaly `json:"cache_write_anomaly,omitempty"`     // optional cache-write discrepancy diagnostics
+	ProtocolConversion    *usage.ProtocolConversion  `json:"protocol_conversion,omitempty"`     // optional protocol conversion diagnostics
 	PricingConfigID       *int64                     `json:"pricing_config_id,omitempty"`       // optional selected pricing configuration
 	ModelMappingChain     *string                    `json:"model_mapping_chain,omitempty"`     // optional recorded model mapping chain
 	UpstreamRequestID     *string                    `json:"upstream_request_id,omitempty"`     // optional immediate upstream request identifier

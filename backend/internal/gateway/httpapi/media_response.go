@@ -226,7 +226,7 @@ func WriteImageError(c *gin.Context, value *ImageErrorResponse, adjustedWritten 
 		if c.Request != nil && c.Request.Context().Err() != nil {
 			// Upstream work can finish after client departure. Retain its error
 			// evidence while letting request finalization keep the canceled lifecycle.
-			markOpsStreamError(c, OpsStreamError{ErrType: value.Type, Code: value.Code, Message: value.Message, IntendedStatus: value.Status})
+			RecordOpsStreamError(c, OpsStreamError{ErrType: value.Type, Code: value.Code, Message: value.Message, IntendedStatus: value.Status})
 		} else {
 			MarkOpsStreamFailure(c, value.Type, value.Code, value.Message, value.Status)
 		}

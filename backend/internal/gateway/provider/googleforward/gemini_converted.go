@@ -17,6 +17,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
@@ -156,6 +157,7 @@ func (s *Gemini) ForwardConverted(
 		s.writeConvertedClientError(c, source, originalModel, http.StatusBadRequest, "invalid_request_error", "", err.Error())
 		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(fmt.Errorf("encode converted gemini request: %w", err))
 	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	clientStream := exchange.Info().Stream
 	useUpstreamStream := clientStream
@@ -204,6 +206,10 @@ func (s *Gemini) ForwardConverted(
 		if encErr != nil || bytes.Equal(fallback, geminiReq) {
 			return false
 		}
+		// Replace initial request losses with the signature-free retry exchange's
+		// losses so retry attempts and final usage reflect the accepted request.
+		exchange.ReplaceRequestLosses(retryEx.Losses())
+		telemetry.ReplaceProtocolConversion(ctx, upstream.ExchangeConversion(exchange))
 		geminiReq = fallback
 		return true
 	}
@@ -348,6 +354,7 @@ func (s *Gemini) ForwardConverted(
 		Stream:                clientStream,
 		Duration:              result.Duration,
 		Timings:               result.Timings,
+		ProtocolConversion:    result.ProtocolConversion,
 		ReasoningEffort:       reasoningEffort,
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,

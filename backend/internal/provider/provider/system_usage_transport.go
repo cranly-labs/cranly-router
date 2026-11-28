@@ -114,7 +114,8 @@ func (t *SystemUsageTransport) exchange(req *http.Request, id int64, send func(*
 	model, stream, size, tier, effort, imageModel := systemRequestDimensions(req, scope.RequestedModel)
 	started := time.Now()
 	multiplier := value.BillingRateMultiplier()
-	endpoint := req.URL.Path
+	rawPath := req.URL.Path
+	endpoint := normalizeSystemUsageEndpoint(rawPath, value.Platform)
 	row := &usage.UsageLog{
 		RequestID: uuid.NewString(), RequestSource: scope.Source, ProviderID: id, Platform: value.Platform, Model: model, RequestedModel: strings.TrimSpace(scope.RequestedModel), UpstreamModel: &model, Stream: stream, CreatedAt: started, ProviderRateMultiplier: &multiplier, UpstreamEndpoint: &endpoint,
 		SystemUsage: &usage.SystemUsage{MappedModel: strings.TrimSpace(scope.MappedModel), PricingModel: imageModel, ParentRequestID: scope.ParentRequestID, OperatorUserID: scope.OperatorUserID, Outcome: "failed", UsageState: "missing", CostState: "unknown"},
@@ -181,14 +182,12 @@ func (t *SystemUsageTransport) exchange(req *http.Request, id int64, send func(*
 		body.observer.sse = false
 	}
 	body.observer.platform = value.Platform
-	// Cache fields also occur in OpenAI-compatible replies. Request endpoints
-	// identify Messages semantics even when a JSON error omits its message type.
-	body.observer.messages = strings.Contains(endpoint, "/messages") ||
-		strings.Contains(endpoint, "rawPredict") ||
-		strings.Contains(endpoint, "RawPredict") ||
-		strings.Contains(endpoint, "/invoke") ||
+	// Cache fields also occur in OpenAI-compatible replies. Action-suffix and
+	// terminal-segment matching identify Messages endpoints without misreading
+	// cloud resource names such as GCP projects named "messages-prod".
+	body.observer.messages = isSystemMessagesPath(rawPath) ||
 		req.Header.Get("anthropic-version") != ""
-	body.observer.image = strings.Contains(endpoint, "/images/") || imageModel != ""
+	body.observer.image = strings.Contains(rawPath, "/images/") || imageModel != ""
 	response.Body = body
 	return response, nil
 }
@@ -245,6 +244,63 @@ func (b *systemUsageBody) Close() error {
 		b.closeErr = errors.Join(b.closeErr, b.transport.record(b.ctx, b.row, b.providerType))
 	})
 	return b.closeErr
+}
+
+// isSystemMessagesPath reports whether rawPath targets an Anthropic Messages,
+// Vertex Anthropic rawPredict, or Bedrock invoke operation using terminal
+// segment and action-suffix matching so resource names like "messages-prod"
+// in Vertex Gemini URLs cannot trigger Messages classification.
+func isSystemMessagesPath(rawPath string) bool {
+	lower := strings.ToLower(strings.TrimRight(strings.TrimSpace(rawPath), "/"))
+	return strings.HasSuffix(lower, "/messages") ||
+		strings.HasSuffix(lower, ":rawpredict") ||
+		strings.HasSuffix(lower, ":streamrawpredict") ||
+		strings.HasSuffix(lower, "/invoke") ||
+		strings.HasSuffix(lower, "/invoke-with-response-stream")
+}
+
+// normalizeSystemUsageEndpoint collapses raw outbound model request URLs into
+// canonical gateway endpoint labels using both provider platform and terminal
+// operation suffixes so system probes and tests match ordinary gateway
+// upstream_endpoint statistics. Antigravity v1internal streaming paths stay
+// distinct from Gemini Code Assist v1internal probes (which normalize to
+// /v1beta/models like gateway Gemini traffic), cloud project names cannot shadow
+// action suffixes, and unrecognized paths return trimmed unchanged.
+func normalizeSystemUsageEndpoint(rawPath, platform string) string {
+	path := strings.TrimSpace(rawPath)
+	lower := strings.ToLower(strings.TrimRight(path, "/"))
+	normPlatform := strings.ToLower(strings.TrimSpace(platform))
+	switch {
+	case normPlatform == "antigravity" &&
+		(strings.HasSuffix(lower, "/v1internal:streamgeneratecontent") ||
+			strings.HasSuffix(lower, "/v1internal:generatecontent")):
+		return "/v1internal:streamGenerateContent"
+	case isSystemMessagesPath(path):
+		return "/v1/messages"
+	case strings.HasSuffix(lower, ":generatecontent") ||
+		strings.HasSuffix(lower, ":streamgeneratecontent"):
+		return "/v1beta/models"
+	case strings.HasSuffix(lower, "/chat/completions"):
+		return "/v1/chat/completions"
+	case strings.HasSuffix(lower, "/responses/compact"):
+		return "/v1/responses/compact"
+	case strings.HasSuffix(lower, "/responses"):
+		return "/v1/responses"
+	case strings.HasSuffix(lower, "/images/generations"):
+		return "/v1/images/generations"
+	case strings.HasSuffix(lower, "/images/edits"):
+		return "/v1/images/edits"
+	case strings.HasSuffix(lower, "/systemone") ||
+		strings.HasSuffix(lower, "/system-one") ||
+		strings.HasSuffix(lower, "/system_one"):
+		return "/v1/systemone"
+	case strings.HasSuffix(lower, "/v1beta/models") || strings.Contains(lower, "/v1beta/models/"):
+		// A proxy may mount another inference API under a model path. Explicit
+		// operation suffixes above take precedence over this model-family label.
+		return "/v1beta/models"
+	default:
+		return path
+	}
 }
 
 // systemModelEndpoint restricts recording to supported inference endpoint shapes.

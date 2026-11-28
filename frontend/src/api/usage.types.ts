@@ -116,6 +116,21 @@ export interface CacheWriteAnomaly {
   reported_12h?: number | null // Raw twelve-hour count when supplied.
 }
 
+// ProtocolConversionMode identifies the protocol transformation depth recorded on an
+// administrator usage log or upstream request attempt.
+export type ProtocolConversionMode = 'ir_converted' | 'tool_adapted' | 'native_replay'
+
+// ProtocolConversion summarizes bounded, redacted protocol transformation metadata for
+// administrator usage and request diagnostics.
+export interface ProtocolConversion {
+  mode: ProtocolConversionMode // Recorded transformation depth mode.
+  client_protocol: string // Inbound client wire protocol identifier.
+  upstream_protocol: string // Outbound upstream wire protocol identifier.
+  dialect?: string // Target endpoint capability dialect name.
+  replay_scheme?: string // Active continuity carrier scheme name.
+  loss_counts?: Record<string, number> // Positive occurrence counts keyed by LossKind.
+}
+
 // UsageLogProviderSummary supplies the provider identifier and name displayed in usage
 // rows.
 export interface UsageLogProviderSummary {
@@ -128,6 +143,7 @@ export interface UsageLogProviderSummary {
 export interface AdminUsageLog extends UsageLog {
   request_source?: string // Customer or internal request source.
   cache_write_anomaly?: CacheWriteAnomaly | null // Administrator cache-write discrepancy details.
+  protocol_conversion?: ProtocolConversion | null // Administrator protocol transformation diagnostics.
   system_usage?: {
     parent_request_id: string // Owning internal test run.
     operator_user_id?: number // Initiating administrator, when available.
@@ -314,7 +330,8 @@ export interface UserErrorRequest {
   created_at: string // Record creation timestamp.
   model: string // Requested model identifier.
   inbound_endpoint: string // Client request endpoint.
-  status_code: number // Observed HTTP status.
+  status_code: number // Effective client status, including legacy fallback.
+  client_status_code?: number | null // Observed client HTTP status.
   category: string // Request failure category.
   platform: string // Upstream service platform.
   message: string // Human-readable result message.

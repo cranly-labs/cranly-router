@@ -18,6 +18,7 @@ import (
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // conversion.go forwards OpenAI Responses and Chat Completions requests through
@@ -117,6 +118,7 @@ func AsConverted(
 		p.WriteClientError(400, "invalid_request_error", err.Error())
 		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(fmt.Errorf("encode converted anthropic request: %w", err))
 	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	baseAnthropicBody, err = patchConvertedMessagesBodyBytes(baseAnthropicBody, mappedModel)
 	if err != nil {
@@ -137,7 +139,7 @@ func AsConverted(
 	// OAuth mimicry applies only to direct Anthropic OAuth exchanges; Bedrock
 	// Invoke requests never carry Claude Code OAuth headers or mimic markers.
 	shouldMimicClaudeCode := in.OAuth && !in.Bedrock
-	dispatchOnce := func(candidateBase []byte) (Response, []byte, error) {
+	dispatchOnce := func(candidateBase []byte, losses protocolanthropic.SignatureRetryLosses) (Response, []byte, error) {
 		prepared := candidateBase
 		if shouldMimicClaudeCode {
 			systemRaw := extractConvertedMessagesSystemBytes(candidateBase)
@@ -148,6 +150,11 @@ func AsConverted(
 		if buildErr != nil {
 			return Response{}, nil, fmt.Errorf("build upstream request: %w", buildErr)
 		}
+		if losses.Tokens > 0 || losses.Reasoning > 0 {
+			// Prepare the diagnostic snapshot only after the replacement payload
+			// builds successfully and before the transport assigns its dispatch ordinal.
+			upstream.StageSignatureRetry(ctx, exchange, losses.Tokens, losses.Reasoning)
+		}
 		sentResp, sendErr := p.Send(ctx)
 		if sendErr != nil {
 			return Response{}, nil, sendErr
@@ -155,7 +162,7 @@ func AsConverted(
 		return sentResp, wire, nil
 	}
 
-	resp, wireBody, err := dispatchOnce(baseAnthropicBody)
+	resp, wireBody, err := dispatchOnce(baseAnthropicBody, protocolanthropic.SignatureRetryLosses{})
 	if err != nil {
 		return nil, err
 	}
@@ -175,14 +182,14 @@ func AsConverted(
 			// Cross-model Claude attempts can reject replayed trc1:anthropic
 			// signatures with HTTP 400; strip historical reasoning signatures
 			// losslessly via jsontext and retry once on the same provider.
-			if strippedBase, stripped := protocolanthropic.StripMessagesSignatureBlocksForRetryBytes(baseAnthropicBody, passback); stripped {
+			if strippedBase, stripped, losses := protocolanthropic.StripMessagesSignatureBlocksWithLosses(baseAnthropicBody, passback); stripped {
 				p.ObserveSignatureRetry(resp.StatusCode, respBody, p.ErrorMessage(respBody))
 				if resp.Close != nil {
 					prevClose := resp.Close
 					resp.Close = nil
 					prevClose()
 				}
-				retryResp, retryWire, retryErr := dispatchOnce(strippedBase)
+				retryResp, retryWire, retryErr := dispatchOnce(strippedBase, losses)
 				if retryErr != nil {
 					return nil, retryErr
 				}

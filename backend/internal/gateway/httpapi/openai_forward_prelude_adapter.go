@@ -18,8 +18,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	"github.com/TokenFlux/TokenRouter/internal/provider/modelrules"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
@@ -197,8 +199,23 @@ func (p openAIForwardPreludeAdapter) FlattenRequired(v forward.TransportDecision
 // the active request. The shared helper controls body rewriting and errors;
 // callers clear prior mappings before invoking it for another provider
 // attempt.
-func (p openAIForwardPreludeAdapter) Flatten(body []byte) ([]byte, error) {
-	return FlattenOpenAIResponsesNamespaces(p.c, body)
+func (p openAIForwardPreludeAdapter) Flatten(ctx context.Context, body []byte) ([]byte, error) {
+	rewritten, report, err := FlattenOpenAIResponsesNamespaces(p.c, body)
+	if err != nil || len(report.Names) == 0 {
+		return rewritten, err
+	}
+	reqCtx := p.resolveContext(ctx)
+	model := requeststate.NewOpenAIRequestView(body).Model
+	if mapped := p.MappedModel(model); mapped != "" {
+		model = mapped
+	}
+	dialect := p.resolveClientToolDialect(reqCtx, model, body)
+	counts := map[string]int{string(ir.LossToolLowered): report.Lowered}
+	if report.ApproximatedChoice {
+		counts[string(ir.LossToolChoiceApproximated)] = 1
+	}
+	upstream.ObserveToolConversionCounts(reqCtx, protocol.ProtocolOpenAIResponses, protocol.ProtocolOpenAIResponses, dialect, counts)
+	return rewritten, nil
 }
 
 // StripNamespacesRequired delegates historical namespace cleanup policy for
@@ -285,14 +302,23 @@ func (p openAIForwardPreludeAdapter) AdaptClientTools(ctx context.Context, model
 		wrapped := fmt.Errorf("adapt DeepSeek Responses client tools: %w", err)
 		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", wrapped.Error()).WithCause(wrapped)
 	}
+	reqCtx := p.resolveContext(ctx)
 	if len(losses) > 0 {
-		logging.FromContext(p.resolveContext(ctx)).Debug(
+		logging.FromContext(reqCtx).Debug(
 			"gateway.prelude_responses_tool_adaptation_losses",
 			zap.Int64("provider_id", p.provider.Record.ID),
 			zap.String("model", model),
 			zap.Int("loss_count", len(losses)),
 		)
 	}
+	upstream.ObserveToolAdaptedConversion(
+		reqCtx,
+		protocol.ProtocolOpenAIResponses,
+		protocol.ProtocolOpenAIResponses,
+		dialect,
+		toolMap,
+		losses,
+	)
 	// Publish the active ToolMap only after lowering succeeds so response
 	// restoration matches the outgoing request bytes adopted by PreparePrelude.
 	SetOpenAIResponsesClientToolMap(p.c, toolMap)

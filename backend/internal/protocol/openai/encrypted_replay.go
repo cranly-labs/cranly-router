@@ -194,18 +194,26 @@ func SanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep
 // retains an empty JSON array rather than deleting the required input field,
 // and untouched sibling members and 64-bit integer literals survive verbatim.
 func StripResponsesEncryptedReasoningBytes(body []byte) ([]byte, bool) {
+	rewritten, changed, _ := StripResponsesEncryptedReasoningWithCount(body)
+	return rewritten, changed
+}
+
+// StripResponsesEncryptedReasoningWithCount returns the number of nonempty
+// ciphertexts removed from the encoded retry. A change that only cleans a null
+// field can yield zero. Parse or encoding failure discards all partial counts.
+func StripResponsesEncryptedReasoningWithCount(body []byte) ([]byte, bool, int) {
 	if len(body) == 0 || (!bytes.Contains(body, []byte("encrypted_content")) && !bytes.Contains(body, []byte(`\u`))) {
-		return body, false
+		return body, false, 0
 	}
 	rootMembers, err := parseEncryptedReplayObject(body)
 	if err != nil {
 		// Malformed or non-object request payloads cannot be rewritten safely;
 		// keep the caller's original slice intact for standard error handling.
-		return body, false
+		return body, false, 0
 	}
 	rawInput, hasInput := findEncryptedReplayMember(rootMembers, "input")
 	if !hasInput || len(rawInput) == 0 {
-		return body, false
+		return body, false, 0
 	}
 
 	storeFalse := false
@@ -221,22 +229,23 @@ func StripResponsesEncryptedReasoningBytes(body []byte) ([]byte, bool) {
 	case '[':
 		items, err = parseEncryptedReplayArray(rawInput)
 		if err != nil {
-			return body, false
+			return body, false, 0
 		}
 	case '{':
 		items = []jsontext.Value{rawInput.Clone()}
 	default:
-		return body, false
+		return body, false, 0
 	}
 
 	kept := make([]jsontext.Value, 0, len(items))
 	changed := false
+	dropped := 0
 	for _, elem := range items {
-		rebuilt, elemChanged, keepElem, elemErr := stripEncryptedReplayInputItemBytes(elem, storeFalse)
+		rebuilt, elemChanged, keepElem, elemErr := stripEncryptedReplayInputItemBytes(elem, storeFalse, &dropped)
 		if elemErr != nil {
 			// Abort the rewrite when an input item contains truncated JSON so callers
 			// never dispatch a partially reconstructed transcript upstream.
-			return body, false
+			return body, false, 0
 		}
 		if elemChanged {
 			changed = true
@@ -246,25 +255,25 @@ func StripResponsesEncryptedReasoningBytes(body []byte) ([]byte, bool) {
 		}
 	}
 	if !changed {
-		return body, false
+		return body, false, 0
 	}
 
 	encodedInput, err := encodeEncryptedReplayArray(kept)
 	if err != nil {
-		return body, false
+		return body, false, 0
 	}
 	rootMembers = setEncryptedReplayMember(rootMembers, "input", encodedInput)
 	rebuiltRoot, err := encodeEncryptedReplayObject(rootMembers)
 	if err != nil {
-		return body, false
+		return body, false, 0
 	}
-	return rebuiltRoot, true
+	return rebuiltRoot, true, dropped
 }
 
 // stripEncryptedReplayInputItemBytes strips encrypted state from one raw input
 // item value and reports the updated JSON value, whether it changed, and
 // whether the item remains in input[]. Non-object values return unchanged.
-func stripEncryptedReplayInputItemBytes(elem jsontext.Value, storeFalse bool) (jsontext.Value, bool, bool, error) {
+func stripEncryptedReplayInputItemBytes(elem jsontext.Value, storeFalse bool, dropped *int) (jsontext.Value, bool, bool, error) {
 	if len(elem) == 0 || elem.Kind() != '{' {
 		return elem, false, true, nil
 	}
@@ -273,6 +282,9 @@ func stripEncryptedReplayInputItemBytes(elem jsontext.Value, storeFalse bool) (j
 		return elem, false, false, err
 	}
 	itemType := strings.TrimSpace(readEncryptedReplayMemberString(members, "type"))
+	if (itemType == "reasoning" || IsCompactionItemType(itemType)) && readEncryptedReplayMemberString(members, "encrypted_content") != "" {
+		*dropped++
+	}
 	switch {
 	case IsCompactionItemType(itemType):
 		if _, hasEnc := findEncryptedReplayMember(members, "encrypted_content"); hasEnc {

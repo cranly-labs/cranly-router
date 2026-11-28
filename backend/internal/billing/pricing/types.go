@@ -71,9 +71,9 @@ type ModelPricing struct {
 	// SupportsCacheBreakdown records an explicitly supplied hourly write rate,
 	// including zero, or legacy positive hourly catalog pricing.
 	SupportsCacheBreakdown bool // hourly cache-write pricing presence
-	// SupportsServiceTier records service-tier support for resolved metadata and
-	// administrator Flex display. Token calculation selects configured factors and
-	// amounts independently of this flag.
+	// SupportsServiceTier records service-tier support for resolved metadata.
+	// Token calculation and Flex display select configured factors, priority
+	// amounts, and compiled directory rules independently of this flag.
 	SupportsServiceTier bool // catalog service-tier support flag
 	// FastModeMultiplier takes precedence over FastMultiplier during calculation
 	// when supplied, including zero. Configured factor application stores a copied
@@ -316,4 +316,12 @@ type CostInput struct {
 	// reported usage nor configured TTL rates identify one; empty defaults to
 	// CacheWriteFamilyClaude.
 	DefaultCacheWriteFamily CacheWriteFamily // protocol fallback cache-write family
+}
+
+// ServiceTierSupport identifies which non-standard token service tiers a route
+// set can execute and settle.
+type ServiceTierSupport struct {
+	Fast      bool // priority or Anthropic fast speed supported
+	Flex      bool // flex service tier supported
+	Ultrafast bool // ultrafast service tier supported
 }

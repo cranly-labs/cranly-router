@@ -14,9 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/completion"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewaycapture "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
-	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
-	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
@@ -252,16 +250,4 @@ func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingNormali
 	// Allow arithmetic rounding in the configured image-charge comparison.
 	require.InDelta(t, 0.44, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.44, cost.ActualCost, 1e-12)
-}
-
-// TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider supplies an enabled
-// capable group and varies provider platform plus billed tier. It checks priority
-// and normalized fast eligibility, with standard and Grok evidence declining the rule.
-func TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider(t *testing.T) {
-	apiKey := &completion.KeySnapshot{Group: &completion.GroupSnapshot{FreeOpenAIFast: true, SupportsOpenAIFast: true}}
-
-	require.True(t, completion.GroupBillsOpenAIFastAtStandard(apiKey, gatewaycapture.ProjectCompletionProvider(&providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}), "priority"))
-	require.True(t, completion.GroupBillsOpenAIFastAtStandard(apiKey, gatewaycapture.ProjectCompletionProvider(&providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}), " FAST "))
-	require.False(t, completion.GroupBillsOpenAIFastAtStandard(apiKey, gatewaycapture.ProjectCompletionProvider(&providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}), "standard"))
-	require.False(t, completion.GroupBillsOpenAIFastAtStandard(apiKey, gatewaycapture.ProjectCompletionProvider(&providercore.Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey}), "priority"))
 }

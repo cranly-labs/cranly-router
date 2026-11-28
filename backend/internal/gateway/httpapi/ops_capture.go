@@ -201,7 +201,8 @@ func SetOpsEndpointContext(c *gin.Context, upstreamModel string, requestType int
 
 // SetOpsSelectedProvider clears prior upstream model state, records the
 // selected provider ID on c, and binds provider identity and request-ID header
-// configuration into the request telemetry context.
+// configuration into the request telemetry context. Clear any prior dispatch
+// status before this selection can fail during credential acquisition.
 func SetOpsSelectedProvider(c *gin.Context, value provider.ProviderSnapshot) {
 	if c == nil || value.ID <= 0 {
 		return
@@ -209,6 +210,7 @@ func SetOpsSelectedProvider(c *gin.Context, value provider.ProviderSnapshot) {
 	ClearOpsUpstreamModel(c)
 	c.Set(OpsProviderIDKey, value.ID)
 	if c.Request != nil {
+		telemetry.ResetUpstreamHTTPStatus(c.Request.Context())
 		ctx := context.WithValue(c.Request.Context(), telemetry.ProviderID, value.ID)
 		if platform := strings.TrimSpace(value.Platform); platform != "" {
 			ctx = context.WithValue(ctx, telemetry.Platform, platform)
@@ -746,15 +748,16 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 			return
 		}
 
-		status := c.Writer.Status()
+		wireStatus := c.Writer.Status()
+		status := wireStatus
 		if status < 400 {
 			if parsed.StreamFailure {
 				status = opscore.InferStreamFailureStatus(parsed)
 			} else {
 				if len(GetOpsStreamErrors(c)) > 0 {
-					logOpsStreamError(c, ops, status, queue, access)
+					logOpsStreamError(c, ops, wireStatus, queue, access)
 				} else {
-					logOpsRecoveredUpstream(c, ops, status, queue, access)
+					logOpsRecoveredUpstream(c, ops, wireStatus, queue, access)
 				}
 				return
 			}
@@ -779,26 +782,54 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 		entry.ErrorType = normalizedType
 		entry.Severity = opscore.ClassifySeverity(normalizedType, status)
 		entry.StatusCode = status
+		if wireStatus >= http.StatusOK {
+			clientStatus := wireStatus
+			entry.ClientStatusCode = &clientStatus
+		}
 		entry.IsBusinessLimited = isBusinessLimited
 		entry.ErrorMessage = parsed.Message
 		entry.ErrorBody = opscore.SanitizeOpsSSEDataForPersistence(body)
 		entry.ErrorSource = errorSource
 		entry.ErrorOwner = errorOwner
 
-		// Override stale attempt fields when terminal SSE failure supplies the
-		// authoritative client-visible message and inferred HTTP status.
+		// A terminal frame supplies the logical failure and its message. Earlier
+		// attempt errors can outlive failover, so only response headers observed
+		// for the final provider's dispatch identify its upstream HTTP status.
 		if parsed.StreamFailure {
 			if message := strings.TrimSpace(parsed.Message); message != "" {
 				entry.UpstreamErrorMessage = &message
 			}
-			if status >= 400 {
-				finalStatus := status
-				entry.UpstreamStatusCode = &finalStatus
-			}
+			entry.UpstreamStatusCode = opsStreamUpstreamHTTPStatus(c)
 		}
 		suppressOpsUpstreamAttributionForLocalModelConfiguration(c, entry)
 		queue.Enqueue(ops, entry)
 	}
+}
+
+// opsStreamUpstreamHTTPStatus identifies the upstream exchange behind an in-band
+// failure. A stream's logical code can come from a local error after headers
+// were sent. The actual dispatch owns any received HTTP status, while the final
+// provider's pre-dispatch credential failure has the dedicated zero marker.
+// Missing evidence returns nil so both admin and user diagnostics can display
+// an absent upstream status.
+func opsStreamUpstreamHTTPStatus(c *gin.Context) *int {
+	providerID, _ := GetOpsProviderID(c)
+	if c.Request != nil {
+		if status := telemetry.UpstreamHTTPStatus(c.Request.Context(), providerID); status != nil {
+			return status
+		}
+	}
+	// The last attempt event can identify a pre-dispatch credential failure.
+	// Older events may describe another provider or a request that already recovered.
+	for _, event := range slices.Backward(GetOpsUpstreamErrors(c)) {
+		if event != nil {
+			if event.Stage == opscore.ErrorPhaseProviderAuth && event.ProviderID == providerID {
+				return new(0)
+			}
+			break
+		}
+	}
+	return nil
 }
 
 // buildBaseOpsErrorLogInput populates common request, endpoint, model, API Key,
@@ -903,6 +934,10 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *opscore.OpsService, finalStatu
 
 	entry := buildBaseOpsErrorLogInput(c, access, false)
 	entry.StatusCode = finalStatus
+	if finalStatus >= http.StatusOK && GetOpenAIClientTransport(c) != OpenAIClientTransportWS {
+		clientStatus := finalStatus
+		entry.ClientStatusCode = &clientStatus
+	}
 	entry.UpstreamStatusCode = probe.UpstreamStatusCode
 	entry.UpstreamErrorMessage = probe.UpstreamErrorMessage
 	entry.UpstreamErrorDetail = probe.UpstreamErrorDetail
@@ -1013,13 +1048,19 @@ func logOpsStreamErrorValue(c *gin.Context, ops *opscore.OpsService, wireStatus 
 	entry.ErrorType = normalizedType
 	entry.Severity = opscore.ClassifySeverity(normalizedType, classifyStatus)
 	entry.StatusCode = recordedStatus
+	if wireStatus >= http.StatusOK && GetOpenAIClientTransport(c) != OpenAIClientTransportWS {
+		clientStatus := wireStatus
+		entry.ClientStatusCode = &clientStatus
+	}
 	entry.IsBusinessLimited = isBusinessLimited
 	entry.ErrorMessage = streamErr.Message
 	entry.ErrorBody = errorBody
 	entry.ErrorSource = errorSource
 	entry.ErrorOwner = errorOwner
-	if streamErr.Turn > 0 {
+	if GetOpenAIClientTransport(c) == OpenAIClientTransportWS {
 		applyOpsStreamErrorSnapshot(entry, streamErr)
+	} else {
+		entry.UpstreamStatusCode = opsStreamUpstreamHTTPStatus(c)
 	}
 	queue.Enqueue(ops, entry)
 }
@@ -1036,11 +1077,7 @@ func applyOpsStreamErrorSnapshot(entry *opscore.OpsInsertErrorLogInput, streamEr
 		entry.ProviderID = &providerID
 	}
 	entry.UpstreamModel = strings.TrimSpace(streamErr.UpstreamModel)
-	entry.UpstreamStatusCode = nil
-	if streamErr.UpstreamStatus > 0 {
-		status := streamErr.UpstreamStatus
-		entry.UpstreamStatusCode = &status
-	}
+	entry.UpstreamStatusCode = streamErr.WireUpstreamStatus
 	entry.UpstreamErrorMessage = nil
 	if message := strings.TrimSpace(streamErr.UpstreamMessage); message != "" {
 		entry.UpstreamErrorMessage = &message
@@ -1058,6 +1095,11 @@ func applyOpsStreamErrorSnapshot(entry *opscore.OpsInsertErrorLogInput, streamEr
 		}
 	}
 	if lastStage == opscore.ErrorPhaseProviderAuth {
+		// A pre-dispatch credential failure has an explicit zero marker even on
+		// a WebSocket turn, where no provider HTTP response could arrive.
+		if entry.UpstreamStatusCode == nil {
+			entry.UpstreamStatusCode = new(0)
+		}
 		entry.ErrorPhase = opscore.ErrorPhaseProviderAuth
 		entry.ErrorOwner = "provider"
 		entry.ErrorSource = "gateway"

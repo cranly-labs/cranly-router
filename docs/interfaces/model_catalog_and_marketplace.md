@@ -238,11 +238,22 @@ v2 目录按提供商和完整型号解析服务记录，通过 `canonical_id` �
 - 合成长上下文档时，普通档与 priority/Fast 档的缓存创建（统一及各 TTL 写入价）与读取价均按输入侧倍率缩放。展示补齐手动区间前后及中间有基础价的范围，缺价范围不显示零价也不借用相邻区间；仅所有正上下文范围有价且普通与 Fast 一致时才压平为单一价格。
 - 零价区间保留范围标签与切换入口，JSON 省略零字段不代表缺价；区间价已含分组倍率。计费模型、价卡、服务层级、最终 effort、用量、时刻和倍率相同时，提供商平台不构成额外售价维度。以上游模型计费时先按提供商映射确定型号，多路线无法给出一致报价时标记歧义，不猜低价。
 
-### Fast、分时、Max 与缓存分档展示
+<a id="marketplace_service_tiers"></a>
+### 服务档位、分时、Max 与缓存分档展示
 
-- 分组关联的价格配置开启 `free_openai_fast` 时，模型广场的 Fast 用户价与 Standard 基础价和上下文档一致（同时检查默认价和有效区间，含仅配区间的自定义模型）；仅调整展示副本，不影响结算 Fast `total_cost` 与提供商统计。
+| 客户端入口与上游路线 | 公开报价规则 |
+| --- | --- |
+| Chat、Responses、Responses WebSocket 或 Compact 走 OpenAI、Grok 或 OpenCode 的 OpenAI 兼容文本上游 | 按实际出站的 `priority`、`flex` 或 `ultrafast` 显示对应价格。OpenAI 路线应用分组策略，所有经过档位策略的路线共用全局规则。 |
+| Messages 转 OpenAI 兼容文本上游 | 客户端可通过 Fast 速度请求 Priority，分组或全局规则可以改写最终档位。 |
+| Anthropic API Key、OAuth 或 Setup Token 走 Messages | 最终 beta header 允许 Fast 时展示 Fast 价。默认 beta 策略过滤 Fast；提供商可覆盖 header，全局 block 仍生效。 |
+| OpenCode 走原生 Messages | 可展示 Fast 价，提供商固定的 beta header 须包含 Fast。 |
+| Embeddings、独立搜索、媒体入口、Bedrock、Vertex Claude、Gemini、Antigravity、Qoder、SystemOne、Kimi、智谱、DeepSeek | 这些路线不贡献非标准 token 档位。 |
+
+公开与个人广场均按分组报价。每次列表查询读取一次 OpenAI 档位规则和 Anthropic beta 规则，按目标型号、认证方式和协议求出各路线的出站档位，再取并集。报价使用跟随请求的 Key 策略，仅应用全局规则；个人或 Key 的例外按实际请求结算。[OpenAI 档位策略](openai_upstream.md#openai_fast_policy)
+
+- 裁剪在公开报价副本上执行，不影响目录原始规则与实际结算；若自定义价卡的多个上下文区间仅在被隐藏的服务档位上存在差异，模型广场会自动合并为单一区间展示。
 - token 基础单价对应分时 1x 时段与非 `max` 档位。校验通过的价格配置分时规则（分组条目覆盖优先）随报价下发 `time_pricing`（时区、`weekdays_only`、各时段倍率），正数且非 1 的 `max_reasoning_effort_multiplier` 单独下发。
-- 模型广场将分时与 Max 和 Fast 并列切换，选中后视图内全部 token 单价（含 Fast）乘对应倍率；未覆盖全天或仅工作日生效时增加 1x「其他时段」，默认选中规则时区此刻时段并注明时区与生效日。目录分时规则按报价生成时刻直接乘入单价。
+- 模型广场将分时、Max 与服务档位并列切换，选中后视图内全部 token 单价乘对应倍率；未覆盖全天或仅工作日生效时增加 1x「其他时段」，默认选中规则时区此刻时段并注明时区与生效日。目录分时规则按报价生成时刻直接乘入单价。
 - 共享价格配置与提供商统计 API 支持统一写入价 `cache_write_price` 及独立 TTL 分档字段 `cache_write_5m_price`、`cache_write_1h_price`、`cache_write_30m_price`、`cache_write_12h_price`（覆盖与结算规则见[缓存写入分档](../domains/routing_and_billing.md#cache_write_pricing)）。公开报价下发对应单价字段，明确为 `0` 的免费 TTL 分档在模型广场照常显示零价行。
 
 ### 图片、视频与缺价展示
@@ -270,6 +281,7 @@ v2 目录按提供商和完整型号解析服务记录，通过 `canonical_id` �
 - 「网关默认价格」只读，日常改价在共享「价格配置」完成（一配置多分组，未关联分组用目录默认价，提供商成本规则独立）。工具栏左侧为搜索框和筛选面板（含平台、计费模式），右侧刷新按钮仅重查列表。
 - 离线手动更新与后台本地重载共用同一流程并内部持有更新锁。缓存文件不可读时优先用内存目录，只读缓存目录不影响本地补充生效；候选价格完整校验失败时保留已发布版本与错误状态。
 - 列表合并目录属性与价格条目（含未定价型号），单次查询固定目录版本与时间，分页后计算当页基础价与分时倍率（分组、用户、订阅倍率在报价与结算阶段应用）。详情标明各类单位与缓存、档位、长上下文规则，区分明确零价与未定价；批量图片和创作台使用任务保存时快照。
+- 默认目录与广场按报价时刻选择有效服务档位。绝对上下文阶梯使用本档单价和目录规则，Fast、Flex 与推理倍率继承根价格，与结算一致。
 - 输出模态不决定计费模式：仅目录有明确按张价或命中专用媒体规则时才展示按张/按秒价，历史通用媒体默认价不计入；聊天模型图片元数据不切为图片计费。仅 token 报价按 token 展示，全缺价显示未定价；Gemini Image 图片 token 费率与计费模式分开解释，Omni 与 Deep Research 用普通输出价；价格配置不改写目录来源。
 
 <a id="model_attributes"></a>

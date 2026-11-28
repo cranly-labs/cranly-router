@@ -129,7 +129,7 @@ func ReadConvertedAnthropicBuffered(
 	originalModel, billingModel, upstreamModel string,
 	reasoningEffort *string,
 	startTime time.Time,
-) (*Result, error) {
+) (result *Result, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("upstream response body is nil")
 	}
@@ -137,7 +137,11 @@ func ReadConvertedAnthropicBuffered(
 		return nil, errors.New("conversion exchange is nil")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		if resp.Request != nil {
+			ctx = resp.Request.Context()
+		} else {
+			ctx = context.Background()
+		}
 	}
 
 	if options.UpdateWindow != nil {
@@ -148,6 +152,19 @@ func ReadConvertedAnthropicBuffered(
 	errTypeDefault := defaultAnthropicConvertedErrorType(options.DefaultErrorType, exchange.Info())
 	collector := newConvertedAnthropicUsageCollector(resp, requestID, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, false)
 	buf := exchange.Buffer()
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(ctx, exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
+	defer func() {
+		if err != nil {
+			// Commit accumulated sealer losses onto exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = buf.Close(err)
+		}
+	}()
 
 	sawMessageStart := false
 	sawStop := false
@@ -310,7 +327,7 @@ func ReadConvertedAnthropicStreaming(
 	originalModel, billingModel, upstreamModel string,
 	reasoningEffort *string,
 	startTime time.Time,
-) (*Result, error) {
+) (result *Result, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("upstream response body is nil")
 	}
@@ -318,7 +335,11 @@ func ReadConvertedAnthropicStreaming(
 		return nil, errors.New("conversion exchange is nil")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		if resp.Request != nil {
+			ctx = resp.Request.Context()
+		} else {
+			ctx = context.Background()
+		}
 	}
 
 	if options.UpdateWindow != nil {
@@ -329,6 +350,26 @@ func ReadConvertedAnthropicStreaming(
 	errTypeDefault := defaultAnthropicConvertedErrorType(options.DefaultErrorType, exchange.Info())
 	collector := newConvertedAnthropicUsageCollector(resp, requestID, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, true)
 	stream := exchange.Stream()
+	var scanErr error
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(ctx, exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
+	defer func() {
+		// Close any still-open stream before FinalizeExchangeConversion runs so
+		// post-disconnect read or idle failures that return a nil error still
+		// commit observed response losses onto exchange; closed streams are a no-op.
+		closeCause := err
+		if closeCause == nil {
+			closeCause = scanErr
+		}
+		if closeCause == nil {
+			closeCause = context.Canceled
+		}
+		_, _ = stream.Close(closeCause)
+	}()
 
 	headersPrepared := false
 	prepareStreamHeaders := func() {
@@ -620,7 +661,7 @@ func ReadConvertedAnthropicStreaming(
 		return false
 	}
 
-	scanErr := scanAnthropicSSEFrames(resp.Body, options.MaxFrameBytes, readAnthropicStreamInterval(options.StreamInterval), processFrame)
+	scanErr = scanAnthropicSSEFrames(resp.Body, options.MaxFrameBytes, readAnthropicStreamInterval(options.StreamInterval), processFrame)
 
 	if streamFailoverErr != nil {
 		return nil, streamFailoverErr

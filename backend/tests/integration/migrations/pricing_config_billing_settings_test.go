@@ -93,13 +93,12 @@ func TestPricingConfigBillingSettingsRoundTrip(t *testing.T) {
 	require.NotNil(t, config.WebSearchPricePerCall)
 	require.Zero(t, *config.WebSearchPricePerCall)
 	require.Equal(t, price, *config.ModelPricing[0].PerRequestPrice)
-	enabled, disabled := true, false
+	disabled := false
 	updated, err := svc.Update(ctx, config.ID, &routing.UpdatePricingConfigInput{BillingSettingsPatch: routing.BillingSettingsPatch{
-		WebSearchPricePerCall: routing.PriceUpdate{Set: true}, FreeOpenAIFast: &enabled, LongContextPricingEnabled: &disabled,
+		WebSearchPricePerCall: routing.PriceUpdate{Set: true}, LongContextPricingEnabled: &disabled,
 	}})
 	require.NoError(t, err)
 	require.Nil(t, updated.WebSearchPricePerCall)
-	require.True(t, updated.FreeOpenAIFast)
 	require.False(t, updated.LongContextPricingEnabled)
 	require.Equal(t, price, *updated.ModelPricing[0].PerRequestPrice)
 	all, err := repo.ListAll(ctx)

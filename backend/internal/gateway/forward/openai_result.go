@@ -81,10 +81,11 @@ type OpenAIResult struct {
 	// ResponseHeaders retains headers captured for downstream output. Result
 	// assignment shares the map and value slices, so consumers clone both levels
 	// before independently mutating the captured headers.
-	ResponseHeaders  map[string][]string
-	Duration         time.Duration       // forwarding elapsed duration
-	Timings          *timing.Performance // frozen exchange performance observations
-	ClientDisconnect bool                // observed client disconnect flag
+	ResponseHeaders    map[string][]string
+	Duration           time.Duration                 // forwarding elapsed duration
+	Timings            *timing.Performance           // frozen exchange performance observations
+	ProtocolConversion *telemetry.ProtocolConversion // bounded protocol transformation diagnostics
+	ClientDisconnect   bool                          // observed client disconnect flag
 	// ImageCount carries the producer's image quantity for completion billing.
 	// Native protocol conversion can pass a model-derived estimate, while image
 	// response readers can supply counted output objects.

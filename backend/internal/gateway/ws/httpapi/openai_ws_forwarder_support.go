@@ -211,8 +211,9 @@ func (s *OpenAIWebSocketExecutor) handleOpenAIWSErrorEventTransientFailure(ctx c
 // code and type classification, and missing descriptive fields receive
 // default diagnostic labels and a generic message. Calling this after the
 // execution path accepts client delivery prevents an internally recovered
-// provider error from becoming the session's visible Ops failure.
-func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload []byte) {
+// provider error from becoming the session's visible Ops failure. The HTTP
+// bridge supplies its actual upstream response status, or zero on transport failure.
+func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload []byte, upstreamStatus int) {
 	eventType = strings.TrimSpace(eventType)
 	if eventType != "error" && eventType != "response.failed" {
 		return
@@ -251,7 +252,14 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 	if message == "" {
 		message = "upstream websocket request failed"
 	}
-	gatewayhttp.MarkOpsStreamFailure(c, errType, code, message, status)
+	failure := gatewayhttp.OpsStreamError{
+		ErrType: errType, Code: code, Message: message,
+		IntendedStatus: status, CountTowardsSLA: true,
+	}
+	if upstreamStatus > 0 {
+		failure.WireUpstreamStatus = &upstreamStatus
+	}
+	gatewayhttp.RecordOpsStreamError(c, failure)
 }
 
 // handleOpenAIWSFailureProviderSideEffects applies health effects and reports

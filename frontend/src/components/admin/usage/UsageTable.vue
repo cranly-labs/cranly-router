@@ -142,19 +142,35 @@
         </template>
 
         <template #cell-endpoint="{ row }">
-          <div class="max-w-[320px] space-y-1 text-xs">
-            <div class="break-all text-gray-700 dark:text-gray-300">
-              <span class="font-medium text-gray-500 dark:text-gray-400"
-                >{{ t('usage.inbound') }}:</span
-              >
-              <span class="ml-1">{{ row.inbound_endpoint?.trim() || '-' }}</span>
+          <!-- Override DataTable's td whitespace-nowrap so long upstream paths wrap inside max-w instead of overlapping adjacent columns. -->
+          <div class="flex max-w-[320px] items-center gap-1.5 whitespace-normal text-xs">
+            <div class="min-w-0 flex-1 space-y-1">
+              <div class="break-all text-gray-700 dark:text-gray-300">
+                <span class="font-medium text-gray-500 dark:text-gray-400"
+                  >{{ t('usage.inbound') }}:</span
+                >
+                <span class="ml-1">{{ row.inbound_endpoint?.trim() || '-' }}</span>
+              </div>
+              <div v-if="showUpstreamEndpoint" class="break-all text-gray-700 dark:text-gray-300">
+                <span class="font-medium text-gray-500 dark:text-gray-400"
+                  >{{ t('usage.upstream') }}:</span
+                >
+                <span class="ml-1">{{ row.upstream_endpoint?.trim() || '-' }}</span>
+              </div>
             </div>
-            <div v-if="showUpstreamEndpoint" class="break-all text-gray-700 dark:text-gray-300">
-              <span class="font-medium text-gray-500 dark:text-gray-400"
-                >{{ t('usage.upstream') }}:</span
-              >
-              <span class="ml-1">{{ row.upstream_endpoint?.trim() || '-' }}</span>
-            </div>
+            <button
+              v-if="showProtocolConversion && row.protocol_conversion"
+              type="button"
+              data-testid="protocol-conversion-info-button"
+              class="group relative flex h-4 w-4 shrink-0 cursor-help items-center justify-center rounded-full bg-gray-100 text-gray-400 transition-colors hover:bg-primary-100 hover:text-primary-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 dark:bg-dark-700 dark:text-gray-500 dark:hover:bg-primary-500/8 dark:hover:text-primary-500"
+              :aria-label="t('requests.protocolConversion.title')"
+              :title="t('requests.protocolConversion.title')"
+              @mouseenter="showConversionTooltip($event, row)"
+              @mouseleave="hideConversionTooltip"
+              @click.stop="toggleConversionTooltip($event, row)"
+            >
+              <Icon name="infoCircle" size="xs" />
+            </button>
           </div>
         </template>
 
@@ -1097,6 +1113,114 @@
       </div>
     </MotionTransition>
   </Teleport>
+
+  <!-- Protocol conversion details render in a portal; pointer hover opens inspection and click pins it for touch use. -->
+  <Teleport to="body">
+    <MotionTransition name="fade">
+      <div
+        v-if="conversionTooltipVisible && conversionTooltipData?.protocol_conversion"
+        :inert="!conversionTooltipVisible || undefined"
+        ref="conversionTooltipRef"
+        data-testid="protocol-conversion-tooltip"
+        class="pointer-events-none fixed z-teleport-tooltip"
+        :class="{ invisible: !conversionTooltipReady }"
+        :style="{
+          left: conversionTooltipPosition.x + 'px',
+          top: conversionTooltipPosition.y + 'px',
+        }"
+      >
+        <div
+          class="w-max max-w-[calc(100vw-1.5rem)] break-words whitespace-normal tooltip-panel rounded-control px-3 py-2.5 text-xs shadow-xl md:whitespace-nowrap"
+        >
+          <div class="space-y-1.5">
+            <div class="text-xs font-semibold text-gray-300">
+              {{ t('requests.protocolConversion.title') }}
+            </div>
+            <div class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('requests.protocolConversion.mode') }}</span>
+              <span class="font-medium text-white">{{
+                getProtocolConversionModeLabel(
+                  conversionTooltipData.protocol_conversion.mode,
+                  translateKey,
+                )
+              }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{
+                t('requests.protocolConversion.clientProtocol')
+              }}</span>
+              <span class="font-medium text-white">{{
+                getProtocolDisplayName(
+                  conversionTooltipData.protocol_conversion.client_protocol,
+                  translateKey,
+                )
+              }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{
+                t('requests.protocolConversion.upstreamProtocol')
+              }}</span>
+              <span class="font-medium text-white">{{
+                getProtocolDisplayName(
+                  conversionTooltipData.protocol_conversion.upstream_protocol,
+                  translateKey,
+                )
+              }}</span>
+            </div>
+            <div
+              v-if="conversionTooltipData.protocol_conversion.dialect"
+              class="flex items-center justify-between gap-4"
+            >
+              <span class="text-gray-400">{{ t('requests.protocolConversion.dialect') }}</span>
+              <span class="font-mono font-medium text-cyan-300">{{
+                conversionTooltipData.protocol_conversion.dialect
+              }}</span>
+            </div>
+            <div
+              v-if="conversionTooltipData.protocol_conversion.replay_scheme"
+              class="flex items-center justify-between gap-4"
+            >
+              <span class="text-gray-400">{{ t('requests.protocolConversion.replayScheme') }}</span>
+              <span class="font-mono font-medium text-teal-300">{{
+                conversionTooltipData.protocol_conversion.replay_scheme
+              }}</span>
+            </div>
+            <div class="border-t border-gray-700 pt-1.5 dark:border-dark-600">
+              <template v-if="conversionTooltipLossItems.length > 0">
+                <div class="mb-1 text-gray-400">
+                  {{ t('requests.protocolConversion.losses') }}
+                </div>
+                <div
+                  v-for="item in conversionTooltipLossItems"
+                  :key="item.kind"
+                  data-testid="protocol-conversion-loss-row"
+                  class="flex items-center justify-between gap-4"
+                >
+                  <span class="text-amber-200">{{ item.label }}</span>
+                  <span class="font-mono font-medium tabular-nums text-amber-300"
+                    >×{{ item.count.toLocaleString() }}</span
+                  >
+                </div>
+              </template>
+              <div v-else class="text-emerald-300">
+                {{ t('requests.protocolConversion.lossless') }}
+              </div>
+            </div>
+          </div>
+          <div
+            v-if="conversionTooltipPosition.placement === 'right'"
+            class="tooltip-caret -left-1 -translate-y-1/2 border-b border-l"
+            :style="{ top: conversionTooltipPosition.arrowY + 'px' }"
+          ></div>
+          <div
+            v-else-if="conversionTooltipPosition.placement === 'left'"
+            class="tooltip-caret -right-1 -translate-y-1/2 border-r border-t"
+            :style="{ top: conversionTooltipPosition.arrowY + 'px' }"
+          ></div>
+        </div>
+      </div>
+    </MotionTransition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -1153,6 +1277,11 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
+import {
+  getProtocolConversionLossItems,
+  getProtocolConversionModeLabel,
+  getProtocolDisplayName,
+} from '@/utils/protocolConversion'
 import type { AdminUsageLog } from '@/api/usage.types'
 import type { Column } from '@/components/common/table/types'
 
@@ -1161,11 +1290,12 @@ import type { Column } from '@/components/common/table/types'
 // flags determine which details are exposed; user billing and provider charges use their
 // own amount formatters.
 //
-// Floating cost, token, and timing panels render outside table cells to escape
-// scrolling-container clipping. Their row identities are checked after Vue updates before
-// positioning, so a superseded opening cannot position another row's panel. Timing
-// additionally supports pinned inspection on touch screens. Viewport measurements choose a
-// side placement when space permits and clamp overlays when neither side fits.
+// Floating cost, token, timing, and protocol-conversion panels render outside table cells to
+// escape scrolling-container clipping. Their row identities are checked after Vue updates
+// before positioning, so a superseded opening cannot position another row's panel. Timing and
+// protocol conversion additionally support pinned inspection on touch screens. Viewport
+// measurements choose a side placement when space permits and clamp overlays when neither
+// side fits.
 
 // providerBilled multiplies the provider statistics cost by the provider rate. A missing
 // statistics cost uses total cost, a missing multiplier uses one, and NaN produces zero for
@@ -1201,6 +1331,9 @@ interface Props {
   // when presenting only actual user charges.
   showStandardCost?: boolean
   showUpstreamEndpoint?: boolean // upstream endpoint visibility flag
+  // showProtocolConversion enables administrator protocol conversion info triggers and
+  // detail tooltips; user-facing tables keep it false so internal route details stay hidden.
+  showProtocolConversion?: boolean
   // userClickable permits member names to emit administrator balance navigation; user pages
   // disable this action for team member rows.
   userClickable?: boolean
@@ -1225,6 +1358,7 @@ const props = withDefaults(defineProps<Props>(), {
   showProviderBilling: true,
   showStandardCost: true,
   showUpstreamEndpoint: true,
+  showProtocolConversion: false,
   userClickable: true,
   compactUserColumn: false,
   flat: false,
@@ -1251,7 +1385,11 @@ const copiedRequestId = ref<string | null>(null)
 const showProviderBilling = props.showProviderBilling
 const showStandardCost = props.showStandardCost
 const showUpstreamEndpoint = props.showUpstreamEndpoint
+const showProtocolConversion = computed(() => props.showProtocolConversion)
 const userClickable = props.userClickable
+// translateKey adapts vue-i18n's overloaded t function to pure protocol-conversion helpers.
+const translateKey = (key: string, fallback?: string): string =>
+  fallback !== undefined ? t(key, fallback) : t(key)
 // compactUserColumn follows the parent's compact member-column preference for team table
 // width and email truncation.
 const compactUserColumn = computed(() => props.compactUserColumn)
@@ -1495,6 +1633,28 @@ const timingTooltipData = ref<AdminUsageLog | null>(null)
 // while timingTooltipPinned keeps inspection open after pointer exit.
 const timingTooltipAnchor = ref<HTMLElement | null>(null)
 const timingTooltipPinned = ref(false)
+
+// conversionTooltipVisible, conversionTooltipReady, conversionTooltipRef,
+// conversionTooltipPosition, and conversionTooltipData coordinate the administrator
+// protocol-conversion floating panel across render measurement and viewport clamping.
+const conversionTooltipVisible = ref(false)
+const conversionTooltipReady = ref(false)
+const conversionTooltipRef = ref<HTMLElement | null>(null)
+const conversionTooltipPosition = ref<TooltipPosition>({
+  x: 0,
+  y: 0,
+  arrowY: 0,
+  placement: 'overlay',
+})
+const conversionTooltipData = ref<AdminUsageLog | null>(null)
+// conversionTooltipAnchor and conversionTooltipPinned mirror timing-panel touch pinning so
+// administrators can tap a conversion badge to keep its loss breakdown open.
+const conversionTooltipAnchor = ref<HTMLElement | null>(null)
+const conversionTooltipPinned = ref(false)
+// conversionTooltipLossItems formats the active row's loss_counts in deterministic key order.
+const conversionTooltipLossItems = computed(() =>
+  getProtocolConversionLossItems(conversionTooltipData.value?.protocol_conversion, translateKey),
+)
 
 // TooltipPlacement identifies a side panel or a centered viewport-clamped overlay.
 type TooltipPlacement = 'left' | 'right' | 'overlay'
@@ -1760,18 +1920,87 @@ const toggleTimingTooltip = async (event: MouseEvent, row: AdminUsageLog) => {
   await updateTimingTooltip(event, row)
 }
 
-// handleTimingTooltipDocumentClick ignores clicks contained by the current timing anchor.
-// Every other document click closes the panel, clearing its pinned state and stored row
-// through closeTimingTooltip.
+// handleTimingTooltipDocumentClick ignores clicks contained by the current timing or
+// protocol-conversion anchor and closes pinned inspection panels on outside clicks.
 const handleTimingTooltipDocumentClick = (event: MouseEvent) => {
   const target = event.target
-  if (
+  const inTimingAnchor =
     timingTooltipAnchor.value &&
     target instanceof Node &&
     timingTooltipAnchor.value.contains(target)
+  if (!inTimingAnchor) {
+    closeTimingTooltip()
+  }
+  const inConversionAnchor =
+    conversionTooltipAnchor.value &&
+    target instanceof Node &&
+    conversionTooltipAnchor.value.contains(target)
+  if (!inConversionAnchor) {
+    closeConversionTooltip()
+  }
+}
+
+// updateConversionTooltip opens protocol-conversion details for an administrator row with
+// recorded conversion metadata and measures its rendered panel after nextTick. Superseded or
+// closed openings exit before publishing viewport coordinates.
+const updateConversionTooltip = async (event: MouseEvent, row: AdminUsageLog) => {
+  if (!props.showProtocolConversion || !row.protocol_conversion) return
+  const target = event.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+  conversionTooltipAnchor.value = target
+  conversionTooltipData.value = row
+  conversionTooltipReady.value = false
+  conversionTooltipVisible.value = true
+  await nextTick()
+
+  if (
+    !conversionTooltipVisible.value ||
+    conversionTooltipData.value !== row ||
+    !conversionTooltipRef.value
   )
     return
-  closeTimingTooltip()
+  conversionTooltipPosition.value = calculateTooltipPosition(
+    rect,
+    conversionTooltipRef.value.getBoundingClientRect(),
+  )
+  conversionTooltipReady.value = true
+}
+
+// showConversionTooltip opens hover details while no row has been pinned by a click.
+const showConversionTooltip = (event: MouseEvent, row: AdminUsageLog) => {
+  if (conversionTooltipPinned.value) return
+  void updateConversionTooltip(event, row)
+}
+
+// closeConversionTooltip resets visibility, readiness, anchor, and pin state for the
+// protocol-conversion floating panel.
+const closeConversionTooltip = () => {
+  conversionTooltipVisible.value = false
+  conversionTooltipReady.value = false
+  conversionTooltipData.value = null
+  conversionTooltipAnchor.value = null
+  conversionTooltipPinned.value = false
+}
+
+// hideConversionTooltip closes unpinned protocol-conversion hover inspection on pointer exit.
+const hideConversionTooltip = () => {
+  if (conversionTooltipPinned.value) return
+  closeConversionTooltip()
+}
+
+// toggleConversionTooltip pins protocol-conversion inspection on click or closes an already
+// pinned panel for the same row.
+const toggleConversionTooltip = async (event: MouseEvent, row: AdminUsageLog) => {
+  if (
+    conversionTooltipVisible.value &&
+    conversionTooltipPinned.value &&
+    conversionTooltipData.value === row
+  ) {
+    closeConversionTooltip()
+    return
+  }
+  conversionTooltipPinned.value = true
+  await updateConversionTooltip(event, row)
 }
 
 onMounted(() => {

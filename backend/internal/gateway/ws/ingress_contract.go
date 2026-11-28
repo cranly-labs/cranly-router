@@ -92,16 +92,17 @@ type ForwardResult struct {
 	Duration                 time.Duration       // elapsed turn execution duration
 	// Timings records upstream content independently of downstream commitment.
 	// Completion clones the observations before a later turn can reuse mutable request state.
-	Timings            *timing.Performance // frozen exchange performance observations
-	ClientDisconnect   bool                // downstream client disconnected marker
-	ImageCount         int                 // observed generated image count
-	ImageFrameCount    int                 // encoded output frame billing units
-	ImageSize          string              // image billing size tier
-	ImageInputSize     string              // input image size label
-	ImageOutputSize    string              // selected output image size
-	ImageOutputSizes   []string            // observed output image sizes
-	ImageSizeSource    string              // image size observation source
-	ImageSizeBreakdown map[string]int      // output counts by image size
+	Timings            *timing.Performance           // frozen exchange performance observations
+	ProtocolConversion *telemetry.ProtocolConversion // bounded protocol transformation diagnostics
+	ClientDisconnect   bool                          // downstream client disconnected marker
+	ImageCount         int                           // observed generated image count
+	ImageFrameCount    int                           // encoded output frame billing units
+	ImageSize          string                        // image billing size tier
+	ImageInputSize     string                        // input image size label
+	ImageOutputSize    string                        // selected output image size
+	ImageOutputSizes   []string                      // observed output image sizes
+	ImageSizeSource    string                        // image size observation source
+	ImageSizeBreakdown map[string]int                // output counts by image size
 	// WSReplayInput and WSReplayInputExists retain normalized ordinary history,
 	// including explicit empty input. WSProviderFailoverReplayInput keeps the
 	// bridge's separate output history used to build a self-contained

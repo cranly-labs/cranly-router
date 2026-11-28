@@ -11,6 +11,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
@@ -575,4 +576,42 @@ func TestRecordCacheWriteSettlementAndAnomalies(t *testing.T) {
 		require.Equal(t, pricing.CacheWriteAnomalyMissingTotal, missingTotal.CacheWriteAnomaly.Kind)
 		require.Zero(t, missingTotal.CacheWriteAnomaly.ReportedTotal)
 	})
+}
+
+// TestRecordPersistsProtocolConversionAndLeavesPassthroughNil verifies that
+// RecordAnthropic and RecordOpenAI clone Result.ProtocolConversion onto the
+// written UsageLog while keeping native passthrough rows nil.
+func TestRecordPersistsProtocolConversionAndLeavesPassthroughNil(t *testing.T) {
+	recorder, _, logs, input, _ := recordFixture()
+	require.NoError(t, recorder.RecordAnthropic(t.Context(), input, nil))
+	require.Len(t, logs.rows, 1)
+	require.Nil(t, logs.rows[0].ProtocolConversion)
+
+	recorder2, _, logs2, input2, _ := recordFixture()
+	input2.Result.ProtocolConversion = telemetry.NewProtocolConversion(
+		telemetry.ConversionModeIRConverted,
+		"anthropic_messages",
+		"openai_responses",
+		"openai",
+		"openai",
+		map[string]int{"extra_dropped": 1},
+	)
+	require.NoError(t, recorder2.RecordAnthropic(t.Context(), input2, nil))
+	require.Len(t, logs2.rows, 1)
+	require.Equal(t, input2.Result.ProtocolConversion, logs2.rows[0].ProtocolConversion)
+
+	recorder3, _, logs3, input3, _ := recordFixture()
+	input3.Provider.Platform = "openai"
+	input3.Provider.OpenAI = true
+	input3.Result.ProtocolConversion = telemetry.NewProtocolConversion(
+		telemetry.ConversionModeToolAdapted,
+		"openai_responses",
+		"openai_responses",
+		"openai",
+		"openai",
+		map[string]int{"tool_lowered": 2},
+	)
+	require.NoError(t, recorder3.RecordOpenAI(t.Context(), input3))
+	require.Len(t, logs3.rows, 1)
+	require.Equal(t, input3.Result.ProtocolConversion, logs3.rows[0].ProtocolConversion)
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/sse"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -455,4 +456,79 @@ func TestReadConvertedAnthropic_DisconnectDrainUsageValidationAndOAuthToolRestor
 		require.Contains(t, sink2.buf.String(), "event: response.completed")
 		require.NotContains(t, sink2.buf.String(), "response.failed")
 	})
+}
+
+// TestReadConvertedAnthropicStreaming_ClientDisconnectThenUpstreamReadErrorPreservesResponseLosses
+// reproduces a Chat-to-Anthropic stream carrying a signed thinking block where
+// the downstream client disconnects mid-stream and the upstream subsequently
+// fails during usage draining. The reader must preserve disconnect nil-error
+// settlement while still closing the conversion stream so replay_token_dropped
+// commits onto ProtocolConversion identically to a clean EOF exit.
+func TestReadConvertedAnthropicStreaming_ClientDisconnectThenUpstreamReadErrorPreservesResponseLosses(t *testing.T) {
+	signedSSE := "event: message_start\n" +
+		"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_disc_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-6\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":22,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\n" +
+		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"reason\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_anth_1\"}}\n\n" +
+		"event: content_block_stop\n" +
+		"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: content_block_start\n" +
+		"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}}\n\n"
+
+	newChatToAnthropicExchange := func(t *testing.T) *convert.Exchange {
+		t.Helper()
+		ex, err := convert.NewExchange([]byte(`{"model":"gpt-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`), convert.Options{
+			Route: convert.Route{
+				Client:   protocol.ProtocolOpenAIChatCompletions,
+				Upstream: protocol.ProtocolAnthropicMessages,
+				Dialect: convert.Dialect{
+					Name:         "anthropic",
+					ReplayScheme: ir.SchemeAnthropic,
+				},
+			},
+			ClientModel: "gpt-5",
+			Runtime:     convert.DefaultRuntime(),
+		})
+		require.NoError(t, err)
+		_, err = ex.UpstreamRequest()
+		require.NoError(t, err)
+		return ex
+	}
+
+	sink := &anthropicConvertedTestSink{failAfterWrites: 2}
+	outCtx := upstream.NewDeferredOutputContext(sink)
+	ex := newChatToAnthropicExchange(t)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: &trailingErrReader{
+			data:        strings.NewReader(signedSSE),
+			trailingErr: io.ErrUnexpectedEOF,
+		},
+	}
+
+	res, err := ReadConvertedAnthropicStreaming(
+		t.Context(),
+		resp,
+		outCtx,
+		ex,
+		ConvertedAnthropicOutputOptions{DefaultErrorType: "server_error"},
+		"gpt-5",
+		"claude-sonnet-4-6",
+		"claude-sonnet-4-6",
+		nil,
+		time.Now(),
+	)
+	require.NoError(t, err, "post-disconnect upstream read error must retain nil error for billing settlement")
+	require.NotNil(t, res)
+	require.True(t, res.ClientDisconnect)
+	require.NotNil(t, res.ProtocolConversion)
+	require.Equal(t, 1, res.ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
 }

@@ -202,21 +202,30 @@ type MarketplaceAvailability interface {
 	GetSummaryByGroupIDs(context.Context, []int64, int, int, string, time.Time) (map[int64]*GroupAvailabilitySummary, error)
 }
 
-// MarketplaceQuoteRequest identifies the group and model used for a public
-// price quote.
+// MarketplaceQuoteRequest identifies the group, model, and optional route
+// service-tier filter used for a public price quote.
 type MarketplaceQuoteRequest struct {
 	Model          string  // complete intended pricing model
 	GroupID        int64   // associated product group ID
 	RateMultiplier float64 // group user-price scaling factor
-	// FreeFastApplicable enables the quote reader's configured Standard-equivalent
-	// display when supported. PublicModelPricing supplies true; the pricing
-	// configuration and reader determine whether free Fast applies.
-	FreeFastApplicable bool // apply configured free-Fast display
+	// ServiceTiers restricts non-standard token service tiers to those supported
+	// by at least one resolved group route. Nil leaves all resolved tiers
+	// visible.
+	ServiceTiers *pricing.ServiceTierSupport // optional route-supported service tiers
 }
+
+// MarketplaceTierPolicy returns the non-standard token tiers reachable on one
+// resolved target under the group's acceleration policy. The policy captures
+// one listing's global settings and does not require an authenticated API key.
+type MarketplaceTierPolicy func(modelrules.Target, string) pricing.ServiceTierSupport
 
 // MarketplacePrices supplies model quotes and optional legacy modality
 // metadata.
 type MarketplacePrices interface {
+	// ServiceTierPolicy snapshots the gateway rules for one listing. The returned
+	// function must remain usable for every group and model in that listing,
+	// including when stored settings are absent.
+	ServiceTierPolicy(context.Context) MarketplaceTierPolicy
 	// Quote calculates public display pricing for the supplied model and group.
 	Quote(context.Context, MarketplaceQuoteRequest) pricing.ModelDisplayPricing
 	// GetModelModalities returns legacy catalog input and output modalities for
@@ -348,10 +357,11 @@ func (s *Marketplace) ListVisible(ctx context.Context, exclusiveGroupIDs []int64
 		capacityMap = s.getVisibleCapacityMap(ctx, visibleGroups)
 	}
 	availabilityMap := s.getVisibleAvailabilityMap(ctx, visibleGroups)
+	tierPolicy := s.serviceTierPolicy(ctx)
 	out := make([]ModelMarketplaceGroup, 0, len(visibleGroups))
 	for i := range visibleGroups {
 		group := &visibleGroups[i]
-		models := s.buildPublicModels(ctx, group, definitions[group.ID], attributes[group.ID])
+		models := s.buildPublicModels(ctx, group, definitions[group.ID], attributes[group.ID], tierPolicy)
 
 		var officialPriceRatio *float64
 		var officialPriceRMBEquivalent *float64
@@ -703,7 +713,7 @@ func (s *Marketplace) BuildPublicModels(ctx context.Context, group *Group, model
 	}
 
 	attributes := s.readAttributes(ctx, map[int64][]MarketplaceModelDef{group.ID: modelDefs})
-	return s.buildPublicModels(ctx, group, modelDefs, attributes[group.ID])
+	return s.buildPublicModels(ctx, group, modelDefs, attributes[group.ID], s.serviceTierPolicy(ctx))
 }
 
 // readAttributes converts visible model definitions into one grouped attribute
@@ -748,12 +758,12 @@ func (s *Marketplace) readAttributes(ctx context.Context, definitions map[int64]
 // pricing metadata is consulted only when no attribute reader is installed.
 // Protocol slices, per-protocol attribute maps, and nested attribute storage
 // retain their source allocations. The returned presentation remains read-only.
-func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, modelDefs []MarketplaceModelDef, attributes map[string]MarketplaceModelAttributes) []ModelMarketplaceModel {
+func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, modelDefs []MarketplaceModelDef, attributes map[string]MarketplaceModelAttributes, tierPolicy MarketplaceTierPolicy) []ModelMarketplaceModel {
 	models := make([]ModelMarketplaceModel, 0, len(modelDefs))
 	for _, modelDef := range modelDefs {
 		pricing := pricing.UnknownDisplayPricing()
 		if s.prices != nil && !modelDef.PricingAmbiguous {
-			pricing = s.RequestableModelPricing(ctx, group, modelDef)
+			pricing = s.requestableModelPricing(ctx, group, modelDef, tierPolicy)
 		}
 		var inputModalities, outputModalities []string
 		var presentation *EffectiveModelAttributes
@@ -812,26 +822,76 @@ func (s *Marketplace) ModelModalities(modelDef MarketplaceModelDef) ([]string, [
 }
 
 // RequestableModelPricing quotes the resolver's trimmed PricingModel, falling
-// back to the public ID when blank. Marketplace performs no further model
-// mapping here, so the resolver's selected billing identity remains the
-// argument supplied to the quote reader.
+// back to the public ID when blank. Resolved provider targets restrict
+// non-standard service-tier quotes to tiers executable by at least one group
+// route, while definitions without targets retain unrestricted quotes.
+// @project-doc docs/interfaces/model_catalog_and_marketplace.md#marketplace_service_tiers
 func (s *Marketplace) RequestableModelPricing(ctx context.Context, group *Group, model MarketplaceModelDef) pricing.ModelDisplayPricing {
+	return s.requestableModelPricing(ctx, group, model, s.serviceTierPolicy(ctx))
+}
+
+// serviceTierPolicy loads one policy snapshot for the entire quote batch.
+// A marketplace without a price reader can still serve model attributes and
+// returns nil here because it will skip all price calculations.
+func (s *Marketplace) serviceTierPolicy(ctx context.Context) MarketplaceTierPolicy {
+	if s.prices == nil {
+		return nil
+	}
+	return s.prices.ServiceTierPolicy(ctx)
+}
+
+// requestableModelPricing quotes one definition against the supplied listing
+// snapshot. A mixed group can advertise a price when one of its routes
+// supports that tier. The billing reader applies the resulting union to its
+// resolved price, preserving unpriced and explicitly free amounts.
+func (s *Marketplace) requestableModelPricing(ctx context.Context, group *Group, model MarketplaceModelDef, policy MarketplaceTierPolicy) pricing.ModelDisplayPricing {
+	if s.prices == nil {
+		return pricing.UnknownDisplayPricing()
+	}
 	pricingModel := strings.TrimSpace(model.PricingModel)
 	if pricingModel == "" {
 		pricingModel = model.ID
 	}
-	return s.PublicModelPricing(ctx, group, pricingModel)
+	var serviceTiers *pricing.ServiceTierSupport
+	if len(model.AttributeTargets) > 0 {
+		supported := marketplaceRouteServiceTiers(group, model.AttributeTargets, policy)
+		serviceTiers = &supported
+	}
+	return s.prices.Quote(ctx, MarketplaceQuoteRequest{
+		Model:          pricingModel,
+		GroupID:        group.ID,
+		RateMultiplier: group.RateMultiplier,
+		ServiceTiers:   serviceTiers,
+	})
 }
 
-// PublicModelPricing requests a model quote with the group's base factor and
-// free-Fast display applicability. A missing price reader returns unknown
-// pricing; otherwise callers supply a non-nil group and the complete intended
-// pricing model.
+// marketplaceRouteServiceTiers computes the union of non-standard token service
+// tiers that at least one resolved group route can execute and settle. The
+// caller supplies the same non-nil policy snapshot for every target, so a
+// settings change cannot split the advertised prices within one listing.
+func marketplaceRouteServiceTiers(group *Group, targets []modelrules.Target, policy MarketplaceTierPolicy) pricing.ServiceTierSupport {
+	var out pricing.ServiceTierSupport
+	openAIPolicy := group.EffectiveOpenAIFastPolicy()
+	for _, target := range targets {
+		tier := policy(target, openAIPolicy)
+		out.Fast = out.Fast || tier.Fast
+		out.Flex = out.Flex || tier.Flex
+		out.Ultrafast = out.Ultrafast || tier.Ultrafast
+		if out.Fast && out.Flex && out.Ultrafast {
+			return out
+		}
+	}
+	return out
+}
+
+// PublicModelPricing requests an unrestricted model quote with the group's base
+// rate multiplier. A missing price reader returns unknown pricing; otherwise
+// callers supply a non-nil group and the complete intended pricing model.
 func (s *Marketplace) PublicModelPricing(ctx context.Context, group *Group, model string) pricing.ModelDisplayPricing {
 	if s.prices == nil {
 		return pricing.UnknownDisplayPricing()
 	}
-	return s.prices.Quote(ctx, MarketplaceQuoteRequest{Model: model, GroupID: group.ID, RateMultiplier: group.RateMultiplier, FreeFastApplicable: true})
+	return s.prices.Quote(ctx, MarketplaceQuoteRequest{Model: model, GroupID: group.ID, RateMultiplier: group.RateMultiplier})
 }
 
 // resolveGroupModels returns definitions from the configured per-group

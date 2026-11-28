@@ -869,3 +869,36 @@ func TestStoreFindProviderNames(t *testing.T) {
 	require.True(t, items[0].Pending)
 	require.Equal(t, map[int64]string{9: "Pending upstream"}, items[0].ProviderNames)
 }
+
+// TestStoreFindErrorStatuses reads failures without a retained request summary.
+// The summary and its error reference must agree on the client HTTP result
+// while the reference separately retains the logical classification for SLA.
+func TestStoreFindErrorStatuses(t *testing.T) {
+	db := postgrescontainer.New(t)
+	store := NewStore(db)
+	for _, tc := range []struct {
+		id     string // request lookup identity
+		wire   *int   // observed wire status
+		legacy bool   // legacy fallback eligibility
+		want   int    // expected client status
+	}{
+		{"terminal-stream", new(200), false, 200},
+		{"ws-message", nil, false, 0},
+		{"historical-stream", nil, true, 400},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			_, err := db.ExecContext(t.Context(), `
+				INSERT INTO ops_error_logs (request_id, error_phase, error_type, status_code, client_status_code, legacy_client_status)
+				VALUES ($1, 'request', 'invalid_request_error', 400, $2, $3)`, tc.id, tc.wire, tc.legacy)
+			require.NoError(t, err)
+			rows, err := store.Find(t.Context(), tc.id, 0, true)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.True(t, rows[0].Legacy)
+			require.Equal(t, tc.want, rows[0].Status)
+			require.Len(t, rows[0].Errors, 1)
+			require.Equal(t, tc.want, rows[0].Errors[0].Status)
+			require.Equal(t, 400, rows[0].Errors[0].LogicalStatus)
+		})
+	}
+}

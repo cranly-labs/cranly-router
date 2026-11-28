@@ -178,11 +178,16 @@ func cataloguePriceResolver(pricingConfigs *routing.PricingConfigService, calcul
 	}, stats)
 }
 
+// ServiceTierPolicy uses the gateway's default public rules for offline quotes.
+func (p cataloguePrices) ServiceTierPolicy(context.Context) routing.MarketplaceTierPolicy {
+	return gatewayprovider.MarketplaceTierPolicy(nil, nil)
+}
+
 // Quote requests the public billing price for the marketplace's resolved model
 // and group. Callers supply a resolver with a calculator; the adapter forwards
-// the group's rate multiplier and Fast applicability to billing.
+// the group's rate multiplier and route service-tier filter to billing.
 func (p cataloguePrices) Quote(ctx context.Context, request routing.MarketplaceQuoteRequest) pricing.ModelDisplayPricing {
-	return p.resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{Model: request.Model, GroupID: &request.GroupID}, RateMultiplier: request.RateMultiplier, FreeFastApplicable: request.FreeFastApplicable})
+	return p.resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{Model: request.Model, GroupID: &request.GroupID}, RateMultiplier: request.RateMultiplier, ServiceTiers: request.ServiceTiers})
 }
 
 // GetModelModalities returns the calculator's input and output modality lists

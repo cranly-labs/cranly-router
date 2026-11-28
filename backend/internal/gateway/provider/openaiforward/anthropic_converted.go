@@ -223,6 +223,7 @@ func ForwardConvertedAnthropic(
 		p.SourceError(source, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(fmt.Errorf("encode converted anthropic request: %w", err))
 	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	baseAnthropicBody, err = patchConvertedAnthropicBodyBytes(baseAnthropicBody, upstreamModel)
 	if err != nil {
@@ -252,7 +253,7 @@ func ForwardConvertedAnthropic(
 	}
 	p.PrepareTransport()
 
-	sendOnce := func(candidateBase []byte) (*http.Response, []byte, error) {
+	sendOnce := func(candidateBase []byte, losses protocolanthropic.SignatureRetryLosses) (*http.Response, []byte, error) {
 		prepared := candidateBase
 		if profile.OAuth {
 			prepared = p.Mimic(ctx, prepared, extractConvertedAnthropicSystemBytes(candidateBase), upstreamModel)
@@ -272,6 +273,11 @@ func ForwardConvertedAnthropic(
 		if buildErr != nil {
 			return nil, nil, fmt.Errorf("build upstream request: %w", buildErr)
 		}
+		if losses.Tokens > 0 || losses.Reasoning > 0 {
+			// Prepare the diagnostic snapshot only after the replacement payload
+			// builds successfully and before the transport assigns its dispatch ordinal.
+			upstream.StageSignatureRetry(ctx, exchange, losses.Tokens, losses.Reasoning)
+		}
 		sentResp, sendErr := p.SendNative(upstreamReq)
 		if sendErr != nil {
 			if sentResp != nil && sentResp.Body != nil {
@@ -282,7 +288,7 @@ func ForwardConvertedAnthropic(
 		return sentResp, wireBody, nil
 	}
 
-	resp, wireBody, err := sendOnce(baseAnthropicBody)
+	resp, wireBody, err := sendOnce(baseAnthropicBody, protocolanthropic.SignatureRetryLosses{})
 	if err != nil {
 		return nil, err
 	}
@@ -301,11 +307,11 @@ func ForwardConvertedAnthropic(
 		if p.IsSignatureError(ctx, preReadBody) {
 			// Strip rejected historical thinking signatures losslessly via jsontext
 			// and retry once on the same provider before falling back to HTTP 400.
-			if strippedBase, stripped := protocolanthropic.StripMessagesSignatureBlocksForRetryBytes(baseAnthropicBody, passback); stripped {
+			if strippedBase, stripped, losses := protocolanthropic.StripMessagesSignatureBlocksWithLosses(baseAnthropicBody, passback); stripped {
 				p.ObserveSignatureRetry(resp, preReadBody, preReadMsg)
 				_ = resp.Body.Close()
 				resp = nil
-				retryResp, retryWire, retryErr := sendOnce(strippedBase)
+				retryResp, retryWire, retryErr := sendOnce(strippedBase, losses)
 				if retryErr != nil {
 					return nil, retryErr
 				}

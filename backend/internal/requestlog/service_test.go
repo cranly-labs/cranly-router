@@ -418,7 +418,18 @@ func TestFindPendingChecksOwnership(t *testing.T) {
 	service.Observe(telemetry.RequestRecord{
 		RequestID: "id",
 		UserID:    1,
-		Attempts:  []telemetry.RequestAttempt{{ProviderID: 7, RequestID: "supplier"}},
+		Attempts: []telemetry.RequestAttempt{{
+			ProviderID: 7,
+			RequestID:  "supplier",
+			ProtocolConversion: telemetry.NewProtocolConversion(
+				telemetry.ConversionModeToolAdapted,
+				"openai_responses",
+				"openai_responses",
+				"openai",
+				"openai",
+				map[string]int{"tool_lowered": 1},
+			),
+		}},
 	})
 	items, err := service.Find(t.Context(), "id", 2, false)
 	require.Error(t, err)
@@ -427,6 +438,7 @@ func TestFindPendingChecksOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.True(t, items[0].Pending)
+	require.Nil(t, items[0].Attempts[0].ProtocolConversion)
 	// Change the returned attempt slice before querying again so shared pending
 	// storage would be visible if response collection copying were missing.
 	items[0].Attempts[0].RequestID = ""
@@ -434,5 +446,7 @@ func TestFindPendingChecksOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "supplier", items[0].Attempts[0].RequestID)
 	require.Equal(t, int64(7), items[0].Attempts[0].ProviderID)
+	require.NotNil(t, items[0].Attempts[0].ProtocolConversion)
+	require.Equal(t, "tool_adapted", items[0].Attempts[0].ProtocolConversion.Mode)
 	require.Empty(t, items[0].ProviderNames)
 }

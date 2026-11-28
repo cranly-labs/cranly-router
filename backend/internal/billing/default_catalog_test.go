@@ -3,6 +3,7 @@ package billing
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -109,11 +110,11 @@ func TestDefaultMediaPriceRequiresKnownUnits(t *testing.T) {
 	}
 }
 
-// TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent combines
-// different root and interval service-tier rules. It checks complete quote
+// TestDefaultPriceContextIntervalsInheritRootModifiers combines
+// different root and interval service-tier rules. It checks inherited quote
 // values, then mutates one interval to verify root, other intervals and later
 // results retain their amounts.
-func TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent(t *testing.T) {
+func TestDefaultPriceContextIntervalsInheritRootModifiers(t *testing.T) {
 	for _, rootSupportsTier := range []bool{false, true} {
 		name := "root_flex_multiplier"
 		var rootFlex *float64
@@ -144,10 +145,11 @@ func TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent(t *testing
 						SupportsServiceTier:         true,
 					}},
 					{Threshold: 200, Pricing: &pricing.CatalogModelPricing{
-						CatalogRules:            pricing.CatalogRules{FastMultiplier: newFloatForCatalogTest(4), FlexMultiplier: newFloatForCatalogTest(0.1)},
+						CatalogRules:            pricing.CatalogRules{FastMultiplier: newFloatForCatalogTest(4)},
 						InputCostPerToken:       8e-6,
 						OutputCostPerToken:      20e-6,
 						CacheReadInputTokenCost: 1e-6,
+						SupportsServiceTier:     true,
 					}},
 				},
 			}
@@ -158,19 +160,23 @@ func TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent(t *testing
 			rootPrices = append(rootPrices, expectedCatalogTokenQuotes("fast_", 2, rootValues)...)
 			firstIntervalPrices := append([]pricing.DefaultPriceValue(nil), rootPrices...)
 			if rootFlex != nil {
-				rootPrices = append(rootPrices, expectedCatalogTokenQuotes("flex_", 0.5, rootValues)...)
+				flexQuotes := expectedCatalogTokenQuotes("flex_", 0.5, rootValues)
+				rootPrices = append(rootPrices, flexQuotes...)
+				firstIntervalPrices = append(firstIntervalPrices, flexQuotes...)
 			}
 			rootPrices = append(rootPrices, pricing.DefaultPriceValue{Key: "max_reasoning", Value: newFloatForCatalogTest(1.5), Unit: "multiplier"})
-			if rootSupportsTier {
-				firstIntervalPrices = append(firstIntervalPrices, expectedCatalogTokenQuotes("flex_", 1, rootValues)...)
-			}
 			middleValues := []*float64{newFloatForCatalogTest(4), newFloatForCatalogTest(12), newFloatForCatalogTest(0), newFloatForCatalogTest(5), nil, newFloatForCatalogTest(4), newFloatForCatalogTest(9)}
 			middlePrices := expectedCatalogTokenQuotes("", 1, middleValues)
-			middlePrices = append(middlePrices, expectedCatalogTokenQuotes("fast_", 3, middleValues)...)
-			middlePrices = append(middlePrices, expectedCatalogTokenQuotes("flex_", 0.25, middleValues)...)
+			middlePrices = append(middlePrices, expectedCatalogTokenQuotes("fast_", 2, middleValues)...)
+			if rootFlex != nil {
+				middlePrices = append(middlePrices, expectedCatalogTokenQuotes("flex_", *rootFlex, middleValues)...)
+			}
 			lastValues := []*float64{newFloatForCatalogTest(8), newFloatForCatalogTest(20), newFloatForCatalogTest(1), nil, nil, newFloatForCatalogTest(8), nil}
 			lastPrices := expectedCatalogTokenQuotes("", 1, lastValues)
-			lastPrices = append(lastPrices, expectedCatalogTokenQuotes("fast_", 4, lastValues)...)
+			lastPrices = append(lastPrices, expectedCatalogTokenQuotes("fast_", 2, lastValues)...)
+			if rootFlex != nil {
+				lastPrices = append(lastPrices, expectedCatalogTokenQuotes("flex_", *rootFlex, lastValues)...)
+			}
 			assertCatalogTokenQuotes(t, rootPrices, row.Prices)
 			require.Len(t, row.ContextIntervals, 3)
 			for i, want := range [][]pricing.DefaultPriceValue{firstIntervalPrices, middlePrices, lastPrices} {
@@ -183,6 +189,19 @@ func TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent(t *testing
 					require.Nil(t, interval.MaxTokens)
 				}
 				assertCatalogTokenQuotes(t, want, interval.Prices)
+			}
+			base, err := pricing.ResolveModelPricing("custom", raw)
+			require.NoError(t, err)
+			if rootFlex != nil {
+				// The last band has no local multiplier. Charge an input above its
+				// threshold to compare the displayed discount with actual settlement.
+				const inputTokens = 201
+				cost := pricing.ComputeTokenBreakdown(base, pricing.UsageTokens{InputTokens: inputTokens}, 1, "flex", true)
+				for _, price := range row.ContextIntervals[2].Prices {
+					if price.Key == "flex_input" {
+						require.InDelta(t, cost.InputCost, *price.Value*inputTokens/1e6, 1e-14)
+					}
+				}
 			}
 			row.ContextIntervals[0].Prices[0].Key = "changed"
 			*row.ContextIntervals[0].Prices[0].Value = -1
@@ -273,3 +292,115 @@ func assertCatalogTokenQuotes(t *testing.T, expected, actual []pricing.DefaultPr
 // newFloatForCatalogTest returns separately allocated storage for a catalog
 // display amount.
 func newFloatForCatalogTest(value float64) *float64 { return &value }
+
+// TestDefaultPriceV2ServiceTierFlexVisibility verifies that v2 directory flex
+// rules emit flex_* quotes on flat models while priority-only interval models
+// omit flex_* quotes despite SupportsServiceTier being true.
+func TestDefaultPriceV2ServiceTierFlexVisibility(t *testing.T) {
+	flexFactor := 0.5
+	fastFactor := 2.0
+	ultrafastFactor := 4.0
+	catalog := defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
+		"flat-v2-flex": {
+			Source:              "models.dev",
+			InputCostPerToken:   1e-6,
+			OutputCostPerToken:  4e-6,
+			SupportsServiceTier: true,
+			CatalogRules: pricing.CatalogRules{
+				ServiceTierPrices: []pricing.CatalogServicePrice{{Tier: "flex", Factor: &flexFactor}},
+			},
+		},
+		"interval-v2-priority-only": {
+			Source:              "models.dev",
+			InputCostPerToken:   2e-6,
+			OutputCostPerToken:  8e-6,
+			SupportsServiceTier: true,
+			CatalogRules: pricing.CatalogRules{
+				ServiceTierPrices: []pricing.CatalogServicePrice{
+					{Tier: "priority", Factor: &fastFactor},
+					{Tier: "ultrafast", Factor: &ultrafastFactor},
+				},
+			},
+			ContextPrices: []pricing.CatalogContextPrice{
+				{
+					Threshold: 200000,
+					Pricing: &pricing.CatalogModelPricing{
+						Source:              "models.dev",
+						InputCostPerToken:   4e-6,
+						OutputCostPerToken:  16e-6,
+						SupportsServiceTier: true,
+						CatalogRules: pricing.CatalogRules{
+							ServiceTierPrices: []pricing.CatalogServicePrice{{Tier: "priority", Factor: &fastFactor}},
+						},
+					},
+				},
+			},
+		},
+	}}
+	calculator := NewCalculator(catalog, CalculatorOptions{})
+
+	flat := calculator.DefaultModelPrice("flat-v2-flex", "gemini", "token")
+	flatValues := make(map[string]float64)
+	for _, price := range flat.Prices {
+		if price.Value != nil {
+			flatValues[price.Key] = *price.Value
+		}
+	}
+	require.InDelta(t, 0.5, flatValues["flex_input"], 1e-12)
+	require.InDelta(t, 2.0, flatValues["flex_output"], 1e-12)
+	require.NotContains(t, flatValues, "fast_input")
+
+	intervalRow := calculator.DefaultModelPrice("interval-v2-priority-only", "openai", "token")
+	for _, price := range intervalRow.Prices {
+		require.NotContains(t, price.Key, "flex_")
+	}
+	require.Len(t, intervalRow.ContextIntervals, 2)
+	for _, interval := range intervalRow.ContextIntervals {
+		for _, price := range interval.Prices {
+			require.NotContains(t, price.Key, "flex_")
+		}
+	}
+}
+
+// TestDefaultAndMarketplaceQuotesShareDatedTierAvailability exercises both
+// sides of midnight in the rule's market timezone. Each quote must use its
+// calculator clock for tier availability and for all displayed amounts.
+func TestDefaultAndMarketplaceQuotesShareDatedTierAvailability(t *testing.T) {
+	const boundary = "2032-07-01"
+	catalog := defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
+		"dated": {
+			Source:             "models.dev",
+			InputCostPerToken:  2e-6,
+			OutputCostPerToken: 8e-6,
+			CatalogRules: pricing.CatalogRules{ServiceTierPrices: []pricing.CatalogServicePrice{
+				{Tier: "flex", Before: boundary, Zone: "America/Los_Angeles", Factor: new(0.5)},
+				{Tier: "priority", After: boundary, Zone: "America/Los_Angeles", Factor: new(2.0)},
+			}},
+		},
+	}}
+	midnight := time.Date(2032, 7, 1, 7, 0, 0, 0, time.UTC)
+	for _, at := range []time.Time{midnight.Add(-time.Second), midnight} {
+		calculator := NewCalculator(catalog, CalculatorOptions{Now: func() time.Time { return at }})
+		admin := calculator.DefaultModelPrice("dated", "openai", "token")
+		amounts := map[string]float64{}
+		for _, item := range admin.Prices {
+			if item.Value != nil {
+				amounts[item.Key] = *item.Value
+			}
+		}
+		market := NewPriceResolver(nil, calculator, nil, nil).PublicQuote(t.Context(),
+			PublicQuoteInput{PricingInput: PricingInput{Model: "dated"}, RateMultiplier: 1})
+		if at.Before(midnight) {
+			require.NotContains(t, amounts, "fast_input")
+			require.Equal(t, 1.0, amounts["flex_input"])
+			require.Zero(t, market.FastInputPricePerToken)
+			require.NotNil(t, market.Flex)
+			require.Equal(t, 1e-6, market.Flex.Input)
+		} else {
+			require.NotContains(t, amounts, "flex_input")
+			require.Equal(t, 4.0, amounts["fast_input"])
+			require.Nil(t, market.Flex)
+			require.Equal(t, 4e-6, market.FastInputPricePerToken)
+		}
+	}
+}

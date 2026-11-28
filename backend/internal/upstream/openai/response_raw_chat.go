@@ -452,13 +452,21 @@ func ReadRawChatConvertedBuffered(
 	originalModel, upstreamModel string,
 	reasoningEffort *string,
 	startTime time.Time,
-) (*CompatResponseResult, error) {
+) (result *CompatResponseResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("upstream response body is nil")
 	}
 	if exchange == nil {
 		return nil, errors.New("conversion exchange is nil")
 	}
+
+	reqCtx := convertedRequestContext(options.RequestContext, resp)
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(reqCtx, exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
 
 	requestID := resp.Header.Get("x-request-id")
 	errTypeDefault := defaultConvertedErrorType(options.DefaultErrorType, exchange.Info())
@@ -510,6 +518,13 @@ func ReadRawChatConvertedBuffered(
 		// Compatible Chat relays occasionally return text/event-stream framing on
 		// stream=false requests; fold non-heartbeat frames through exchange.Buffer.
 		buf := exchange.Buffer()
+		defer func() {
+			if err != nil {
+				// Commit accumulated sealer losses onto exchange when buffered SSE
+				// scanning aborts before an explicit buf.Close(nil) call.
+				_, _ = buf.Close(err)
+			}
+		}()
 		var usageAccumulator wire.UsageAccumulator
 		reader := sse.NewReaderLimit(bytes.NewReader(respBody), options.MaxFrameBytes)
 		sawDone := false
@@ -671,7 +686,7 @@ func ReadRawChatConvertedStreaming(
 	originalModel, upstreamModel string,
 	reasoningEffort *string,
 	startTime time.Time,
-) (*CompatResponseResult, error) {
+) (result *CompatResponseResult, err error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("upstream response body is nil")
 	}
@@ -679,6 +694,7 @@ func ReadRawChatConvertedStreaming(
 		return nil, errors.New("conversion exchange is nil")
 	}
 
+	reqCtx := convertedRequestContext(options.RequestContext, resp)
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, func(dst, src http.Header) {
 		if options.Headers != nil {
@@ -687,6 +703,19 @@ func ReadRawChatConvertedStreaming(
 	})
 
 	stream := exchange.Stream()
+	defer func() {
+		snap := upstream.FinalizeExchangeConversion(reqCtx, exchange)
+		if result != nil {
+			result.ProtocolConversion = snap
+		}
+	}()
+	defer func() {
+		if err != nil {
+			// Flush any unclosed stream sealer losses onto exchange before
+			// FinalizeExchangeConversion snapshots cumulative LossCounts.
+			_, _ = stream.Close(err)
+		}
+	}()
 	var modelObserver protocol.ResponseModelObserver
 	var usage wire.ForwardUsage
 	var usageAccumulator wire.UsageAccumulator

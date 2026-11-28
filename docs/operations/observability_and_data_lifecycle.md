@@ -46,6 +46,7 @@
 - 请求 ID 与别名：入口生成的 `request_id` 贯穿各类诊断记录，供应商与调用方 ID 存为外部别名，访问权限由认证主体与归属决定。`billing_key` 兼容历史资金去重值，界面展示 `request_id`，详见[请求 ID 与请求查询](request_lookup.md)。
 - 性能数据来源：`usage_logs.timings` 是使用记录性能的唯一持久化来源，完成任务冻结对应尝试观测并与 usage 一次写入，供列表、导出、TTFT/TPS 和聚合读取（不受 Ops 开关或访问日志采样影响），字段见 [HTTP 接口](../interfaces/http_api.md#response_errors)。
 - 请求摘要：`request_records` 保存请求起止时间、状态、上游尝试、完成结果及无 usage 请求的失败阶段计时（鉴权失败、准入拒绝、排队超时、连接失败）。A 失败后 B 产生 usage 时，A 留失败记录、B 经 usage 关联性能，摘要不复制完整成功快照。
+- 协议转换诊断：命中协议转换、工具降级或 `trc1:` 重放的请求在可空列 `usage_logs.protocol_conversion` 与尝试摘要中保存有界模式和 `LossKind` 计数，不含提示词或令牌原文，纯原生透传保持 `NULL` 且仅对管理员开放（详见[信息丢失上报](../architecture/protocol_conversion.md#loss_accounting)）。
 - 访问日志：`http.access` 保留状态、访问耗时、路由、大小、身份和错误上下文，不附加完整阶段快照；`ops_system_logs.extra` 不参与计时查询。
 - 写入语义：入队仅代表待处理，数据库回执才算确认写入。批写超时未返回时记为结果未知，详情查询后续通过 usage 关联确认。队列拒绝、任务异常和最终写失败仅保留诊断，不补建 usage 也不重做结算；进程崩溃或数据库持续不可用可能丢失尚未落库的内存观测。
 - 脱敏规则：凭据、Authorization、Cookie、refresh token、支付密钥、对象存储 secret、完整上游 body 与用户提示词均不直接落日志。上游错误仅透传安全字段，系统日志 sink 落库前再整理限长；审计脱敏覆盖提供商与支付敏感字段清单。

@@ -163,9 +163,9 @@ func TestFindUsagePerformanceUsesOneBatch(t *testing.T) {
 	second, err := json.Marshal(p)
 	require.NoError(t, err)
 	ids := []string{"first", "second"}
-	rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings", "request_source", "system_usage", "provider_cost"}).
-		AddRow(1, "first", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, first, "user", nil, 0.5).
-		AddRow(2, "second", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, second, "user", nil, 0.5)
+	rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings", "request_source", "system_usage", "provider_cost", "protocol_conversion"}).
+		AddRow(1, "first", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, first, "user", nil, 0.5, nil).
+		AddRow(2, "second", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, second, "user", nil, 0.5, nil)
 	mock.ExpectQuery("WITH selected_usage AS MATERIALIZED").WithArgs(pq.Array(ids), int64(101), true, "first", true).WillReturnRows(rows)
 	result := []requestlog.Detail{
 		{RequestRecord: telemetry.RequestRecord{RequestID: "first", DurationMs: 3000}},
@@ -192,15 +192,19 @@ func TestRequestUsageRestrictsProviderCost(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 		ids := []string{"cost-visibility"}
-		rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings", "request_source", "system_usage", "provider_cost"}).AddRow(1, ids[0], time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, nil, "user", nil, 0.25)
+		convJSON := []byte(`{"mode":"native_replay","client_protocol":"anthropic_messages","upstream_protocol":"anthropic_messages","dialect":"anthropic","replay_scheme":"anthropic","loss_counts":{"replay_token_dropped":1}}`)
+		rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings", "request_source", "system_usage", "provider_cost", "protocol_conversion"}).AddRow(1, ids[0], time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, nil, "user", nil, 0.25, convJSON)
 		mock.ExpectQuery("WITH selected_usage AS MATERIALIZED").WithArgs(pq.Array(ids), int64(101), admin, ids[0], true).WillReturnRows(rows)
 		result := []requestlog.Detail{{RequestRecord: telemetry.RequestRecord{RequestID: ids[0]}}}
 		require.NoError(t, NewStore(db).findUsage(t.Context(), ids, ids[0], 101, admin, true, &result, map[string]int{ids[0]: 0}))
 		require.NoError(t, mock.ExpectationsWereMet())
 		if admin {
 			require.NotNil(t, result[0].Usage[0].ProviderCost)
+			require.NotNil(t, result[0].Usage[0].ProtocolConversion)
+			require.Equal(t, "native_replay", result[0].Usage[0].ProtocolConversion.Mode)
 		} else {
 			require.Nil(t, result[0].Usage[0].ProviderCost)
+			require.Nil(t, result[0].Usage[0].ProtocolConversion)
 		}
 	}
 }

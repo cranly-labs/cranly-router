@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"io"
 	"net/http"
 	"testing"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 )
 
 // TestFinishRetainsCompletedDisconnectDrain distinguishes a client write
@@ -63,4 +67,69 @@ func TestFinishRecordsUntimedMediaOutcome(t *testing.T) {
 		require.Equal(t, 12, result.Usage.InputTokens)
 		require.Equal(t, 3, result.Usage.OutputTokens)
 	}
+}
+
+// TestProtocolConversionHelpers_ObserveFinalizeAndZeroFalsePositives verifies
+// that ExchangeConversion, FinalizeExchangeConversion, ObserveToolAdaptedConversion,
+// ObserveNativeReplayConversion, and AttemptResult.Finish propagate bounded
+// diagnostics while suppressing plain-function inheritance and unapplied replays.
+func TestProtocolConversionHelpers_ObserveFinalizeAndZeroFalsePositives(t *testing.T) {
+	ctx := telemetry.WithRequestProvider(context.Background(), 42, "X-Request-ID")
+
+	// Plain-function LoweredTools without restorations, namespaces, or losses must return nil.
+	plainMap := &convert.ToolMap{
+		LoweredTools: []jsontext.Value{jsontext.Value(`{"type":"function","name":"read_file"}`)},
+	}
+	require.Nil(t, ObserveToolAdaptedConversion(
+		ctx,
+		protocol.ProtocolResponsesWebSocket,
+		protocol.ProtocolOpenAIResponses,
+		convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI},
+		plainMap,
+		nil,
+	))
+	require.Nil(t, ObserveNativeReplayConversion(
+		ctx,
+		convert.Route{
+			Client:   protocol.ProtocolOpenAIResponses,
+			Upstream: protocol.ProtocolOpenAIResponses,
+			Dialect:  convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI},
+		},
+		nil,
+		false,
+	))
+	require.Nil(t, telemetry.ProtocolConversionFromContext(ctx))
+
+	// Native replay + tool adaptation on the same attempt merges into tool_adapted.
+	ObserveNativeReplayConversion(
+		ctx,
+		convert.Route{
+			Client:   protocol.ProtocolOpenAIResponses,
+			Upstream: protocol.ProtocolOpenAIResponses,
+			Dialect:  convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI},
+		},
+		[]ir.Loss{{Kind: ir.LossReplayTokenDropped}},
+		true,
+	)
+	_, customMap, adaptLosses, err := convert.AdaptResponsesTools(
+		[]byte(`{"model":"gpt-5.4","tools":[{"type":"custom","name":"apply_patch","format":{"type":"text"}}],"input":"hi"}`),
+		convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI, Tools: ir.ToolSupportFunction},
+		nil,
+	)
+	require.NoError(t, err)
+	ObserveToolAdaptedConversion(
+		ctx,
+		protocol.ProtocolOpenAIResponses,
+		protocol.ProtocolOpenAIResponses,
+		convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI},
+		customMap,
+		adaptLosses,
+	)
+
+	var res AttemptResult
+	res.Finish(ctx, nil)
+	require.NotNil(t, res.ProtocolConversion)
+	require.Equal(t, telemetry.ConversionModeToolAdapted, res.ProtocolConversion.Mode)
+	require.Equal(t, 1, res.ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+	require.Equal(t, 1, res.ProtocolConversion.LossCounts[string(ir.LossToolLowered)])
 }

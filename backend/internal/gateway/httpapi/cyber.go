@@ -247,12 +247,18 @@ func (h *CyberHandler) RecordPolicy(c *gin.Context, in CyberPolicyCall) bool {
 	return true
 }
 
-// Meta captures scalar request and provider observations for cyber Ops work.
-// Callers supply a request-bearing context. The current API-key user ID is
-// recorded as provided, and GroupID receives a copied pointer; warning identity
-// is resolved independently by the moderation input builder.
+// Meta captures scalar request, committed HTTP status, and provider
+// observations for cyber Ops work. Callers supply a request-bearing context.
+// ClientStatus is recorded only for non-WebSocket HTTP writers that have
+// committed headers. The current API-key user ID is recorded as provided,
+// and GroupID receives a copied pointer.
 func (h *CyberHandler) Meta(c *gin.Context, key *apikey.APIKey, provider *moderationflow.Provider, model, platform string, stream bool, blockKey string) moderationflow.OpsMeta {
 	meta := moderationflow.OpsMeta{RequestID: telemetry.RequestIDValue(c.Request.Context()), ClientRequestID: telemetry.RequestIDValue(c.Request.Context()), Platform: platform, Model: strings.TrimSpace(model), Stream: stream, InboundEndpoint: h.endpoints.Inbound(c), UpstreamEndpoint: h.backend.UpstreamEndpoint(c, platform), UserAgent: c.GetHeader("User-Agent"), ClientIP: clientip.GetClientIP(c), CreatedAt: time.Now(), SessionBlockKey: blockKey}
+	if c.Writer != nil && GetOpenAIClientTransport(c) != OpenAIClientTransportWS && c.Writer.Written() {
+		if status := c.Writer.Status(); status >= http.StatusOK {
+			meta.ClientStatus = status
+		}
+	}
 	if c.Request != nil && c.Request.URL != nil {
 		meta.RequestPath = c.Request.URL.Path
 	}

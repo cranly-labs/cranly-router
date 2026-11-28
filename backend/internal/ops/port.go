@@ -301,9 +301,12 @@ type OpsInsertErrorLogInput struct {
 	ErrorType string // normalized diagnostic error category
 	Severity  string // captured diagnostic severity label
 	// StatusCode holds captured final-client status or a logical stream failure
-	// chosen by the producer. PostgreSQL encodes zero as NULL; displayed upstream
-	// status is selected separately.
-	StatusCode int // captured final or logical status
+	// chosen by the producer for SLA and admission rules. ClientStatusCode
+	// separately records the committed HTTP wire status returned to the client
+	// when positive. Nil or nonpositive values leave the client HTTP status
+	// unknown for observations submitted by this writer.
+	StatusCode       int  // captured logical or final failure status
+	ClientStatusCode *int // optional committed client HTTP wire status
 	// IsBusinessLimited is the captured exclusion signal. Query-time ignored
 	// statuses and upstream context add eligibility rules, so false does not by
 	// itself establish SLA counting.

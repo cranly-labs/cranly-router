@@ -19,7 +19,6 @@ export const defaultBillingSettings = (): BillingSettings => ({
   peak_end: '',
   peak_rate_multiplier: 1,
   long_context_pricing_enabled: true,
-  free_openai_fast: false,
   batch_image_discount_multiplier: 0.5,
   batch_image_hold_multiplier: 0.6,
   web_search_price_per_call: null,

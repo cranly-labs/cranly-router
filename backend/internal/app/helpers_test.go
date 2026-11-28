@@ -5872,7 +5872,12 @@ func newProtocolLabRouter(tb testing.TB, opts labOptions) *protocolLabRouter {
 	router := gin.New()
 	if opts.OnTelemetry != nil {
 		router.Use(func(c *gin.Context) {
-			ctx := infratelemetry.WithRequestCapture(c.Request.Context(), infratelemetry.RequestRecord{State: "completed"}, opts.OnTelemetry)
+			reqID := infratelemetry.RequestIDValue(c.Request.Context())
+			if reqID == "" {
+				reqID = infratelemetry.NewRequestID()
+			}
+			ctx := context.WithValue(c.Request.Context(), infratelemetry.RequestID, reqID)
+			ctx = infratelemetry.WithRequestCapture(ctx, infratelemetry.RequestRecord{RequestID: reqID, State: "completed"}, opts.OnTelemetry)
 			c.Request = c.Request.WithContext(ctx)
 			c.Next()
 		})
@@ -6417,6 +6422,7 @@ func cloneLabUsageLog(row usage.UsageLog) usage.UsageLog {
 		anom.Reported12h = cloneLabValuePtr(row.CacheWriteAnomaly.Reported12h)
 		out.CacheWriteAnomaly = &anom
 	}
+	out.ProtocolConversion = row.ProtocolConversion.Clone()
 	if row.BillingAllocations != nil {
 		allocs := make([]billing.BillingAllocation, len(row.BillingAllocations))
 		for i, a := range row.BillingAllocations {

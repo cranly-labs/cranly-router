@@ -109,6 +109,14 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 			zap.Int("loss_count", len(losses)),
 		)
 	}
+	upstream.ObserveToolAdaptedConversion(
+		ctx,
+		protocol.ProtocolOpenAIResponses,
+		protocol.ProtocolOpenAIResponses,
+		dialect,
+		clientToolMap,
+		losses,
+	)
 	p.ClientToolMap(clientToolMap)
 	// Emulate Compact with a Responses summary turn and wrap the result as a compaction item.
 	if in.Compact {

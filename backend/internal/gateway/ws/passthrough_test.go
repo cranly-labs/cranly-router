@@ -11,6 +11,8 @@ import (
 	"github.com/tidwall/gjson"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/convert"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 )
@@ -175,6 +177,12 @@ func (*passthroughReplayTestPort) DialFailure(_ context.Context, _ string, _ Dia
 func (p *passthroughReplayTestPort) RunRelay(in RelayInput) (RelayResult, *RelayExit) {
 	completed := []byte(`{"type":"response.completed","response":{"id":"resp_t","status":"completed"}}`)
 	completeActive := func() {
+		if in.Options.OnTurnComplete != nil {
+			in.Options.OnTurnComplete(RelayTurnResult{
+				RequestID:         "resp_t",
+				TerminalEventType: "response.completed",
+			})
+		}
 		if in.Options.BeforeClientWrite != nil {
 			in.Options.BeforeClientWrite(TextFrame, completed)
 		}
@@ -344,4 +352,53 @@ func TestPassthroughSession_PrepareNativeReplay(t *testing.T) {
 	require.False(t, gjson.GetBytes(portCross.upstream.writes[0], "input.1.id").Exists())
 	require.Equal(t, sessionUpdate, portCross.relayReadPayloads[0])
 	require.Equal(t, "message", gjson.GetBytes(portCross.relayReadPayloads[1], "input.1.type").String())
+
+	// 4. Per-turn ContextForTurn captures native_replay on each turn's scope rather than the connection context.
+	connCtx := telemetry.WithRequestProvider(context.Background(), 42, "X-Request-ID")
+	turnContexts := map[int]context.Context{
+		1: telemetry.WithProtocolConversionScope(context.Background()),
+		2: telemetry.WithProtocolConversionScope(context.Background()),
+	}
+	var capturedTurns []TurnCapture
+	upHooked := &passthroughReplayUpstreamConn{}
+	portHooked := &passthroughReplayTestPort{
+		dialect:  convert.Dialect{Name: "openai", ReplayScheme: ir.SchemeOpenAI, ProviderID: 42},
+		upstream: upHooked,
+	}
+	sessHooked := PassthroughSession{
+		Port: portHooked,
+		Options: PassthroughOptions{
+			ProviderID:           42,
+			WriteTimeout:         time.Second,
+			IdleTimeout:          time.Minute,
+			InterTurnIdleTimeout: time.Minute,
+		},
+		Hooks: &PassthroughHooks{
+			ContextForTurn: func(turn int) context.Context {
+				return turnContexts[turn]
+			},
+			IngressHooks: &IngressHooks{
+				AfterTurn: func(c TurnCapture) {
+					capturedTurns = append(capturedTurns, c)
+				},
+			},
+		},
+	}
+	require.NoError(t, sessHooked.Run(connCtx, &passthroughReplayClientSocket{frames: [][]byte{sessionUpdate, turn2Carrier}}, turn1Carrier))
+	require.Nil(t, telemetry.ProtocolConversionFromContext(connCtx), "connection context must remain untouched when ContextForTurn is supplied")
+	require.Len(t, capturedTurns, 2)
+
+	turn1Conv := telemetry.ProtocolConversionFromContext(turnContexts[1])
+	require.NotNil(t, turn1Conv)
+	require.Equal(t, telemetry.ConversionModeNativeReplay, turn1Conv.Mode)
+	require.Equal(t, string(protocol.ProtocolResponsesWebSocket), turn1Conv.ClientProtocol)
+	require.Equal(t, string(protocol.ProtocolResponsesWebSocket), turn1Conv.UpstreamProtocol)
+	require.Empty(t, turn1Conv.LossCounts)
+	require.Equal(t, turn1Conv, capturedTurns[0].Result.ProtocolConversion)
+
+	turn2Conv := telemetry.ProtocolConversionFromContext(turnContexts[2])
+	require.NotNil(t, turn2Conv)
+	require.Equal(t, telemetry.ConversionModeNativeReplay, turn2Conv.Mode)
+	require.Equal(t, map[string]int{string(ir.LossReplayTokenDropped): 1}, turn2Conv.LossCounts)
+	require.Equal(t, turn2Conv, capturedTurns[1].Result.ProtocolConversion)
 }

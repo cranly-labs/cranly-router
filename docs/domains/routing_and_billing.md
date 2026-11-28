@@ -91,12 +91,10 @@
 
 ### Fast、推理档位与提供商观测
 
-Fast 档位与 `free_openai_fast`：
+Fast 与服务档位结算：
 
 - 分组通过 `openai_fast_policy` 配置跟随请求、强制 Fast、强制 Ultra Fast 或关闭加速；全局、分组与 Key 级完整优先级及旧布尔字段兼容见 [Fast 与 Ultra Fast 策略](../interfaces/openai_upstream.md#openai_fast_policy)。
 - OpenAI 计费档位从低到高为 Flex、Standard、Fast、Ultrafast。上游明确报告更低档位时按该档位结算；Codex OAuth 返回的 `default` 可能仅为回显，沿用转发档位。
-- 价格配置开启 `free_openai_fast` 且最终命中 OpenAI 提供商 `priority`/`fast` 档位时，上游仍发 Fast，用户扣款按同规则以 Standard 重算：Usage Log `total_cost`、提供商统计与额度保留 Fast 成本，`actual_cost`、余额/订阅分配和 Key 配额用 Standard 价。
-- 缺 Standard 价时按缺价零成本流程记录且上游保持 Fast；其他平台、普通档位和不可信认证上下文忽略此开关。
 
 推理档位上限与映射：
 
@@ -152,7 +150,7 @@ Fast 档位与 `free_openai_fast`：
 
 1. 先查分组关联的共享价格配置（配置级设置无论是否命中模型条目都生效）。
 2. 未命中、未关联配置或配置已停用/删除时，回退统一默认设置与统一模型目录定价。
-3. 默认配置值：内置长上下文开启、高峰关闭、`free_openai_fast` 关闭、批量图片折扣 `0.5`、预扣倍率 `0.6`；可空搜索与语音单价读取目录 `_billing_defaults`（手填 0 为免费）。
+3. 默认配置值：内置长上下文开启、高峰关闭、批量图片折扣 `0.5`、预扣倍率 `0.6`；可空搜索与语音单价读取目录 `_billing_defaults`（手填 0 为免费）。
 
 `reference_model` 与单价继承：
 

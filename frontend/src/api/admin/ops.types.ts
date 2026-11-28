@@ -930,7 +930,10 @@ export interface OpsErrorLog {
   error_source: 'client_request' | 'upstream_http' | 'gateway' | string // Recorded error source.
 
   severity: OpsSeverity // Recorded severity level.
-  status_code: number // HTTP status code.
+  status_code: number // Client HTTP status code.
+  client_status_code?: number | null // Recorded wire HTTP status code.
+  logical_status_code?: number // Logical SLA classification status code.
+  upstream_status_code?: number | null // Upstream HTTP status code.
   platform: string // Provider platform identifier.
   model: string // Model identifier value.
 
@@ -976,7 +979,6 @@ export interface OpsErrorLog {
 export interface OpsErrorDetail extends OpsErrorLog {
   error_body: string // Recorded error body.
 
-  upstream_status_code?: number | null // Upstream status code.
   upstream_error_message?: string // Upstream error message.
   upstream_error_detail?: string // Upstream error detail.
   upstream_errors?: string // Recorded upstream errors.
@@ -1042,12 +1044,14 @@ export type OpsErrorListQueryParams = {
   view?: OpsErrorListView // Error visibility selection.
 
   q?: string // Free-text search query.
-  status_codes?: string // Recorded status codes.
-  status_codes_other?: string // Status codes other.
+  status_codes?: string // Client HTTP status codes.
+  status_codes_other?: string // Exclude common client statuses.
+  upstream_status_codes?: string // Upstream HTTP status codes.
+  upstream_status_codes_other?: string // Exclude common upstream statuses.
 
   /**
    * Server sort column is restricted to the error-log ordering allowlist,
-   * including created_at, model and status_code.
+   * including created_at, model, status_code and upstream_status_code.
    */
   sort_by?: string // Requested sort column.
   sort_order?: 'asc' | 'desc' // Requested ordering direction.

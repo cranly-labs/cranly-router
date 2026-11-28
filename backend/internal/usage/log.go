@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
@@ -22,6 +23,10 @@ import (
 // cache-TTL detail counters remain separately available for display and
 // pricing analysis.
 
+// ProtocolConversion aliases bounded protocol-conversion diagnostic metadata
+// for administrator usage responses and repository persistence.
+type ProtocolConversion = telemetry.ProtocolConversion
+
 // UsageLog is the completed-request analysis row with attribution, measured
 // usage, cost and loaded display relations.
 type UsageLog struct {
@@ -30,6 +35,10 @@ type UsageLog struct {
 	// Timings owns the frozen observations of the exchange producing this usage.
 	// Completion clones it before asynchronous processing and never mutates its values.
 	Timings *timing.Performance
+	// ProtocolConversion retains bounded conversion mode, route, dialect, replay
+	// scheme, and aggregated LossKind counts for administrator diagnostics; nil on
+	// lossless native passthrough rows and omitted from regular user responses.
+	ProtocolConversion *ProtocolConversion
 
 	ID int64 // usage row identifier
 	// UserID records the acting member, BillingUserID the payer and TeamID

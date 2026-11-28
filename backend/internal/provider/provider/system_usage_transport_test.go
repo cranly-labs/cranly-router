@@ -48,6 +48,7 @@ func TestSystemUsageTransportProtocols(t *testing.T) {
 		name     string // fixture scenario identity
 		platform string // provider protocol family
 		path     string // model endpoint path
+		endpoint string // expected canonical upstream endpoint label
 		body     string // local upstream response
 		stream   bool   // request streaming flag
 		input    int    // expected uncached input tokens
@@ -55,27 +56,35 @@ func TestSystemUsageTransportProtocols(t *testing.T) {
 		cache    int    // expected reused input tokens
 		state    string // expected usage completeness
 	}{
-		{"responses", "openai", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\n", true, 8, 3, 4, "complete"},
-		{"chat trailer", "openai", "/v1/chat/completions", "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n", true, 12, 3, 0, "complete"},
-		{"messages", "anthropic", "/v1/messages", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":0,\"cache_read_input_tokens\":4}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\ndata: {\"type\":\"message_stop\"}\n\n", true, 8, 3, 4, "complete"},
-		{"gemini", "gemini", "/v1/models/test:streamGenerateContent", "data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1}}\n\n", true, 8, 3, 4, "complete"},
-		{"messages fast", "anthropic", "/v1/messages", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":3,\"speed\":\"fast\"}}}\n\ndata: {\"type\":\"message_stop\"}\n\n", true, 8, 3, 0, "complete"},
-		{"bedrock", "anthropic", "/model/test/invoke", `{"type":"message","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":8,"output_tokens":3,"cache_read_input_tokens":4}}`, false, 8, 3, 4, "complete"},
-		{"systemone", "jev", "/v1/systemone", `{"model":"test","answers":{},"usage":{"input_tokens":8,"output_tokens":3}}`, false, 8, 3, 0, "complete"},
-		{"image", "openai", "/v1/images/generations", `{"data":[{"b64_json":"fixture"}],"usage":{"input_tokens":8,"output_tokens":3,"output_tokens_details":{"image_tokens":3}}}`, false, 8, 3, 0, "complete"},
-		{"compact", "openai", "/v1/responses/compact", `{"output":[],"usage":{"input_tokens":8,"output_tokens":3}}`, false, 8, 3, 0, "complete"},
-		{"negative usage", "openai", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":-1,\"output_tokens\":3}}}\n\n", true, 0, 0, 0, "missing"},
-		{"partial", "anthropic", "/v1/messages", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\n", true, 8, 0, 0, "partial"},
-		{"vertex messages", "anthropic", "/v1/projects/test/locations/global/publishers/anthropic/models/test:streamRawPredict", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":3}}}\n\ndata: {\"type\":\"message_stop\"}\n\n", true, 8, 3, 0, "complete"},
-		{"qoder", "qoder", "/v1/chat/completions", "data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":8,\\\"completion_tokens\\\":3}}\"}\n\ndata: {\"body\":\"[DONE]\"}\n\n", true, 8, 3, 0, "complete"},
-		{"untrusted metadata", "openai", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"model\":{\"text\":\"confidential-marker\"},\"service_tier\":{\"text\":\"confidential-marker\"},\"usage\":{\"input_tokens\":8,\"output_tokens\":3}}}\n\n", true, 8, 3, 0, "complete"},
-		{"json error for stream", "openai", "/v1/responses", `{"error":{"message":"rejected"},"usage":{"input_tokens":8,"output_tokens":0}}`, true, 8, 0, 0, "complete"},
-		{"missing", "openai", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{}}\n\n", true, 0, 0, 0, "missing"},
-		{"explicit zero", "openai", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n", true, 0, 0, 0, "complete"},
-		{"chat cache write", "openai", "/v1/chat/completions", `{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"cache_creation_input_tokens":4}}`, false, 8, 3, 0, "complete"},
-		{"responses cache write", "openai", "/v1/responses", `{"output":[],"usage":{"input_tokens":12,"output_tokens":3,"cache_creation_input_tokens":4}}`, false, 8, 3, 0, "complete"},
-		{"messages error cache", "anthropic", "/v1/messages", `{"error":{},"usage":{"input_tokens":8,"output_tokens":3,"cache_read_input_tokens":4}}`, false, 8, 3, 4, "complete"},
-		{"sparse chat usage", "openai", "/v1/chat/completions", "data: {\"usage\":{\"prompt_tokens\":12,\"prompt_tokens_details\":{\"cached_tokens\":4}}}\n\ndata: {\"usage\":{\"completion_tokens\":3}}\n\ndata: [DONE]\n\n", true, 8, 3, 4, "complete"},
+		{"responses", "openai", "/v1/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\n", true, 8, 3, 4, "complete"},
+		{"responses behind models-proxy", "openai", "/v1beta/models-proxy/v1/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\n", true, 8, 3, 4, "complete"},
+		{"responses under model path", "openai", "/v1beta/models/local/v1/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\n", true, 8, 3, 4, "complete"},
+		{"chat trailer", "openai", "/v1/chat/completions", "/v1/chat/completions", "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n", true, 12, 3, 0, "complete"},
+		{"messages", "anthropic", "/v1/messages", "/v1/messages", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":0,\"cache_read_input_tokens\":4}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\ndata: {\"type\":\"message_stop\"}\n\n", true, 8, 3, 4, "complete"},
+		{"gemini", "gemini", "/v1/models/test:streamGenerateContent", "/v1beta/models", "data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1}}\n\n", true, 8, 3, 4, "complete"},
+		{"gemini v1beta", "gemini", "/v1beta/models/gemini-4-hydrogen:streamGenerateContent", "/v1beta/models", "data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1}}\n\n", true, 8, 3, 4, "complete"},
+		{"vertex gemini", "gemini", "/v1/projects/proj/locations/global/publishers/google/models/test:streamGenerateContent", "/v1beta/models", "data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1}}\n\n", true, 8, 3, 4, "complete"},
+		{"vertex gemini project messages-prod", "gemini", "/v1/projects/messages-prod/locations/us-central1/publishers/google/models/gemini-2.5-pro:streamGenerateContent", "/v1beta/models", "data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1}}\n\n", true, 8, 3, 4, "complete"},
+		{"gemini code assist", "gemini", "/v1internal:streamGenerateContent", "/v1beta/models", "data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1}}}\n\n", true, 8, 3, 4, "complete"},
+		{"antigravity", "antigravity", "/v1internal:streamGenerateContent", "/v1internal:streamGenerateContent", "data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1}}}\n\n", true, 8, 3, 4, "complete"},
+		{"messages fast", "anthropic", "/v1/messages", "/v1/messages", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":3,\"speed\":\"fast\"}}}\n\ndata: {\"type\":\"message_stop\"}\n\n", true, 8, 3, 0, "complete"},
+		{"bedrock", "anthropic", "/model/test/invoke", "/v1/messages", `{"type":"message","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":8,"output_tokens":3,"cache_read_input_tokens":4}}`, false, 8, 3, 4, "complete"},
+		{"systemone", "jev", "/v1/systemone", "/v1/systemone", `{"model":"test","answers":{},"usage":{"input_tokens":8,"output_tokens":3}}`, false, 8, 3, 0, "complete"},
+		{"image", "openai", "/v1/images/generations", "/v1/images/generations", `{"data":[{"b64_json":"fixture"}],"usage":{"input_tokens":8,"output_tokens":3,"output_tokens_details":{"image_tokens":3}}}`, false, 8, 3, 0, "complete"},
+		{"compact", "openai", "/v1/responses/compact", "/v1/responses/compact", `{"output":[],"usage":{"input_tokens":8,"output_tokens":3}}`, false, 8, 3, 0, "complete"},
+		{"codex responses", "openai", "/backend-api/codex/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\n", true, 8, 3, 4, "complete"},
+		{"negative usage", "openai", "/v1/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":-1,\"output_tokens\":3}}}\n\n", true, 0, 0, 0, "missing"},
+		{"partial", "anthropic", "/v1/messages", "/v1/messages", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\n", true, 8, 0, 0, "partial"},
+		{"vertex messages", "anthropic", "/v1/projects/test/locations/global/publishers/anthropic/models/test:streamRawPredict", "/v1/messages", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":3}}}\n\ndata: {\"type\":\"message_stop\"}\n\n", true, 8, 3, 0, "complete"},
+		{"qoder", "qoder", "/v1/chat/completions", "/v1/chat/completions", "data: {\"body\":\"{\\\"usage\\\":{\\\"prompt_tokens\\\":8,\\\"completion_tokens\\\":3}}\"}\n\ndata: {\"body\":\"[DONE]\"}\n\n", true, 8, 3, 0, "complete"},
+		{"untrusted metadata", "openai", "/v1/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"model\":{\"text\":\"confidential-marker\"},\"service_tier\":{\"text\":\"confidential-marker\"},\"usage\":{\"input_tokens\":8,\"output_tokens\":3}}}\n\n", true, 8, 3, 0, "complete"},
+		{"json error for stream", "openai", "/v1/responses", "/v1/responses", `{"error":{"message":"rejected"},"usage":{"input_tokens":8,"output_tokens":0}}`, true, 8, 0, 0, "complete"},
+		{"missing", "openai", "/v1/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{}}\n\n", true, 0, 0, 0, "missing"},
+		{"explicit zero", "openai", "/v1/responses", "/v1/responses", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n", true, 0, 0, 0, "complete"},
+		{"chat cache write", "openai", "/v1/chat/completions", "/v1/chat/completions", `{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"cache_creation_input_tokens":4}}`, false, 8, 3, 0, "complete"},
+		{"responses cache write", "openai", "/v1/responses", "/v1/responses", `{"output":[],"usage":{"input_tokens":12,"output_tokens":3,"cache_creation_input_tokens":4}}`, false, 8, 3, 0, "complete"},
+		{"messages error cache", "anthropic", "/v1/messages", "/v1/messages", `{"error":{},"usage":{"input_tokens":8,"output_tokens":3,"cache_read_input_tokens":4}}`, false, 8, 3, 4, "complete"},
+		{"sparse chat usage", "openai", "/v1/chat/completions", "/v1/chat/completions", "data: {\"usage\":{\"prompt_tokens\":12,\"prompt_tokens_details\":{\"cached_tokens\":4}}}\n\ndata: {\"usage\":{\"completion_tokens\":3}}\n\ndata: [DONE]\n\n", true, 8, 3, 4, "complete"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -114,6 +123,8 @@ func TestSystemUsageTransportProtocols(t *testing.T) {
 				require.Equal(t, "requested-alias", row.Model)
 				require.Equal(t, "requested-alias", row.RequestedModel)
 				require.Equal(t, "test", *row.UpstreamModel)
+				require.NotNil(t, row.UpstreamEndpoint)
+				require.Equal(t, test.endpoint, *row.UpstreamEndpoint)
 				require.Equal(t, "group-alias", row.SystemUsage.MappedModel)
 				require.Equal(t, test.input, row.InputTokens)
 				require.Equal(t, test.output, row.OutputTokens)
@@ -212,4 +223,12 @@ func TestSystemUsageRecordingUsesLifecycle(t *testing.T) {
 	operator = 99
 	pending()
 	require.Equal(t, 1, writes)
+}
+
+// TestNormalizeSystemUsageEndpointModelPathBoundaries checks the fallback for
+// model resources without a recognized action suffix. Similar proxy names must
+// retain their diagnostic path unless a known operation supplies a label.
+func TestNormalizeSystemUsageEndpointModelPathBoundaries(t *testing.T) {
+	require.Equal(t, "/v1beta/models", normalizeSystemUsageEndpoint("/tenant/v1beta/models/local", "gemini"))
+	require.Equal(t, "/tenant/v1beta/models-proxy", normalizeSystemUsageEndpoint("/tenant/v1beta/models-proxy", "openai"))
 }

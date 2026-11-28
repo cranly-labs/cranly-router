@@ -1850,6 +1850,16 @@ func CacheWriteAnomalyNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldCacheWriteAnomaly))
 }
 
+// ProtocolConversionIsNil applies the IsNil predicate on the "protocol_conversion" field.
+func ProtocolConversionIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldProtocolConversion))
+}
+
+// ProtocolConversionNotNil applies the NotNil predicate on the "protocol_conversion" field.
+func ProtocolConversionNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldProtocolConversion))
+}
+
 // InputCostEQ applies the EQ predicate on the "input_cost" field.
 func InputCostEQ(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldInputCost, v))

@@ -24,6 +24,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/errorpolicy"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/ir"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/sse"
@@ -1408,6 +1409,7 @@ func TestProtocolLabIRMessagesUpstreamMatrix(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				var mu sync.Mutex
 				var bodies [][]byte
+				var record telemetry.RequestRecord
 				upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					raw, readErr := io.ReadAll(r.Body)
 					if readErr != nil {
@@ -1442,6 +1444,11 @@ func TestProtocolLabIRMessagesUpstreamMatrix(t *testing.T) {
 				}
 				lab := newProtocolLabRouter(t, labOptions{
 					Providers: []labProvider{prov},
+					OnTelemetry: func(snapshot telemetry.RequestRecord) {
+						mu.Lock()
+						defer mu.Unlock()
+						record = snapshot
+					},
 				})
 				gwSrv := httptest.NewServer(lab)
 				defer gwSrv.Close()
@@ -1457,7 +1464,17 @@ func TestProtocolLabIRMessagesUpstreamMatrix(t *testing.T) {
 				require.Equal(t, "EqQBCrossModelSig", gjson.GetBytes(captured[0], "messages.1.content.0.signature").String())
 				require.Equal(t, "tool_use", gjson.GetBytes(captured[1], "messages.1.content.0.type").String())
 				require.Equal(t, "9007199254740993", gjson.GetBytes(captured[1], "messages.1.content.0.input.id").Raw)
-				require.Len(t, lab.UsageLogs(), 1)
+				logs := lab.UsageLogs()
+				require.Len(t, logs, 1)
+				mu.Lock()
+				final := record
+				mu.Unlock()
+				require.Len(t, final.Attempts, 2)
+				require.NotNil(t, final.Attempts[0].ProtocolConversion)
+				require.Zero(t, final.Attempts[0].ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+				require.NotNil(t, final.Attempts[1].ProtocolConversion)
+				require.Equal(t, 1, final.Attempts[1].ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+				require.Equal(t, final.Attempts[1].ProtocolConversion, logs[0].ProtocolConversion)
 			})
 		}
 	})
@@ -1996,6 +2013,10 @@ func TestProtocolLabIRGrokChatResponsesMatrix(t *testing.T) {
 		require.Len(t, p301H.Requests(), 4)
 		require.Contains(t, string(p301H.Requests()[2].Body), "xai_turn1_blob_p301")
 		require.NotContains(t, string(p301H.Requests()[3].Body), "xai_turn1_blob_p301")
+		logs := lab.UsageLogs()
+		require.NotEmpty(t, logs)
+		require.NotNil(t, logs[len(logs)-1].ProtocolConversion)
+		require.Positive(t, logs[len(logs)-1].ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
 		require.Contains(t, string(p301H.Requests()[3].Body), `\"order_id\":9007199254740993`)
 
 		// Switching to ProviderID 302 drops ProviderID 301's xai carrier locally.
@@ -2048,6 +2069,10 @@ func TestProtocolLabIRGrokChatResponsesMatrix(t *testing.T) {
 		require.Len(t, p302RetryH.Requests(), 2)
 		require.Contains(t, string(p302RetryH.Requests()[0].Body), "xai_cursor_stale_302")
 		require.NotContains(t, string(p302RetryH.Requests()[1].Body), "xai_cursor_stale_302")
+		logs = lab.UsageLogs()
+		require.NotEmpty(t, logs)
+		require.NotNil(t, logs[len(logs)-1].ProtocolConversion)
+		require.Positive(t, logs[len(logs)-1].ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
 		require.Contains(t, string(p302RetryH.Requests()[1].Body), `\"order_id\":9007199254740993`)
 	})
 
@@ -7062,6 +7087,7 @@ func runAntigravityRecoveryPipelinesSuite(t *testing.T, agSpecs []labProviderKin
 
 			var mu sync.Mutex
 			var attempts [][]byte
+			var record telemetry.RequestRecord
 			upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				raw, rErr := io.ReadAll(r.Body)
 				require.NoError(t, rErr)
@@ -7086,6 +7112,11 @@ func runAntigravityRecoveryPipelinesSuite(t *testing.T, agSpecs []labProviderKin
 			defer upSrv.Close()
 
 			lab := newProtocolLabRouter(t, labOptions{
+				OnTelemetry: func(snapshot telemetry.RequestRecord) {
+					mu.Lock()
+					defer mu.Unlock()
+					record = snapshot
+				},
 				Providers: []labProvider{makeLabProviderSpec(101, 0, upSrv.URL, agSpecs[1])},
 			})
 			gwSrv := httptest.NewServer(lab)
@@ -7115,6 +7146,17 @@ func runAntigravityRecoveryPipelinesSuite(t *testing.T, agSpecs []labProviderKin
 			require.Equal(t, "stale_gem_sig_turn1", gjson.GetBytes(gotAttempts[0], "contents.1.parts.0.thoughtSignature").String())
 			require.Equal(t, "skip_thought_signature_validator", gjson.GetBytes(gotAttempts[1], "contents.1.parts.0.thoughtSignature").String())
 			require.Equal(t, "skip_thought_signature_validator", gjson.GetBytes(gotAttempts[1], "contents.1.parts.1.thoughtSignature").String())
+			mu.Lock()
+			final := record
+			mu.Unlock()
+			require.Len(t, final.Attempts, 2)
+			require.NotNil(t, final.Attempts[0].ProtocolConversion)
+			require.Zero(t, final.Attempts[0].ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+			require.NotNil(t, final.Attempts[1].ProtocolConversion)
+			require.Equal(t, 1, final.Attempts[1].ProtocolConversion.LossCounts[string(ir.LossReplayTokenDropped)])
+			logs := lab.UsageLogs()
+			require.Len(t, logs, 1)
+			require.Equal(t, final.Attempts[1].ProtocolConversion, logs[0].ProtocolConversion)
 		})
 
 		t.Run("model_404_fallback_switches_exchange_and_persists_two_turn_call_memory", func(t *testing.T) {
@@ -8054,5 +8096,236 @@ func runAntigravityMixedGroupContinuitySuite(t *testing.T, corpus *testkit.Corpu
 				})
 			}
 		})
+	})
+}
+
+// TestProtocolLab_ProtocolConversionDiagnostics exercises end-to-end gateway
+// collection and isolation of bounded ProtocolConversion metadata across pure
+// native passthrough, cross-protocol IR conversion, merged tool_adapted +
+// native_replay Responses passthrough, lossless native carrier unpacking, and
+// converted-to-native provider failover.
+func TestProtocolLab_ProtocolConversionDiagnostics(t *testing.T) {
+	corpus := testkit.DefaultCorpus()
+	anthStreamMatches, err := corpus.QueryFixtures(testkit.FixtureQuery{
+		Source:   testkit.SourceWire,
+		Protocol: protocol.ProtocolAnthropicMessages,
+		Kind:     testkit.FixtureStream,
+		Scenario: "text_basic",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, anthStreamMatches)
+
+	respStreamMatches, err := corpus.QueryFixtures(testkit.FixtureQuery{
+		Source:   testkit.SourceWire,
+		Protocol: protocol.ProtocolOpenAIResponses,
+		Kind:     testkit.FixtureStream,
+		Scenario: "text_basic",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, respStreamMatches)
+
+	gemStreamMatches, err := corpus.QueryFixtures(testkit.FixtureQuery{
+		Source:   testkit.SourceWire,
+		Protocol: protocol.ProtocolGeminiGenerateContent,
+		Kind:     testkit.FixtureStream,
+		Scenario: "text_basic",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, gemStreamMatches)
+
+	anthSpec := findLabProviderKind("anthropic")
+	openAISpec := findLabProviderKind("openai")
+	geminiSpec := findLabProviderKind("gemini")
+
+	anthMock := mockupstream.NewWithConfig(mockupstream.Config{
+		Script: testkit.Script{Name: "diag_anth", Default: testkit.Reply{Raw: anthStreamMatches[0].Path}},
+	})
+	anthSrv := httptest.NewServer(anthMock)
+	defer anthSrv.Close()
+
+	openAIMock := mockupstream.NewWithConfig(mockupstream.Config{
+		Script: testkit.Script{Name: "diag_openai", Default: testkit.Reply{Raw: respStreamMatches[0].Path}},
+	})
+	openAISrv := httptest.NewServer(openAIMock)
+	defer openAISrv.Close()
+
+	gemMock := mockupstream.NewWithConfig(mockupstream.Config{
+		Script: testkit.Script{Name: "diag_gemini", Default: testkit.Reply{Raw: gemStreamMatches[0].Path}},
+	})
+	gemSrv := httptest.NewServer(gemMock)
+	defer gemSrv.Close()
+
+	var recMu sync.Mutex
+	var latestRecord telemetry.RequestRecord
+	onTelemetry := func(r telemetry.RequestRecord) {
+		recMu.Lock()
+		latestRecord = r
+		recMu.Unlock()
+	}
+	readLatestRecord := func() telemetry.RequestRecord {
+		recMu.Lock()
+		defer recMu.Unlock()
+		return latestRecord
+	}
+
+	t.Run("pure_native_passthrough_and_literal_user_text_stay_nil", func(t *testing.T) {
+		lab := newProtocolLabRouter(t, labOptions{
+			Providers:   []labProvider{makeLabProviderSpec(11, 0, openAISrv.URL, openAISpec)},
+			OnTelemetry: onTelemetry,
+		})
+		gwSrv := httptest.NewServer(lab)
+		defer gwSrv.Close()
+
+		body := []byte(`{"model":"gpt-5","stream":true,"input":[{"type":"message","role":"user","content":"literal trc1:gemini:eyJkIjoiZmFrZSJ9 in user text"}]}`)
+		st, _, respBytes := sendLabClientRequest(t, gwSrv, protocolLabClients[1], body)
+		require.Equal(t, http.StatusOK, st, string(respBytes))
+
+		logs := lab.UsageLogs()
+		require.Len(t, logs, 1)
+		require.Nil(t, logs[0].ProtocolConversion)
+		rec := readLatestRecord()
+		require.NotEmpty(t, rec.Attempts)
+		require.Nil(t, rec.Attempts[0].ProtocolConversion)
+	})
+
+	t.Run("ir_converted_records_route_and_loss_counts", func(t *testing.T) {
+		prov := makeLabProviderSpec(12, 0, gemSrv.URL, geminiSpec)
+		prov.Models = []string{"claude-sonnet-4-5", "gemini-2.5-pro"}
+		prov.ModelMapping = map[string]string{"claude-sonnet-4-5": "gemini-2.5-pro"}
+		lab := newProtocolLabRouter(t, labOptions{
+			Providers: []labProvider{prov},
+			ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{
+				protocol.ProtocolAnthropicMessages: {protocol.ProtocolGeminiGenerateContent},
+			},
+			OnTelemetry: onTelemetry,
+		})
+		gwSrv := httptest.NewServer(lab)
+		defer gwSrv.Close()
+
+		body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":128,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}]}]}`)
+		st, _, respBytes := sendLabClientRequest(t, gwSrv, protocolLabClients[0], body)
+		require.Equal(t, http.StatusOK, st, string(respBytes))
+
+		logs := lab.UsageLogs()
+		require.Len(t, logs, 1)
+		require.NotNil(t, logs[0].ProtocolConversion)
+		require.Equal(t, telemetry.ConversionModeIRConverted, logs[0].ProtocolConversion.Mode)
+		require.Equal(t, string(protocol.ProtocolAnthropicMessages), logs[0].ProtocolConversion.ClientProtocol)
+		require.Equal(t, string(protocol.ProtocolGeminiGenerateContent), logs[0].ProtocolConversion.UpstreamProtocol)
+		require.GreaterOrEqual(t, logs[0].ProtocolConversion.LossCounts[string(ir.LossCacheMarkDropped)], 1)
+
+		rec := readLatestRecord()
+		require.Len(t, rec.Attempts, 1)
+		require.Equal(t, logs[0].ProtocolConversion, rec.Attempts[0].ProtocolConversion)
+	})
+
+	t.Run("tool_adapted_and_native_replay_merge_on_same_attempt", func(t *testing.T) {
+		foreignCarrier, cErr := ir.FormatCarrier(ir.Carrier{Scheme: ir.SchemeGemini, Data: "CpEB_gem"})
+		require.NoError(t, cErr)
+
+		prov := makeLabProviderSpec(13, 0, "https://api.openai.com/v1", openAISpec)
+		prov.Extra = map[string]any{"openai_passthrough": true}
+		lab := newProtocolLabRouter(t, labOptions{
+			Providers:     []labProvider{prov},
+			HostOverrides: map[string]string{"api.openai.com": openAISrv.URL},
+			OnTelemetry:   onTelemetry,
+		})
+		gwSrv := httptest.NewServer(lab)
+		defer gwSrv.Close()
+
+		body := []byte(fmt.Sprintf(`{"model":"gpt-5","stream":true,"store":false,"tools":[{"type":"custom","name":"apply_patch","format":{"type":"text"}}],"input":[{"type":"message","role":"user","content":"hi"},{"type":"reasoning","id":"rs_foreign","summary":[{"type":"summary_text","text":"thought"}],"encrypted_content":%q},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`, foreignCarrier))
+		st, _, respBytes := sendLabClientRequest(t, gwSrv, protocolLabClients[1], body)
+		require.Equal(t, http.StatusOK, st, string(respBytes))
+
+		logs := lab.UsageLogs()
+		require.Len(t, logs, 1)
+		conv := logs[0].ProtocolConversion
+		require.NotNil(t, conv)
+		require.Equal(t, telemetry.ConversionModeToolAdapted, conv.Mode)
+		require.Equal(t, string(protocol.ProtocolOpenAIResponses), conv.ClientProtocol)
+		require.Equal(t, string(protocol.ProtocolOpenAIResponses), conv.UpstreamProtocol)
+		require.Equal(t, ir.SchemeOpenAI, conv.ReplayScheme)
+		require.Equal(t, 1, conv.LossCounts[string(ir.LossReplayTokenDropped)])
+		require.Equal(t, 1, conv.LossCounts[string(ir.LossToolLowered)])
+
+		rec := readLatestRecord()
+		require.Len(t, rec.Attempts, 1)
+		require.Equal(t, conv, rec.Attempts[0].ProtocolConversion)
+	})
+
+	t.Run("lossless_native_replay_unpack_records_native_replay_without_losses", func(t *testing.T) {
+		matchingCarrier, cErr := ir.FormatCarrier(ir.Carrier{
+			Scheme: ir.SchemeAnthropic,
+			Data:   "sig_anth_valid",
+			Text:   "verified thought",
+		})
+		require.NoError(t, cErr)
+
+		lab := newProtocolLabRouter(t, labOptions{
+			Providers:   []labProvider{makeLabProviderSpec(14, 0, anthSrv.URL, anthSpec)},
+			OnTelemetry: onTelemetry,
+		})
+		gwSrv := httptest.NewServer(lab)
+		defer gwSrv.Close()
+
+		body := []byte(fmt.Sprintf(`{"model":"claude-sonnet-4-5","max_tokens":128,"stream":true,"messages":[{"role":"user","content":"q1"},{"role":"assistant","content":[{"type":"thinking","thinking":"verified thought","signature":%q},{"type":"text","text":"a1"}]},{"role":"user","content":"q2"}]}`, matchingCarrier))
+		st, _, respBytes := sendLabClientRequest(t, gwSrv, protocolLabClients[0], body)
+		require.Equal(t, http.StatusOK, st, string(respBytes))
+
+		logs := lab.UsageLogs()
+		require.Len(t, logs, 1)
+		conv := logs[0].ProtocolConversion
+		require.NotNil(t, conv)
+		require.Equal(t, telemetry.ConversionModeNativeReplay, conv.Mode)
+		require.Equal(t, string(protocol.ProtocolAnthropicMessages), conv.ClientProtocol)
+		require.Equal(t, string(protocol.ProtocolAnthropicMessages), conv.UpstreamProtocol)
+		require.Empty(t, conv.LossCounts)
+
+		rec := readLatestRecord()
+		require.Len(t, rec.Attempts, 1)
+		require.Equal(t, conv, rec.Attempts[0].ProtocolConversion)
+	})
+
+	t.Run("failover_from_converted_failure_to_native_passthrough_isolates_attempts", func(t *testing.T) {
+		failGemSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":401,"message":"invalid api key","status":"UNAUTHENTICATED"}}`))
+		}))
+		defer failGemSrv.Close()
+
+		failGemProv := makeLabProviderSpec(15, 1, failGemSrv.URL, geminiSpec)
+		failGemProv.Models = []string{"claude-sonnet-4-5", "gemini-2.5-pro"}
+		failGemProv.ModelMapping = map[string]string{"claude-sonnet-4-5": "gemini-2.5-pro"}
+
+		nativeAnthProv := makeLabProviderSpec(16, 2, anthSrv.URL, anthSpec)
+
+		lab := newProtocolLabRouter(t, labOptions{
+			Providers: []labProvider{failGemProv, nativeAnthProv},
+			ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{
+				protocol.ProtocolAnthropicMessages: {protocol.ProtocolGeminiGenerateContent},
+			},
+			MaxProviderSwitches: 2,
+			OnTelemetry:         onTelemetry,
+		})
+		gwSrv := httptest.NewServer(lab)
+		defer gwSrv.Close()
+
+		body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":128,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"failover test","cache_control":{"type":"ephemeral"}}]}]}`)
+		st, _, respBytes := sendLabClientRequest(t, gwSrv, protocolLabClients[0], body)
+		require.Equal(t, http.StatusOK, st, string(respBytes))
+
+		logs := lab.UsageLogs()
+		require.Len(t, logs, 1)
+		require.Equal(t, int64(16), logs[0].ProviderID)
+		require.Nil(t, logs[0].ProtocolConversion, "winning native passthrough usage row must stay nil")
+
+		rec := readLatestRecord()
+		require.Len(t, rec.Attempts, 2)
+		require.Equal(t, int64(15), rec.Attempts[0].ProviderID)
+		require.NotNil(t, rec.Attempts[0].ProtocolConversion, "failed converted attempt must retain ir_converted diagnostics")
+		require.Equal(t, telemetry.ConversionModeIRConverted, rec.Attempts[0].ProtocolConversion.Mode)
+		require.Equal(t, int64(16), rec.Attempts[1].ProviderID)
+		require.Nil(t, rec.Attempts[1].ProtocolConversion, "winning native attempt must stay nil")
 	})
 }

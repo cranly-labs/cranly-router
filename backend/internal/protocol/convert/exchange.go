@@ -23,7 +23,9 @@ import (
 // original client tool declarations, response formatting, and include_usage
 // flags accurately. UpstreamRequest runs the transformation pipeline once via
 // sync.Once, caching deterministic upstream wire bytes and remapped
-// original-coordinate ir.Loss records for subsequent inspection.
+// original-coordinate request ir.Loss records while response, stream, and
+// buffer converters accumulate response-side losses separately so retry
+// adoption can replace request losses without disturbing response accounting.
 
 // Route pairs the client-facing wire protocol, upstream wire protocol, and
 // target endpoint Dialect for one conversion attempt.
@@ -72,14 +74,36 @@ type Exchange struct {
 	info                RequestInfo         // pre-stripping client request metadata
 
 	// reqOnce initializes upstreamBytes, upstreamErr, and toolMap at most once
-	// during ensureUpstreamPrepared, while mu guards appending response or buffer
-	// loss records onto recordedLosses after initial request preparation finishes.
+	// during ensureUpstreamPrepared, while mu guards requestLosses and
+	// responseLosses across retry replacement and response completion stages.
 	reqOnce        sync.Once  // ensures UpstreamRequest encodes at most once
 	upstreamBytes  []byte     // cached deterministic upstream request JSON bytes
 	upstreamErr    error      // cached error from upstream request preparation
 	toolMap        *ToolMap   // lowered ToolMap produced during request preparation
-	mu             sync.Mutex // guards recordedLosses across request and response stages
-	recordedLosses []ir.Loss  // cumulative Loss records in original coordinates
+	mu             sync.Mutex // guards both IR slices and wire retry counts
+	requestLosses  []ir.Loss  // request-stage Loss records in original coordinates
+	responseLosses []ir.Loss  // cumulative response-stage Loss records
+	// retryTokensDropped and retryReasoningDropped count removals from the
+	// encoded payload after the IR pass. A replacement IR request clears both
+	// counters before another wire retry can contribute its own observations.
+	retryTokensDropped    int // nonempty wire replay tokens discarded
+	retryReasoningDropped int // visible wire thinking blocks discarded
+}
+
+// ReencodeEditor records recovery-stage ir.Loss entries in pre-mutation
+// coordinates and keeps working message part indices aligned with sourceCoords
+// when a ReencodeUpstreamLosses callback adds, removes, or expands parts.
+type ReencodeEditor struct {
+	req    *ir.Request   // detached working request mutated by the callback
+	coords *sourceCoords // source coordinate table updated in lockstep with req
+	losses []ir.Loss     // already-remapped recovery-stage losses
+}
+
+// ReencodePartSource identifies the working part or nested member from which
+// a replacement part originated. A negative Part marks a synthetic part.
+type ReencodePartSource struct {
+	Part   int    // pre-replacement part index
+	Suffix string // optional nested IR path relative to the source part
 }
 
 // cursorChatControls holds Chat Completions top-level controls extracted from
@@ -88,6 +112,63 @@ type cursorChatControls struct {
 	includeUsage    *bool    // extracted stream_options.include_usage toggle
 	reasoningEffort string   // extracted top-level reasoning_effort value
 	stop            []string // extracted scalar or array stop sequences
+}
+
+// RecordLoss remaps loss.Path against the current working-request coordinates
+// and appends the resulting original-coordinate ir.Loss onto e. Nil editors,
+// empty loss kinds, or paths targeting synthetic recovery items are ignored.
+func (e *ReencodeEditor) RecordLoss(loss ir.Loss) {
+	if e == nil || loss.Kind == "" {
+		return
+	}
+	remapped, keep := remapSingleLossPath(loss.Path, e.coords)
+	if !keep {
+		return
+	}
+	loss.Path = remapped
+	e.losses = append(e.losses, loss)
+}
+
+// RecordPartLoss records a recovery-stage ir.Loss for working
+// req.Messages[msgIndex].Parts[partIndex] using current pre-mutation coordinates.
+// Call this before SetMessageParts shifts part indices in the same message;
+// synthetic parts without a source slot are omitted cleanly.
+func (e *ReencodeEditor) RecordPartLoss(msgIndex, partIndex int, kind ir.LossKind) {
+	if e == nil || kind == "" {
+		return
+	}
+	path := e.coords.origPartPath(msgIndex, partIndex)
+	if path != "" {
+		e.losses = append(e.losses, ir.Loss{Kind: kind, Path: path})
+	}
+}
+
+// SetMessageParts replaces the working message parts and retains their
+// original client paths for subsequent encoder losses. Each replacement names
+// its pre-edit source part and an optional suffix such as .result.content[1].
+// A missing or negative source index identifies a synthetic part.
+//
+// Resolve every source before publishing the new paths, since a second edit
+// of the same message refers to the results of the first edit. Siblings
+// promoted from a tool result retain separate paths through both edits.
+func (e *ReencodeEditor) SetMessageParts(msgIndex int, parts []ir.Part, sources []ReencodePartSource) {
+	if e == nil || e.req == nil || msgIndex < 0 || msgIndex >= len(e.req.Messages) {
+		return
+	}
+	msg := &e.req.Messages[msgIndex]
+	paths := make([]string, len(parts))
+	for i, source := range sources[:min(len(sources), len(parts))] {
+		if source.Part >= 0 && source.Part < len(msg.Parts) {
+			if path := e.coords.origPartPath(msgIndex, source.Part); path != "" {
+				paths[i] = path + source.Suffix
+			}
+		}
+	}
+	if e.coords.editedPartPaths == nil {
+		e.coords.editedPartPaths = make(map[int][]string)
+	}
+	e.coords.editedPartPaths[msgIndex] = paths
+	msg.Parts = parts
 }
 
 // NeedsConversion reports whether route requires cross-protocol IR conversion.
@@ -208,54 +289,196 @@ func (x *Exchange) UpstreamRequest() ([]byte, error) {
 // Nil receivers, nil mutate callbacks, or pipeline and encoder failures return
 // an error alongside changed == false.
 func (x *Exchange) ReencodeUpstream(mutate func(req *ir.Request, dialect *Dialect) (bool, error)) ([]byte, bool, error) {
-	if x == nil {
-		return nil, false, errors.New("convert: nil Exchange")
-	}
 	if mutate == nil {
 		return nil, false, errors.New("convert: nil ReencodeUpstream mutate callback")
 	}
+	encoded, _, changed, err := x.ReencodeUpstreamLosses(func(req *ir.Request, dialect *Dialect, _ *ReencodeEditor) (bool, error) {
+		return mutate(req, dialect)
+	})
+	return encoded, changed, err
+}
+
+// ReencodeUpstreamLosses runs the detached request transformation and mutation
+// pipeline identically to ReencodeUpstream and also returns the remapped
+// original-coordinate request ir.Loss slice combining pre-mutation pipeline
+// losses, recovery losses recorded on edit, and post-mutation encoder losses.
+// Callers mutating message part slices should update them through
+// edit.SetMessageParts after calling edit.RecordPartLoss so post-mutation
+// encoder losses remap to their original client part indices.
+func (x *Exchange) ReencodeUpstreamLosses(mutate func(req *ir.Request, dialect *Dialect, edit *ReencodeEditor) (bool, error)) ([]byte, []ir.Loss, bool, error) {
+	if x == nil {
+		return nil, nil, false, errors.New("convert: nil Exchange")
+	}
+	if mutate == nil {
+		return nil, nil, false, errors.New("convert: nil ReencodeUpstream mutate callback")
+	}
 	x.ensureUpstreamPrepared()
 	if x.upstreamErr != nil {
-		return nil, false, x.upstreamErr
+		return nil, nil, false, x.upstreamErr
 	}
 
 	work := x.origReq.Clone()
 	coords := newSourceCoords(work)
-	_, recalledSlots := openCarriers(work, coords, x.route, x.calls)
-	_ = stripClientMarkers(work, coords, x.route)
-	if _, _, err := lowerTools(work, coords, x.route, x.inheritedMap); err != nil {
-		return nil, false, err
+	var pipelineLosses []ir.Loss
+	carrierLosses, recalledSlots := openCarriers(work, coords, x.route, x.calls)
+	pipelineLosses = append(pipelineLosses, carrierLosses...)
+	pipelineLosses = append(pipelineLosses, stripClientMarkers(work, coords, x.route)...)
+	_, toolLosses, err := lowerTools(work, coords, x.route, x.inheritedMap)
+	if err != nil {
+		return nil, nil, false, err
 	}
-	_ = selectReplayTokens(work, coords, x.route, recalledSlots)
-	if _, err := applyDialectRequestAdjustments(work, coords, x.route); err != nil {
-		return nil, false, err
+	pipelineLosses = append(pipelineLosses, toolLosses...)
+	pipelineLosses = append(pipelineLosses, selectReplayTokens(work, coords, x.route, recalledSlots)...)
+	dialectLosses, err := applyDialectRequestAdjustments(work, coords, x.route)
+	if err != nil {
+		return nil, nil, false, err
 	}
+	pipelineLosses = append(pipelineLosses, dialectLosses...)
 	ir.Link(work)
 
 	dialect := x.route.Dialect
 	dialect.Reasoning = dialect.Reasoning.Clone()
-	changed, err := mutate(work, &dialect)
-	if err != nil || !changed {
-		return nil, false, err
+	editor := &ReencodeEditor{
+		req:    work,
+		coords: coords,
 	}
+	changed, err := mutate(work, &dialect, editor)
+	if err != nil || !changed {
+		return nil, nil, false, err
+	}
+	// Merge already-remapped recovery losses before post-mutation encoding so
+	// deduplication suppresses overlaps while post-mutation encoder losses remap
+	// through coords updated by editor.SetMessageParts.
+	pipelineLosses = appendUniqueLosses(pipelineLosses, editor.losses)
 	ir.Link(work)
 
-	encoded, _, err := x.upCodec.EncodeRequest(work, dialect)
+	encoded, encLosses, err := x.upCodec.EncodeRequest(work, dialect)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
-	return encoded, true, nil
+	combined := remapEncoderLosses(pipelineLosses, encLosses, coords)
+	return encoded, combined, true, nil
+}
+
+// appendUniqueLosses appends extra onto base while skipping duplicate ir.Loss
+// values already present in base or earlier in extra.
+func appendUniqueLosses(base, extra []ir.Loss) []ir.Loss {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[ir.Loss]bool, len(base)+len(extra))
+	out := make([]ir.Loss, 0, len(base)+len(extra))
+	for _, l := range base {
+		seen[l] = true
+		out = append(out, l)
+	}
+	for _, l := range extra {
+		if seen[l] {
+			continue
+		}
+		seen[l] = true
+		out = append(out, l)
+	}
+	return out
+}
+
+// ReplaceRequestLosses overwrites the request-stage ir.Loss slice on x with an
+// independent copy of losses while preserving any response-stage losses already
+// or subsequently recorded on x. Same-provider retry paths invoke this method
+// after adopting a fallback request payload so final diagnostics reflect the
+// request actually accepted upstream rather than the rejected first draft.
+func (x *Exchange) ReplaceRequestLosses(losses []ir.Loss) {
+	if x == nil {
+		return
+	}
+	x.ensureUpstreamPrepared()
+	x.mu.Lock()
+	x.requestLosses = slices.Clone(losses)
+	x.retryTokensDropped = 0
+	x.retryReasoningDropped = 0
+	x.mu.Unlock()
+}
+
+// SetSignatureRetryLosses records additional transformations made directly to
+// the encoded request on a signature retry. Counts describe the adopted payload
+// relative to the original encoding. Replacing them preserves response losses
+// and makes observing the same retry twice idempotent.
+func (x *Exchange) SetSignatureRetryLosses(tokens, reasoning int) {
+	if x == nil {
+		return
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.retryTokensDropped = tokens
+	x.retryReasoningDropped = reasoning
+}
+
+// Route returns an independent copy of x's resolved client protocol, upstream
+// protocol, and effective Dialect configuration. Nil receivers return a zero
+// Route value without panicking.
+func (x *Exchange) Route() Route {
+	if x == nil {
+		return Route{}
+	}
+	out := x.route
+	out.Dialect = x.route.Dialect.Clone()
+	return out
 }
 
 // Losses returns a detached copy of all ir.Loss entries recorded so far by
-// UpstreamRequest and any completed Response, Stream, or Buffer conversions on x.
-// Invoking Losses triggers lazy request preparation when UpstreamRequest has not
-// yet run, and mutating the returned slice never alters x's internal loss log.
+// UpstreamRequest (or ReplaceRequestLosses) followed by any completed Response,
+// Stream, or Buffer conversions on x. Invoking Losses triggers lazy request
+// preparation when UpstreamRequest has not yet run, and mutating the returned
+// slice never alters x's internal loss logs. LossCounts additionally includes
+// signature recovery performed on encoded bytes without original IR coordinates.
 func (x *Exchange) Losses() []ir.Loss {
+	if x == nil {
+		return nil
+	}
 	x.ensureUpstreamPrepared()
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	return slices.Clone(x.recordedLosses)
+	if len(x.requestLosses) == 0 && len(x.responseLosses) == 0 {
+		return nil
+	}
+	return slices.Concat(x.requestLosses, x.responseLosses)
+}
+
+// LossCounts combines request and response IR losses with the active wire
+// retry counts. A nil exchange or a lossless conversion returns nil without
+// allocating a map. Callers own the returned map.
+func (x *Exchange) LossCounts() map[string]int {
+	if x == nil {
+		return nil
+	}
+	x.ensureUpstreamPrepared()
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	total := len(x.requestLosses) + len(x.responseLosses)
+	if total == 0 && x.retryTokensDropped == 0 && x.retryReasoningDropped == 0 {
+		return nil
+	}
+	counts := make(map[string]int, min(total, 8))
+	if x.retryTokensDropped > 0 {
+		counts[string(ir.LossReplayTokenDropped)] = x.retryTokensDropped
+	}
+	if x.retryReasoningDropped > 0 {
+		counts[string(ir.LossReasoningTextDropped)] = x.retryReasoningDropped
+	}
+	for _, loss := range x.requestLosses {
+		if loss.Kind != "" {
+			counts[string(loss.Kind)]++
+		}
+	}
+	for _, loss := range x.responseLosses {
+		if loss.Kind != "" {
+			counts[string(loss.Kind)]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }
 
 // ToolMap returns an independent deep copy of the lowered ToolMap constructed
@@ -324,7 +547,7 @@ func (x *Exchange) Buffer() *Buffer {
 
 // ensureUpstreamPrepared executes x's request IR transformation and upstream
 // encoding pipeline at most once on a detached clone of origReq. Cached
-// upstreamBytes, upstreamErr, toolMap, and initial recordedLosses persist for
+// upstreamBytes, upstreamErr, toolMap, and initial requestLosses persist for
 // all subsequent UpstreamRequest, Response, Stream, Buffer, and Losses calls.
 func (x *Exchange) ensureUpstreamPrepared() {
 	x.reqOnce.Do(func() {
@@ -367,7 +590,7 @@ func (x *Exchange) ensureUpstreamPrepared() {
 		combined := remapEncoderLosses(pipelineLosses, encLosses, coords)
 		x.upstreamBytes = encoded
 		x.mu.Lock()
-		x.recordedLosses = combined
+		x.requestLosses = combined
 		x.mu.Unlock()
 	})
 }
@@ -378,7 +601,7 @@ func (x *Exchange) appendLosses(extra []ir.Loss) {
 		return
 	}
 	x.mu.Lock()
-	x.recordedLosses = append(x.recordedLosses, extra...)
+	x.responseLosses = append(x.responseLosses, extra...)
 	x.mu.Unlock()
 }
 

@@ -39,6 +39,7 @@
 - `request_records` 保存起止时间、状态、路径、认证归属、模型、失败阶段诊断、上游尝试与关联标识；完整 prompt/报文遵循各业务既有留存规则。
 - 客户端断连即固定已观测结束时间，后台继续读 usage 不延长该生命周期。
 - 正常请求的性能保存在 `usage_logs.timings` 并按尝试编号关联展示；无 usage 的鉴权/准入/连接失败将阶段计时写入 `failure_timings`。
+- 经过跨协议转换、客户端工具降级或 `trc1:` 信封重放的尝试在 `attempts[*].protocol_conversion` 记录有界转换模式、协议对、方言与分类损失计数（含未产出 `usage_logs` 的失败尝试与预检计数，详见[信息丢失上报](../architecture/protocol_conversion.md#loss_accounting)）。
 - `usage_write_state` 区分待写入、确认写入、确认未写入、跳过与结果未知，写入自身异常属于诊断，不改写请求的失败或取消终态。
 - `running` 表示尚未落终态（执行中或异常退出中断）；创作台与批量图片详情直接联查任务表状态；Grok 视频轮询在计费认领前按 `done`/`failed`/`expired`/取消同步摘要终态。
 
@@ -64,4 +65,4 @@
 - 接口与角色：管理员通过 `GET /api/v1/admin/requests?request_id=...` 或 `/api/v1/admin/requests/:request_id` 查询（校验管理员角色，单次最多返回 100 条并带 `has_more`），系统模型请求可按父测试 ID 关联多次尝试。普通用户仅可按请求 ID 筛选自己的使用记录并复制 ID，请求 ID 本身不授访问权。
 - 分阶段索引查找：`request_lookup_ids` 优先按主键精确命中本地 ID（命中时不展开同名外部别名），未命中时再查调用方、计费键、上游 ID 与历史日志，收集候选数组供摘要、用量、错误、审计（使用 `(request_id, created_at DESC)` 索引）共享 `= ANY(...)` 查询。父请求同步解析关联子记录的计费键与历史引用。
 - 执行计划约束：详情用量查询按请求 ID、上游 ID、父 ID 三个分支先取轻量化候选并去重、过滤权限、统一排序截断最新 101 行后再回表，避免表达式索引缺统计时退化为时间索引大范围扫描；回归测试用 `auto_explain.log_nested_statements` 验证实际扫描行数。
-- 管理端展示：`/admin/requests` 按总耗时刻度绘制失败阶段与各用量性能时间线，批量回查 `provider_names`（含软删除提供商）。使用记录、错误、系统日志、审计和审核列表均支持按请求 ID 筛选（筛选时忽略日期范围、隐藏趋势图，汇总与导出沿用同一筛选）。
+- 管理端展示：`/admin/requests` 按总耗时刻度绘制失败阶段与各用量性能时间线，在尝试明细中展示 `protocol_conversion`（`request_records` 过期后的历史摘要回退读取 `usage_logs.protocol_conversion`），并批量回查 `provider_names`（含软删除提供商）。使用记录、错误、系统日志、审计和审核列表均支持按请求 ID 筛选（筛选时忽略日期范围、隐藏趋势图，汇总与导出沿用同一筛选）。

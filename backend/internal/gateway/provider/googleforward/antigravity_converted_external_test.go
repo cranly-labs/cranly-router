@@ -1520,14 +1520,19 @@ func TestAntigravityForwardConverted_ClaudeIRAndGeminiRecoveryPipelines(t *testi
 // Signature values must change to the placeholder while 64-bit integer literals,
 // member ordering, and malformed fallback bytes remain untouched.
 func TestReplaceGeminiThoughtSignaturesLossless_PreservesInt64AndMemberOrder(t *testing.T) {
-	raw := []byte(`{"zFirst":1,"contents":[{"role":"model","parts":[{"text":"t","thought":true,"thoughtSignature":"stale_sig_1"},{"functionCall":{"name":"check_id","args":{"seq":9007199254740993,"note":"thoughtSignature stays literal inside string"}},"thoughtSignature":"stale_sig_2"}]}],"aLast":true}`)
-	got := googleforward.ReplaceThoughtSignaturesLosslessForTest(raw, "skip_thought_signature_validator")
-	want := `{"zFirst":1,"contents":[{"role":"model","parts":[{"text":"t","thought":true,"thoughtSignature":"skip_thought_signature_validator"},{"functionCall":{"name":"check_id","args":{"seq":9007199254740993,"note":"thoughtSignature stays literal inside string"}},"thoughtSignature":"skip_thought_signature_validator"}]}],"aLast":true}`
+	raw := []byte(`{"zFirst":1,"contents":[{"role":"model","parts":[{"text":"t","thought":true,"thoughtSignature":"stale_sig_1"},{"functionCall":{"name":"check_id","args":{"seq":9007199254740993,"thoughtSignature":"tool-owned","note":"thoughtSignature stays literal inside string"}},"thoughtSignature":"stale_sig_2"}]}],"aLast":true}`)
+	got, count := googleforward.ReplaceThoughtSignaturesLosslessForTest(raw, "skip_thought_signature_validator")
+	want := `{"zFirst":1,"contents":[{"role":"model","parts":[{"text":"t","thought":true,"thoughtSignature":"skip_thought_signature_validator"},{"functionCall":{"name":"check_id","args":{"seq":9007199254740993,"thoughtSignature":"tool-owned","note":"thoughtSignature stays literal inside string"}},"thoughtSignature":"skip_thought_signature_validator"}]}],"aLast":true}`
 	require.Equal(t, want, string(got))
+	require.Equal(t, 2, count)
 
 	malformed := []byte(`{"contents":[{"thoughtSignature":`)
-	require.Equal(t, malformed, googleforward.ReplaceThoughtSignaturesLosslessForTest(malformed, "skip"))
-	require.Nil(t, googleforward.ReplaceThoughtSignaturesLosslessForTest(nil, "skip"))
+	got, count = googleforward.ReplaceThoughtSignaturesLosslessForTest(malformed, "skip")
+	require.Equal(t, malformed, got)
+	require.Zero(t, count)
+	got, count = googleforward.ReplaceThoughtSignaturesLosslessForTest(nil, "skip")
+	require.Nil(t, got)
+	require.Zero(t, count)
 }
 
 // newAntigravityCompatProvider creates a test target with the supplied provider

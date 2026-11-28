@@ -162,6 +162,7 @@ func (s *GrokExecutor) ChatResponses(
 		WriteGrokForwardInvalidRequest(c, err.Error(), "")
 		return nil, true, apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", err.Error()).WithCause(fmt.Errorf("encode grok responses bridge request: %w", err))
 	}
+	upstream.ObserveExchangeConversion(ctx, exchange)
 
 	var deleteFields []string
 	if isResponsesShape {
@@ -271,7 +272,7 @@ func (s *GrokExecutor) ChatResponses(
 					resp.Body = io.NopCloser(bytes.NewReader(rawErr))
 					return resp, nil
 				}
-				retryBody, changed := protocolopenai.StripResponsesEncryptedReasoningBytes(effectiveBody)
+				retryBody, changed, dropped := protocolopenai.StripResponsesEncryptedReasoningWithCount(effectiveBody)
 				if !changed {
 					resp.Body = io.NopCloser(bytes.NewReader(rawErr))
 					return resp, nil
@@ -281,6 +282,7 @@ func (s *GrokExecutor) ChatResponses(
 				if buildErr != nil {
 					return nil, buildErr
 				}
+				upstream.StageSignatureRetry(ctx, exchange, dropped, 0)
 				return s.Transport.DoWithTLS(retryReq, proxyURL, providerID, concurrency, s.TLSProfile(provider, tlsRouterMatch...))
 			},
 			ReadError: s.Output.ReadErrorBody,

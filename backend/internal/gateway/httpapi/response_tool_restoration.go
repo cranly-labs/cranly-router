@@ -225,38 +225,37 @@ func isJSONObjectBytes(payload []byte) bool {
 
 // FlattenOpenAIResponsesNamespaces lowers supported namespace declarations
 // while exempting image_gen and stores their reverse names after successful
-// encoding. Bodies with no raw namespace marker or no conversion return
-// supplied bytes.
+// encoding. The report contains the counts of committed edits. An unchanged
+// payload returns its original bytes and an empty report.
 //
 // Decoding or transformation failure returns the body with an error, and
-// namespace state is published after replacement bytes exist. Ordinary map
-// decoding represents JSON numbers as float64; re-encoding a changed body can
-// round large integer literals through that representation. Callers retain
+// namespace state is published after replacement bytes exist. Number-preserving
+// decoding retains exact integer arguments and schema bounds. Callers retain
 // source bytes separately when another attempt needs its original namespace
 // declarations.
-func FlattenOpenAIResponsesNamespaces(c *gin.Context, body []byte) ([]byte, error) {
-	if !bytes.Contains(body, []byte(`"namespace"`)) {
-		return body, nil
+func FlattenOpenAIResponsesNamespaces(c *gin.Context, body []byte) ([]byte, openaicore.NamespaceFlattening, error) {
+	if !bytes.Contains(body, []byte(`"namespace"`)) && !bytes.Contains(body, []byte(`\u`)) {
+		return body, openaicore.NamespaceFlattening{}, nil
 	}
 	var requestBody map[string]any
-	if err := json.Unmarshal(body, &requestBody); err != nil {
-		return body, fmt.Errorf("decode OpenAI namespace body: %w", err)
+	if err := wirejson.DecodeUseNumber(body, &requestBody); err != nil {
+		return body, openaicore.NamespaceFlattening{}, fmt.Errorf("decode OpenAI namespace body: %w", err)
 	}
-	names, changed, err := openaicore.FlattenResponsesNamespacesExcept(requestBody, map[string]bool{"image_gen": true})
+	report, err := openaicore.FlattenResponsesNamespacesWithReport(requestBody, map[string]bool{"image_gen": true})
 	if err != nil {
-		return body, err
+		return body, openaicore.NamespaceFlattening{}, err
 	}
-	if !changed {
-		return body, nil
+	if len(report.Names) == 0 {
+		return body, openaicore.NamespaceFlattening{}, nil
 	}
 	rebuilt, err := wirejson.Marshal(requestBody)
 	if err != nil {
-		return body, fmt.Errorf("encode OpenAI namespace body: %w", err)
+		return body, openaicore.NamespaceFlattening{}, fmt.Errorf("encode OpenAI namespace body: %w", err)
 	}
 	// Publish reverse names after encoding succeeds, so a failed replacement
 	// cannot install restoration state for bytes the caller never received.
-	SetOpenAIResponsesNamespaceNames(c, names)
-	return rebuilt, nil
+	SetOpenAIResponsesNamespaceNames(c, report.Names)
+	return rebuilt, report, nil
 }
 
 // RestoreOpenAIResponsesNamespacePayload restores flattened call names from
